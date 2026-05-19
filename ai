@@ -30,7 +30,7 @@ export CODEX_EXPERIMENTAL=true
 CLAUDE_FLAGS=(--dangerously-skip-permissions)
 CODEX_FLAGS=(--experimental --dangerously-bypass-approvals-and-sandbox)
 GEMINI_FLAGS=(--yolo --model pro --skip-trust)
-AGY_FLAGS=()
+AGY_FLAGS=(--dangerously-skip-permissions)
 
 # Variáveis de ambiente para cada CLI
 
