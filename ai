@@ -867,7 +867,7 @@ elif [[ ${1:-} == "agy" || ${1:-} == "a" || ${1:-} == "antigravity" ]]; then
     enter_repo_if_needed
     launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS "$@"
 elif [[ ${1:-} == "install-skills" ]]; then
-    echo -e "${GREEN}Instalando skills de Code Review (Claude ↔ Gemini ↔ Codex)...${RESET}"
+    echo -e "${GREEN}Instalando skills de Code Review (Claude ↔ Antigravity ↔ Codex)...${RESET}"
     
     _fail() {
         echo -e "${RED}Erro: $1${RESET}" >&2
@@ -876,11 +876,11 @@ elif [[ ${1:-} == "install-skills" ]]; then
 
     # Definir caminhos
     CODEX_SKILL_DIR="$HOME/.codex/skills/claude-code-review"
-    CLAUDE_SKILL_DIR="$HOME/.claude/skills/gemini-code-review"
-    GEMINI_SKILL_DIR_CLAUDE="$HOME/.agents/skills/claude-code-review"
-    GEMINI_SKILL_DIR_CODEX="$HOME/.agents/skills/codex-code-review"
+    CLAUDE_SKILL_DIR="$HOME/.claude/skills/agy-code-review"
+    AGY_SKILL_DIR_CLAUDE="$HOME/.agents/skills/claude-code-review"
+    AGY_SKILL_DIR_CODEX="$HOME/.agents/skills/codex-code-review"
 
-    mkdir -p "$CODEX_SKILL_DIR" "$CLAUDE_SKILL_DIR" "$GEMINI_SKILL_DIR_CLAUDE" "$GEMINI_SKILL_DIR_CODEX"
+    mkdir -p "$CODEX_SKILL_DIR" "$CLAUDE_SKILL_DIR" "$AGY_SKILL_DIR_CLAUDE" "$AGY_SKILL_DIR_CODEX"
 
     # Skill para o Codex chamar o Claude
     cat << 'EOF' > "${CODEX_SKILL_DIR}/SKILL.md"
@@ -900,26 +900,24 @@ Execute via `run_shell_command`:
 **Note:** For very large diffs, suggest reviewing file-by-file to avoid timeouts.
 EOF
 
-    # Skill para o Claude chamar o Gemini
+    # Skill para o Claude chamar o Antigravity
     cat << 'EOF' > "${CLAUDE_SKILL_DIR}/SKILL.md"
 ---
-name: gemini-code-review
-description: Senior-level code review using Gemini CLI (Pro model). Robust and fast.
+name: agy-code-review
+description: Senior-level code review using Antigravity CLI (agy). Robust and fast.
 ---
 
-# Gemini Code Review (Senior)
+# Antigravity Code Review (Senior)
 
-Delegates code review to `gemini` using the `pro` model.
+Delegates code review to `agy` (Antigravity CLI).
 
 ## Usage
 Execute in shell:
-`gemini -p "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, hidden bugs, and performance. Provide refactored examples." -y --model pro --skip-trust`
-
-**Fixes 429:** If you hit rate limits, wait 30s or reduce the scope of the review.
+`agy -p --dangerously-skip-permissions "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, hidden bugs, and performance. Provide refactored examples."`
 EOF
 
-    # Skill para o Gemini chamar o Claude
-    cat << 'EOF' > "${GEMINI_SKILL_DIR_CLAUDE}/SKILL.md"
+    # Skill para o Antigravity chamar o Claude
+    cat << 'EOF' > "${AGY_SKILL_DIR_CLAUDE}/SKILL.md"
 ---
 name: claude-code-review
 description: Senior-level code review using Claude Code CLI.
@@ -935,8 +933,8 @@ Delegates to `claude` with max effort for deep analysis.
 **Anti-Freeze:** If the diff is > 1000 lines, instruct Claude to only review the most critical files first.
 EOF
 
-    # Skill para o Gemini chamar o Codex
-    cat << 'EOF' > "${GEMINI_SKILL_DIR_CODEX}/SKILL.md"
+    # Skill para o Antigravity chamar o Codex
+    cat << 'EOF' > "${AGY_SKILL_DIR_CODEX}/SKILL.md"
 ---
 name: codex-code-review
 description: Senior-level code review using Codex CLI.
@@ -1116,7 +1114,7 @@ printf "  ${BOLD}4)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}
 echo ""
 echo -e "  ${BOLD}5)${RESET} 🔌 Providers"
 echo -e "  ${BOLD}6)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}7)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado)"
+echo -e "  ${BOLD}7)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado: Claude ↔ Agy ↔ Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
