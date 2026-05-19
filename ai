@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.3.0"
+AI_LAUNCHER_VERSION="1.4.0"
 
 # Configurações globais
 export CODEX_EXPERIMENTAL=true
@@ -30,6 +30,7 @@ export CODEX_EXPERIMENTAL=true
 CLAUDE_FLAGS=(--dangerously-skip-permissions)
 CODEX_FLAGS=(--experimental --dangerously-bypass-approvals-and-sandbox)
 GEMINI_FLAGS=(--yolo --model pro --skip-trust)
+AGY_FLAGS=()
 
 # Variáveis de ambiente para cada CLI
 
@@ -37,6 +38,7 @@ GEMINI_FLAGS=(--yolo --model pro --skip-trust)
 CLAUDE_PROMPT_FLAG="-p"
 CODEX_PROMPT_FLAG="-p"
 GEMINI_PROMPT_FLAG="-p"
+AGY_PROMPT_FLAG="-p"
 
 # Perfis do Claude (flags extras por modo)
 get_claude_profile_flags() {
@@ -290,6 +292,7 @@ launch() {
         CLAUDE_FLAGS) flags_ref=("${CLAUDE_FLAGS[@]}") ;;
         CODEX_FLAGS)  flags_ref=("${CODEX_FLAGS[@]}") ;;
         GEMINI_FLAGS) flags_ref=("${GEMINI_FLAGS[@]}") ;;
+        AGY_FLAGS)    flags_ref=("${AGY_FLAGS[@]+"${AGY_FLAGS[@]}"}") ;;
         *)
             echo -e "${RED}Erro interno: array de flags desconhecida (${flags_name}).${RESET}"
             exit 1
@@ -302,6 +305,7 @@ launch() {
             claude) echo "  Instale: npm install -g @anthropic-ai/claude-code" ;;
             codex)  echo "  Instale: npm install -g @openai/codex" ;;
             gemini) echo "  Instale: sudo npm install -g @google/gemini-cli" ;;
+            agy)    echo "  Instale: curl -fsSL https://antigravity.google/cli/install.sh | bash" ;;
         esac
         exit 1
     fi
@@ -348,6 +352,7 @@ CLIs de IA:
   c --bare               Modo mínimo (sem hooks/plugins)
   codex,  x              Abre Codex CLI
   gemini, g              Abre Gemini CLI
+  agy,     a              Abre Antigravity CLI
 
   --via <provider>       Usa provider alternativo (openrouter, deepseek, ollama...)
 
@@ -383,6 +388,7 @@ Exemplos:
   ai c --via openrouter           Claude via OpenRouter
   ai x                            Codex
   ai g                            Gemini
+  ai a                            Antigravity
   ai p ls                         Lista providers configurados
   ai f                            Toggle de flags antes de lançar
 HELP
@@ -854,6 +860,12 @@ elif [[ ${1:-} == "gemini" || ${1:-} == "g" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS "$@"
+elif [[ ${1:-} == "agy" || ${1:-} == "a" || ${1:-} == "antigravity" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    enter_repo_if_needed
+    launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS "$@"
 elif [[ ${1:-} == "install-skills" ]]; then
     echo -e "${GREEN}Instalando skills de Code Review (Claude ↔ Gemini ↔ Codex)...${RESET}"
     
@@ -1084,10 +1096,12 @@ fi
 claude_status=$(status_icon claude)
 codex_status=$(status_icon codex)
 gemini_status=$(status_icon gemini)
+agy_status=$(status_icon agy)
 
 claude_ver=$(get_version claude)
 codex_ver=$(get_version codex)
 gemini_ver=$(get_version gemini)
+agy_ver=$(get_version agy)
 
 echo -e "${BOLD}${CYAN}"
 echo "  ┌──────────────────────────────────────────────────┐"
@@ -1098,10 +1112,11 @@ echo -e "${RESET}"
 printf "  ${BOLD}1)${RESET} Claude Code  %-20s %b\n" "${claude_ver}" "${claude_status}"
 printf "  ${BOLD}2)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
 printf "  ${BOLD}3)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
+printf "  ${BOLD}4)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
 echo ""
-echo -e "  ${BOLD}4)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}5)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}6)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado)"
+echo -e "  ${BOLD}5)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}6)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}7)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -1109,12 +1124,13 @@ echo -e "${YELLOW}Flags:${RESET}"
 echo -e "  ${DIM}Claude: ${CLAUDE_FLAGS[*]+"${CLAUDE_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Codex:  ${CODEX_FLAGS[*]+"${CODEX_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Gemini: ${GEMINI_FLAGS[*]+"${GEMINI_FLAGS[*]}"}${RESET}"
+echo -e "  ${DIM}Agy:    ${AGY_FLAGS[*]+"${AGY_FLAGS[*]}"}${RESET}"
 echo ""
 
 show_last_used
 echo ""
 
-read -rp "Escolha [1-6/0]: " choice
+read -rp "Escolha [1-7/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -1124,15 +1140,16 @@ case $choice in
        launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
     3) enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
-    4) provider_list ;;
-    5) flags_menu
-       # Detecta --continue/--resume toggled via flags menu
+    4) enter_repo_if_needed
+       launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
+    5) provider_list ;;
+    6) flags_menu
        for _f in "${CLAUDE_FLAGS[@]}"; do
            [[ "$_f" == "--continue" || "$_f" == "--resume" ]] && _is_continuing=true
        done
        enter_repo_if_needed
        launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-    6) exec "$0" install-skills ;;
+    7) exec "$0" install-skills ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

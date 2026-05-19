@@ -37,6 +37,7 @@ ai --help       # Ajuda
 | Claude Code | `ai c` | `--dangerously-skip-permissions` |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
 | Gemini | `ai g` | `--yolo` |
+| Antigravity | `ai a` | _(nenhuma)_ |
 
 ## Features
 
@@ -57,6 +58,7 @@ Instale as CLIs que quiser usar:
 npm install -g @anthropic-ai/claude-code   # Claude
 npm install -g @openai/codex               # Codex
 npm install -g @google/gemini-cli           # Gemini
+curl -fsSL https://antigravity.google/cli/install.sh | bash  # Antigravity
 ```
 
 Depois, autentique cada ferramenta usando o fluxo nativo dela (`claude`, `codex` e `gemini`). O launcher não valida nem exige variáveis como `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` ou `GEMINI_API_KEY`.
