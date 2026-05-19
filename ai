@@ -896,6 +896,50 @@ elif [[ ${1:-} == "install-skills" ]]; then
 }
 EOF
 
+    # Skill do Brain (Memória Persistente) para Antigravity
+    BRAIN_SKILL_DIR="${AGY_SKILL_DIR_BASE}/brain"
+    mkdir -p "$BRAIN_SKILL_DIR"
+    cat << 'EOF' > "${BRAIN_SKILL_DIR}/SKILL.md"
+---
+name: brain
+description: "Advanced persistent memory and knowledge graph system. Manages SOUL.md, PROJECT_STATUS.md, and daily episodic logs. Integrates with /graphify for knowledge 'constellations'."
+trigger: /brain
+---
+
+# /brain
+
+The Brain skill manages the agent's persistent memory and identity across sessions. It transforms a standard chat into an "Agentic OS" with long-term recall and architectural grounding.
+
+## Usage
+
+```bash
+/brain init           # Initialize memory structure in the current project
+/brain check-in      # Load current project status, soul, and recent logs
+/brain check-out     # Summarize the session and update daily logs + status
+/brain log "note"    # Manually append a critical discovery to the memory
+/brain status        # Show project progress and blockers
+/brain graph         # Trigger /graphify to update the knowledge constellation
+/brain query "q"     # Query semantic memory using graph-based retrieval
+```
+
+## Memory Architecture
+
+The system uses a file-based persistence layer in the project root:
+
+- `SOUL.md`: Agent identity, core values, and communication style.
+- `PROJECT_STATUS.md`: High-level tracking of stories, features, and technical debt.
+- `memories/`:
+    - `episodic/daily/`: Markdown files tracking session-by-session changes.
+    - `semantic/`: JSON/Graph data (the "constellation").
+    - `rules/`: Custom model directives for specific tasks.
+
+## Senior Directives
+
+- **Be Truthful**: If a story is "almost done", it is NOT done. Mark it as `[/]`.
+- **Log Decisions**: Every non-obvious choice goes into a Decision Log.
+- **Surface Risk**: Flag recurring failures as "Hotspots" in PROJECT_STATUS.md.
+EOF
+
     # Skill para o Codex chamar o Claude
     cat << 'EOF' > "${CODEX_SKILL_DIR}/SKILL.md"
 ---
