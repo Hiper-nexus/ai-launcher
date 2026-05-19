@@ -877,10 +877,24 @@ elif [[ ${1:-} == "install-skills" ]]; then
     # Definir caminhos
     CODEX_SKILL_DIR="$HOME/.codex/skills/claude-code-review"
     CLAUDE_SKILL_DIR="$HOME/.claude/skills/agy-code-review"
-    AGY_SKILL_DIR_CLAUDE="$HOME/.agents/skills/claude-code-review"
-    AGY_SKILL_DIR_CODEX="$HOME/.agents/skills/codex-code-review"
+    
+    # Antigravity (Agy) usa o diretório de plugins do Gemini
+    AGY_PLUGIN_DIR="$HOME/.gemini/config/plugins/agy-launcher"
+    AGY_SKILL_DIR_BASE="$AGY_PLUGIN_DIR/skills"
+    AGY_SKILL_DIR_CLAUDE="$AGY_SKILL_DIR_BASE/claude-code-review"
+    AGY_SKILL_DIR_CODEX="$AGY_SKILL_DIR_BASE/codex-code-review"
 
-    mkdir -p "$CODEX_SKILL_DIR" "$CLAUDE_SKILL_DIR" "$AGY_SKILL_DIR_CLAUDE" "$AGY_SKILL_DIR_CODEX"
+    mkdir -p "$CODEX_SKILL_DIR" "$CLAUDE_SKILL_DIR" "$AGY_SKILL_DIR_BASE" "$AGY_SKILL_DIR_CLAUDE" "$AGY_SKILL_DIR_CODEX"
+
+    # Criar plugin.json para o Antigravity reconhecer as skills
+    cat << 'EOF' > "${AGY_PLUGIN_DIR}/plugin.json"
+{
+  "name": "agy-launcher-skills",
+  "version": "1.4.0",
+  "description": "Skills instaladas via AI CLI Launcher",
+  "author": { "name": "Cleofas Rocha" }
+}
+EOF
 
     # Skill para o Codex chamar o Claude
     cat << 'EOF' > "${CODEX_SKILL_DIR}/SKILL.md"
