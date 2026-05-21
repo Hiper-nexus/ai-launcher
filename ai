@@ -19,16 +19,13 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.4.0"
-
-# Configurações globais
-export CODEX_EXPERIMENTAL=true
+AI_LAUNCHER_VERSION="1.5.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
 # ╚══════════════════════════════════════════════════════╝
 CLAUDE_FLAGS=(--dangerously-skip-permissions)
-CODEX_FLAGS=(--experimental --dangerously-bypass-approvals-and-sandbox)
+CODEX_FLAGS=(--dangerously-bypass-approvals-and-sandbox)
 GEMINI_FLAGS=(--yolo --model pro --skip-trust)
 AGY_FLAGS=(--dangerously-skip-permissions)
 
