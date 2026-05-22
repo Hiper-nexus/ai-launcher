@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.6.0"
+AI_LAUNCHER_VERSION="1.6.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -520,6 +520,8 @@ CLIs de IA:
   gemini, g              Abre Gemini CLI
   agy,     a              Abre Antigravity CLI
   orchestrate, o          Orquestra Codex + AGY + Claude por preset
+  trio, 3                 Alias curto para orquestração
+  review, revisar, sr     Alias curto para senior review
   o review ["escopo"]     Dry-run senior review: Codex -> AGY -> Claude -> síntese
   o status|collect|cleanup Utilitários da camada ~/.ai-orchestration
 
@@ -559,6 +561,8 @@ Exemplos:
   ai g                            Gemini
   ai a                            Antigravity
   ai o                            Lista perfil e presets do projeto atual
+  ai trio "mapear pagamentos"     Alias curto para ai o
+  ai review --execute             Executa code review senior do diff atual
   ai o "implementar fix aprovado"  Dry-run adaptativo
   ai o review                     Dry-run code review senior do diff atual
   ai o review --execute           Executa code review senior do diff atual
@@ -1041,7 +1045,10 @@ elif [[ ${1:-} == "agy" || ${1:-} == "a" || ${1:-} == "antigravity" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS "$@"
-elif [[ ${1:-} == "orchestrate" || ${1:-} == "orchestration" || ${1:-} == "o" ]]; then
+elif [[ ${1:-} == "review" || ${1:-} == "revisar" || ${1:-} == "sr" || ${1:-} == "validar" ]]; then
+    shift
+    launch_orchestration review "$@"
+elif [[ ${1:-} == "orchestrate" || ${1:-} == "orchestration" || ${1:-} == "o" || ${1:-} == "trio" || ${1:-} == "3" || ${1:-} == "agents" ]]; then
     shift
     launch_orchestration "$@"
 elif [[ ${1:-} == "install-skills" ]]; then

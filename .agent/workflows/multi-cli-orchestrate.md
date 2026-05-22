@@ -1,5 +1,5 @@
 ---
-description: Run or preview a Codex + Claude + AGY orchestration workflow with configurable execution order.
+description: Run or preview a Codex + Claude + AGY orchestration workflow with configurable execution order. Trigger for natural requests like "review senior", "revisar com os 3", "usa os 3", "orquestra isso", "AGY primeiro", "Claude primeiro", "Codex primeiro", "corrigir ate low", or "validar com outro agente".
 ---
 
 # Multi-CLI Orchestrate

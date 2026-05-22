@@ -25,6 +25,8 @@ ai c            # Claude Code direto
 ai x            # Codex direto
 ai g            # Gemini direto
 ai o            # Orquestração Codex + AGY + Claude
+ai trio "prompt" # Alias curto para orquestração
+ai review       # Alias curto para code review senior
 ai c "prompt"   # Claude com prompt
 ai o "prompt"   # Dry-run adaptativo da orquestração
 ai o review     # Dry-run do code review senior: Codex -> AGY -> Claude
@@ -41,7 +43,7 @@ ai --help       # Ajuda
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
 | Gemini | `ai g` | `--yolo` |
 | Antigravity | `ai a` | _(nenhuma)_ |
-| Multi-CLI Orchestration | `ai o` | `ai-orchestrate` |
+| Multi-CLI Orchestration | `ai o`, `ai trio`, `ai review` | `ai-orchestrate` |
 
 ## Orquestração Multi-CLI
 
@@ -49,6 +51,9 @@ O atalho `ai o` integra a camada `~/.ai-orchestration`, que roteia tarefas entre
 
 ```bash
 ai o                                      # Lista perfil detectado e presets
+ai trio "mapear pagamentos"               # Alias curto para orquestração
+ai review                                 # Dry-run do senior review do diff atual
+ai review --execute                       # Executa senior review do diff atual
 ai o "implementar fix aprovado"           # Dry-run adaptativo
 ai o --preset agy-first --task "mapear pagamentos"
 ai o --preset codex-first --execute --task "analisar fix"
@@ -58,6 +63,8 @@ ai o review --execute                     # Executa senior review do diff atual
 ai o status                               # Status da camada de orquestração
 ai o collect                              # Gera report do último run
 ```
+
+Dentro do Codex, Claude ou AGY, você não precisa decorar o nome técnico da skill. Frases como "review senior", "revisar com os 3", "usa os 3", "orquestra isso", "AGY primeiro", "Claude primeiro", "validar com outro agente" e "corrigir ate low" foram adicionadas como gatilhos naturais para a orquestração.
 
 Presets principais:
 

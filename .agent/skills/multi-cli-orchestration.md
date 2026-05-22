@@ -1,12 +1,19 @@
 ---
 name: multi-cli-orchestration
-description: Coordinate Codex, Claude, and AGY with configurable execution order and local project profiles.
+description: Coordinate Codex, Claude, and AGY with configurable execution order and local project profiles. Trigger for "review senior", "revisar com os 3", "usa os 3", "orquestra isso", "chama Claude e AGY", "AGY primeiro", "Claude primeiro", "Codex primeiro", "validar com outro agente", "tarefa complexa", "arquitetura critica", "migração", "pagamentos", "auth", "Supabase", "segurança", "corrigir ate low", "PR review", or "diff review".
 ---
 
 # Multi-CLI Orchestration
 
 Use this skill when the user wants Codex, Claude, and AGY to work together, or
 when the user wants to change who executes first.
+
+Natural phrases that should trigger this workflow:
+
+- "review senior", "revisar com os 3", "corrigir ate low", "validar com outro agente"
+- "usa os 3", "orquestra isso", "chama Claude e AGY", "Codex + Claude + AGY"
+- "AGY primeiro", "Claude primeiro", "Codex primeiro"
+- architecture, migration, auth, payment, Supabase, tenant, webhook, queue, provider, or security work
 
 Shared configuration:
 
