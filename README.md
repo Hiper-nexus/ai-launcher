@@ -29,7 +29,7 @@ ai trio "prompt" # Alias curto para orquestração
 ai review       # Alias curto para code review senior
 ai c "prompt"   # Claude com prompt
 ai o "prompt"   # Dry-run adaptativo da orquestração
-ai o review     # Dry-run do code review senior: Codex -> AGY -> Claude
+ai o review     # Dry-run do code review senior: Codex -> AGY -> Claude -> síntese
 ai --history    # Ver histórico de uso
 ai --config     # Editar flags
 ai --help       # Ajuda

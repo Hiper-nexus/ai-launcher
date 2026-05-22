@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.6.1"
+AI_LAUNCHER_VERSION="1.6.2"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -326,30 +326,78 @@ launch() {
     fi
 }
 
-launch_orchestration() {
+orchestration_missing_cmd() {
+    echo -e "${RED}Erro: runner de orquestração não encontrado: ${ORCHESTRATE_CMD}${RESET}"
+    echo "  Configurado em ORCHESTRATE_CMD: ${ORCHESTRATE_CMD}"
+    echo "  Padrão: ${HOME}/.local/bin/ai-orchestrate"
+    echo "  Ajuste ORCHESTRATE_CMD ou reinstale a camada de orquestração."
+}
+
+require_orchestrate_cmd() {
     if ! check_installed "$ORCHESTRATE_CMD"; then
-        echo -e "${RED}Erro: ${ORCHESTRATE_CMD} não está instalado.${RESET}"
-        echo "  Esperado: ${HOME}/.local/bin/ai-orchestrate"
-        echo "  Recrie a camada com: ${AI_ORCHESTRATION_HOME}/scripts/status.sh"
+        orchestration_missing_cmd
         exit 1
     fi
+}
+
+orchestration_script_path() {
+    printf '%s/scripts/%s.sh' "$AI_ORCHESTRATION_HOME" "$1"
+}
+
+run_orchestration_script() {
+    local script_name="$1"
+    shift
+    local script_path
+    script_path=$(orchestration_script_path "$script_name")
+    if [[ ! -x "$script_path" ]]; then
+        echo -e "${RED}Erro: script de orquestração indisponível: ${script_path}${RESET}"
+        echo "  AI_ORCHESTRATION_HOME atual: ${AI_ORCHESTRATION_HOME}"
+        echo "  Padrão: ${HOME}/.ai-orchestration"
+        echo "  Reinstale ou restaure a camada de orquestração antes de usar este subcomando."
+        exit 1
+    fi
+    exec "$script_path" "$@"
+}
+
+orchestration_has_execute_flag() {
+    local arg
+    for arg in "$@"; do
+        [[ "$arg" == "--execute" ]] && return 0
+    done
+    return 1
+}
+
+setup_orchestration_provider_if_needed() {
+    if [[ -z "${_active_provider:-}" ]]; then
+        return
+    fi
+    if orchestration_has_execute_flag "$@"; then
+        provider_setup_env "$_active_provider" || exit 1
+    fi
+}
+
+launch_orchestration() {
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
 
     local subcmd="${1:-}"
     case "$subcmd" in
         status)
             shift
-            exec "${AI_ORCHESTRATION_HOME}/scripts/status.sh" "$@"
+            run_orchestration_script status "$@"
             ;;
         collect)
             shift
-            exec "${AI_ORCHESTRATION_HOME}/scripts/collect.sh" "$@"
+            run_orchestration_script collect "$@"
             ;;
         cleanup)
             shift
-            exec "${AI_ORCHESTRATION_HOME}/scripts/cleanup.sh" "$@"
+            run_orchestration_script cleanup "$@"
             ;;
     esac
 
+    require_orchestrate_cmd
+    setup_orchestration_provider_if_needed "$@"
     enter_repo_if_needed
     save_history "Multi-CLI Orchestration"
 
@@ -423,11 +471,7 @@ launch_orchestration() {
 }
 
 orchestration_menu() {
-    if ! check_installed "$ORCHESTRATE_CMD"; then
-        echo -e "${RED}Erro: ${ORCHESTRATE_CMD} não está instalado.${RESET}"
-        echo "  Esperado: ${HOME}/.local/bin/ai-orchestrate"
-        exit 1
-    fi
+    require_orchestrate_cmd
 
     enter_repo_if_needed
 
