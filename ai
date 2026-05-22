@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.5.0"
+AI_LAUNCHER_VERSION="1.6.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -28,6 +28,8 @@ CLAUDE_FLAGS=(--dangerously-skip-permissions)
 CODEX_FLAGS=(--dangerously-bypass-approvals-and-sandbox)
 GEMINI_FLAGS=(--yolo --model pro --skip-trust)
 AGY_FLAGS=(--dangerously-skip-permissions)
+AI_ORCHESTRATION_HOME="${AI_ORCHESTRATION_HOME:-${HOME}/.ai-orchestration}"
+ORCHESTRATE_CMD="${ORCHESTRATE_CMD:-${HOME}/.local/bin/ai-orchestrate}"
 
 # Variáveis de ambiente para cada CLI
 
@@ -324,6 +326,173 @@ launch() {
     fi
 }
 
+launch_orchestration() {
+    if ! check_installed "$ORCHESTRATE_CMD"; then
+        echo -e "${RED}Erro: ${ORCHESTRATE_CMD} não está instalado.${RESET}"
+        echo "  Esperado: ${HOME}/.local/bin/ai-orchestrate"
+        echo "  Recrie a camada com: ${AI_ORCHESTRATION_HOME}/scripts/status.sh"
+        exit 1
+    fi
+
+    local subcmd="${1:-}"
+    case "$subcmd" in
+        status)
+            shift
+            exec "${AI_ORCHESTRATION_HOME}/scripts/status.sh" "$@"
+            ;;
+        collect)
+            shift
+            exec "${AI_ORCHESTRATION_HOME}/scripts/collect.sh" "$@"
+            ;;
+        cleanup)
+            shift
+            exec "${AI_ORCHESTRATION_HOME}/scripts/cleanup.sh" "$@"
+            ;;
+    esac
+
+    enter_repo_if_needed
+    save_history "Multi-CLI Orchestration"
+
+    case "$subcmd" in
+        "")
+            exec "$ORCHESTRATE_CMD" --list
+            ;;
+        review)
+            shift
+            local -a review_extra_args=()
+            local -a review_task_parts=()
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --cwd|--from-run)
+                        local flag_name="$1"
+                        review_extra_args+=("$flag_name")
+                        shift
+                        if [[ $# -eq 0 ]]; then
+                            echo -e "${RED}Erro: ${flag_name} requer valor.${RESET}"
+                            exit 1
+                        fi
+                        review_extra_args+=("$1")
+                        shift
+                        ;;
+                    --execute|--auto-approve|--list)
+                        review_extra_args+=("$1")
+                        shift
+                        ;;
+                    --task)
+                        shift
+                        if [[ $# -eq 0 ]]; then
+                            echo -e "${RED}Erro: --task requer texto.${RESET}"
+                            exit 1
+                        fi
+                        review_task_parts+=("$1")
+                        shift
+                        ;;
+                    --)
+                        shift
+                        while [[ $# -gt 0 ]]; do
+                            review_task_parts+=("$1")
+                            shift
+                        done
+                        ;;
+                    --*)
+                        echo -e "${RED}Flag não suportada em ai o review: $1${RESET}"
+                        echo "Use: ai o --preset senior-code-review ..."
+                        exit 1
+                        ;;
+                    *)
+                        review_task_parts+=("$1")
+                        shift
+                        ;;
+                esac
+            done
+            local task
+            if (( ${#review_task_parts[@]} > 0 )); then
+                task="${review_task_parts[*]}"
+            else
+                task="code review senior do diff atual"
+            fi
+            exec "$ORCHESTRATE_CMD" --preset senior-code-review "${review_extra_args[@]+"${review_extra_args[@]}"}" --task "$task"
+            ;;
+        --*)
+            exec "$ORCHESTRATE_CMD" "$@"
+            ;;
+        *)
+            exec "$ORCHESTRATE_CMD" --task "$*"
+            ;;
+    esac
+}
+
+orchestration_menu() {
+    if ! check_installed "$ORCHESTRATE_CMD"; then
+        echo -e "${RED}Erro: ${ORCHESTRATE_CMD} não está instalado.${RESET}"
+        echo "  Esperado: ${HOME}/.local/bin/ai-orchestrate"
+        exit 1
+    fi
+
+    enter_repo_if_needed
+
+    echo -e "${BOLD}${CYAN}"
+    echo "  ┌──────────────────────────────────────────────────┐"
+    echo "  │      🧠 Orquestração Codex + AGY + Claude         │"
+    echo "  └──────────────────────────────────────────────────┘"
+    echo -e "${RESET}"
+
+    "$ORCHESTRATE_CMD" --list
+    echo ""
+
+    local task
+    read -rp "Tarefa (enter = apenas listar): " task
+    if [[ -z "$task" ]]; then
+        return 0
+    fi
+
+    local -a presets=()
+    local preset_name
+    while IFS= read -r preset_name; do
+        [[ -n "$preset_name" ]] && presets+=("$preset_name")
+    done < <("$ORCHESTRATE_CMD" --list-presets-raw 2>/dev/null || true)
+    if (( ${#presets[@]} == 0 )); then
+        presets=(adaptive senior-code-review codex-first agy-first claude-first ui-heavy backend-critical migration-critical)
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Preset:${RESET}"
+    local i
+    for i in "${!presets[@]}"; do
+        printf "  %d) %s\n" "$((i + 1))" "${presets[$i]}"
+    done
+    echo ""
+
+    local preset_choice preset
+    read -rp "Escolha [1-${#presets[@]}] (default 1): " preset_choice
+    preset_choice=$(normalize_choice "$preset_choice")
+    preset_choice="${preset_choice:-1}"
+    if [[ ! "$preset_choice" =~ ^[0-9]+$ ]] || (( preset_choice < 1 || preset_choice > ${#presets[@]} )); then
+        echo -e "${RED}Preset inválido.${RESET}"
+        exit 1
+    fi
+    preset="${presets[$((preset_choice - 1))]}"
+
+    echo ""
+    echo -e "  ${BOLD}Modo:${RESET}"
+    echo "  1) dry-run (só mostra fluxo)"
+    echo "  2) execute gated (roda análise, para antes de escrita)"
+    echo "  3) execute auto-approve (permite escrita)"
+    echo ""
+
+    local mode_choice
+    read -rp "Escolha [1-3] (default 1): " mode_choice
+    mode_choice=$(normalize_choice "$mode_choice")
+
+    save_history "Multi-CLI Orchestration [${preset}]"
+    case "${mode_choice:-1}" in
+        1) exec "$ORCHESTRATE_CMD" --preset "$preset" --task "$task" ;;
+        2) exec "$ORCHESTRATE_CMD" --preset "$preset" --execute --task "$task" ;;
+        3) exec "$ORCHESTRATE_CMD" --preset "$preset" --execute --auto-approve --task "$task" ;;
+        *) echo -e "${RED}Modo inválido.${RESET}"; exit 1 ;;
+    esac
+}
+
 # ── Versão ───────────────────────────────────────────────
 
 if [[ ${1:-} == "-v" || ${1:-} == "--version" ]]; then
@@ -350,6 +519,9 @@ CLIs de IA:
   codex,  x              Abre Codex CLI
   gemini, g              Abre Gemini CLI
   agy,     a              Abre Antigravity CLI
+  orchestrate, o          Orquestra Codex + AGY + Claude por preset
+  o review ["escopo"]     Dry-run senior review: Codex -> AGY -> Claude -> síntese
+  o status|collect|cleanup Utilitários da camada ~/.ai-orchestration
 
   --via <provider>       Usa provider alternativo (openrouter, deepseek, ollama...)
 
@@ -386,6 +558,12 @@ Exemplos:
   ai x                            Codex
   ai g                            Gemini
   ai a                            Antigravity
+  ai o                            Lista perfil e presets do projeto atual
+  ai o "implementar fix aprovado"  Dry-run adaptativo
+  ai o review                     Dry-run code review senior do diff atual
+  ai o review --execute           Executa code review senior do diff atual
+  ai o --preset agy-first --task "mapear pagamentos"
+  ai o --from-run ~/.ai-orchestration/runs/<run> --execute --auto-approve
   ai p ls                         Lista providers configurados
   ai f                            Toggle de flags antes de lançar
 HELP
@@ -863,6 +1041,9 @@ elif [[ ${1:-} == "agy" || ${1:-} == "a" || ${1:-} == "antigravity" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS "$@"
+elif [[ ${1:-} == "orchestrate" || ${1:-} == "orchestration" || ${1:-} == "o" ]]; then
+    shift
+    launch_orchestration "$@"
 elif [[ ${1:-} == "install-skills" ]]; then
     echo -e "${GREEN}Instalando skills de Code Review (Claude ↔ Antigravity ↔ Codex)...${RESET}"
     
@@ -1146,10 +1327,12 @@ if [[ ! -t 0 ]]; then
     exit 1
 fi
 
+while true; do
 claude_status=$(status_icon claude)
 codex_status=$(status_icon codex)
 gemini_status=$(status_icon gemini)
 agy_status=$(status_icon agy)
+orchestrate_status=$(status_icon "$ORCHESTRATE_CMD")
 
 claude_ver=$(get_version claude)
 codex_ver=$(get_version codex)
@@ -1166,10 +1349,11 @@ printf "  ${BOLD}1)${RESET} Claude Code  %-20s %b\n" "${claude_ver}" "${claude_s
 printf "  ${BOLD}2)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
 printf "  ${BOLD}3)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
 printf "  ${BOLD}4)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
+printf "  ${BOLD}5)${RESET} Orquestração %-20s %b\n" "multi-cli" "${orchestrate_status}"
 echo ""
-echo -e "  ${BOLD}5)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}6)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}7)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado: Claude ↔ Agy ↔ Codex)"
+echo -e "  ${BOLD}6)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}7)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}8)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado: Claude ↔ Agy ↔ Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -1183,7 +1367,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-7/0]: " choice
+read -rp "Escolha [1-8/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -1195,14 +1379,29 @@ case $choice in
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
     4) enter_repo_if_needed
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-    5) provider_list ;;
-    6) flags_menu
-       for _f in "${CLAUDE_FLAGS[@]}"; do
-           [[ "$_f" == "--continue" || "$_f" == "--resume" ]] && _is_continuing=true
-       done
-       enter_repo_if_needed
-       launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-    7) exec "$0" install-skills ;;
+    5) orchestration_menu ;;
+    6) provider_list ;;
+    7) flags_menu
+       echo ""
+       echo -e "  ${BOLD}Depois das flags:${RESET}"
+       echo "  1) Lançar Claude agora"
+       echo "  2) Voltar ao menu"
+       read -rp "Escolha [1-2] (default 1): " after_flags
+       after_flags=$(normalize_choice "$after_flags")
+       case "${after_flags:-1}" in
+           1)
+               for _f in "${CLAUDE_FLAGS[@]}"; do
+                   [[ "$_f" == "--continue" || "$_f" == "--resume" ]] && _is_continuing=true
+               done
+               enter_repo_if_needed
+               launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS
+               ;;
+           2) ;;
+           *) echo "Opção inválida."; exit 1 ;;
+       esac
+       ;;
+    8) exec "$0" install-skills ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
+done

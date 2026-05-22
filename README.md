@@ -24,7 +24,10 @@ ai              # Menu interativo com status de cada CLI
 ai c            # Claude Code direto
 ai x            # Codex direto
 ai g            # Gemini direto
+ai o            # Orquestração Codex + AGY + Claude
 ai c "prompt"   # Claude com prompt
+ai o "prompt"   # Dry-run adaptativo da orquestração
+ai o review     # Dry-run do code review senior: Codex -> AGY -> Claude
 ai --history    # Ver histórico de uso
 ai --config     # Editar flags
 ai --help       # Ajuda
@@ -38,6 +41,34 @@ ai --help       # Ajuda
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
 | Gemini | `ai g` | `--yolo` |
 | Antigravity | `ai a` | _(nenhuma)_ |
+| Multi-CLI Orchestration | `ai o` | `ai-orchestrate` |
+
+## Orquestração Multi-CLI
+
+O atalho `ai o` integra a camada `~/.ai-orchestration`, que roteia tarefas entre Codex, AGY e Claude conforme o projeto atual.
+
+```bash
+ai o                                      # Lista perfil detectado e presets
+ai o "implementar fix aprovado"           # Dry-run adaptativo
+ai o --preset agy-first --task "mapear pagamentos"
+ai o --preset codex-first --execute --task "analisar fix"
+ai o --from-run ~/.ai-orchestration/runs/<run> --execute --auto-approve
+ai o review                               # Dry-run do senior review do diff atual
+ai o review --execute                     # Executa senior review do diff atual
+ai o status                               # Status da camada de orquestração
+ai o collect                              # Gera report do último run
+```
+
+Presets principais:
+
+- `adaptive`
+- `senior-code-review`
+- `codex-first`
+- `agy-first`
+- `claude-first`
+- `ui-heavy`
+- `backend-critical`
+- `migration-critical`
 
 ## Features
 
@@ -47,6 +78,7 @@ ai --help       # Ajuda
 - Passagem de prompt direto via linha de comando
 - Flags configuráveis no topo do script
 - Providers alternativos (OpenRouter, DeepSeek, Ollama, LM Studio, LiteLLM)
+- Orquestração Codex + AGY + Claude com presets e gate antes de escrita
 - Picker de repos conhecidos quando lançado fora de um repo git
 - Funciona em Linux e no macOS padrão
 
