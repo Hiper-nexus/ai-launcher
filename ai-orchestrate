@@ -1,0 +1,302 @@
+#!/usr/bin/env bash
+# ai-orchestrate — runner de orquestração multi-CLI (Codex + AGY + Claude)
+#
+# Contrato chamado pelo launcher `ai` (ai o / ai trio / ai review):
+#   ai-orchestrate --list
+#   ai-orchestrate --list-presets-raw
+#   ai-orchestrate [--preset NAME] [--execute] [--auto-approve] [--from-run DIR] --task "TAREFA"
+#   ai-orchestrate "TAREFA"            # adaptive, dry-run
+#
+# Papéis (ver ~/.ai-orchestration/config.json):
+#   Codex  = implementer / finalizer        (único que escreve, em --execute)
+#   AGY    = scout / decompositor / revisor  (advisory, read-only)
+#   Claude = crítico de arquitetura / segurança / risco (advisory, read-only)
+#
+# Presets: adaptive | senior-code-review | review-council | codex-first |
+#          agy-first | claude-first | ui-heavy | backend-critical | migration-critical
+#
+# Sem --execute  => DRY-RUN  (ninguém altera arquivos; só análise + diff proposto)
+# Com --execute  => só o implementer (codex) pode escrever; advisory continuam read-only;
+#                   presets de review nunca escrevem; o gate para antes da escrita
+#                   se algum agente sinalizar RISK: high (a menos que --auto-approve).
+#
+# Env de override:
+#   CODEX_BIN / AGY_BIN / CLAUDE_BIN   caminhos dos binários
+#   AI_ORCHESTRATION_HOME              base da camada (default ~/.ai-orchestration)
+#   ORCH_TIMEOUT                       timeout por agente em s (default 900)
+#   ORCH_SKIP                          agentes a pular, ex: "agy" ou "codex agy"
+#   ORCH_SYNTH                         sintetizador final (codex|agy|claude|none)
+set -euo pipefail
+
+# --------------------------------------------------------------------------
+ORCH_HOME="${AI_ORCHESTRATION_HOME:-${HOME}/.ai-orchestration}"
+RUNS_DIR="${ORCH_HOME}/runs"
+PROFILES="${ORCH_HOME}/project-profiles.json"
+ORCH_TIMEOUT="${ORCH_TIMEOUT:-900}"
+ORCH_SKIP="${ORCH_SKIP:-}"
+IMPLEMENTER="codex"
+REVIEW_ONLY="senior-code-review review-council"
+
+if [[ -t 1 ]]; then
+  BOLD=$'\033[1m'; RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; RST=$'\033[0m'
+else
+  BOLD=""; RED=""; GRN=""; YEL=""; RST=""
+fi
+say()    { printf '%s\n' "$*" >&2; }
+banner() { printf '\n%s==> %s%s\n' "$BOLD" "$*" "$RST" >&2; }
+warn()   { printf '%s%s%s\n' "$YEL" "$*" "$RST" >&2; }
+die()    { printf '%s%s%s\n' "$RED" "$*" "$RST" >&2; exit 1; }
+
+# --------------------------------------------------------------------------
+# Resolução de binários (PATH pode não ter ~/.npm-global em shell não-login)
+# --------------------------------------------------------------------------
+resolve_bin() {
+  local name="$1" override="$2"; shift 2
+  if [[ -n "$override" ]]; then printf '%s\n' "$override"; return 0; fi
+  if command -v "$name" >/dev/null 2>&1; then command -v "$name"; return 0; fi
+  local c; for c in "$@"; do [[ -x "$c" ]] && { printf '%s\n' "$c"; return 0; }; done
+  return 1
+}
+CODEX_BIN="$(resolve_bin codex "${CODEX_BIN:-}" \
+  "$HOME/.npm-global/bin/codex" "$HOME/.codex/bin/codex" /opt/homebrew/bin/codex || true)"
+AGY_BIN="$(resolve_bin agy "${AGY_BIN:-}" \
+  /opt/homebrew/bin/agy "$HOME/.npm-global/bin/agy" || true)"
+CLAUDE_BIN="$(resolve_bin claude "${CLAUDE_BIN:-}" \
+  "$HOME/.local/bin/claude" "$HOME/.npm-global/bin/claude" || true)"
+
+TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
+run_to() { local s="$1"; shift; if [[ -n "$TIMEOUT_BIN" ]]; then "$TIMEOUT_BIN" "$s" "$@"; else "$@"; fi; }
+
+# --------------------------------------------------------------------------
+# Presets — ordem = tokens (codex|agy|claude), conforme a skill
+# --------------------------------------------------------------------------
+PRESETS="adaptive senior-code-review review-council codex-first agy-first claude-first ui-heavy backend-critical migration-critical"
+
+preset_order() {
+  case "$1" in
+    senior-code-review|review-council) echo "codex agy claude" ;;
+    codex-first)        echo "codex agy claude" ;;
+    claude-first)       echo "claude agy codex" ;;
+    agy-first)          echo "agy claude codex" ;;
+    ui-heavy)           echo "agy claude codex" ;;
+    backend-critical)   echo "codex claude agy" ;;
+    migration-critical) echo "codex agy claude" ;;
+    *) return 1 ;;
+  esac
+}
+preset_desc() {
+  case "$1" in
+    adaptive)           echo "detecta pelo repo (padrão)" ;;
+    senior-code-review) echo "review: codex → agy → claude (síntese codex)" ;;
+    review-council)     echo "alias de senior-code-review" ;;
+    codex-first)        echo "codex implementa → agy scout → claude revisa" ;;
+    agy-first)          echo "agy decompõe → claude modela → codex implementa" ;;
+    claude-first)       echo "claude planeja → agy confere → codex implementa" ;;
+    ui-heavy)           echo "agy → claude → codex (frontend/UX)" ;;
+    backend-critical)   echo "codex → claude(seg) → agy (auth/webhook/queue)" ;;
+    migration-critical) echo "codex → agy → claude(risco) (SQL/dados)" ;;
+    *) echo "" ;;
+  esac
+}
+print_list() {
+  printf '%sPresets de orquestração:%s\n' "$BOLD" "$RST"
+  local p; for p in $PRESETS; do printf '  %s%-20s%s %s\n' "$GRN" "$p" "$RST" "$(preset_desc "$p")"; done
+}
+
+is_review_only() { case " $REVIEW_ONLY " in *" $1 "*) return 0;; *) return 1;; esac; }
+skipped()        { case " $ORCH_SKIP "  in *" $1 "*) return 0;; *) return 1;; esac; }
+agent_label()    { case "$1" in codex) echo "Codex";; agy) echo "Antigravity";; claude) echo "Claude";; *) echo "$1";; esac; }
+
+# --------------------------------------------------------------------------
+# Detecção adaptativa: project-profiles.json tem prioridade; senão heurística
+# --------------------------------------------------------------------------
+detect_preset() {
+  local root="$1" base; base="$(basename "$root")"
+  if [[ -f "$PROFILES" ]] && command -v python3 >/dev/null 2>&1; then
+    local p; p="$(python3 - "$PROFILES" "$base" <<'PY' 2>/dev/null || true
+import json,sys
+try:
+    cfg=json.load(open(sys.argv[1])); print(cfg.get("repos",{}).get(sys.argv[2],""))
+except Exception: pass
+PY
+)"
+    [[ -n "$p" ]] && { echo "$p"; return; }
+  fi
+  local files front back
+  files="$(git -C "$root" ls-files 2>/dev/null || true)"
+  if printf '%s\n' "$files" | grep -qiE '(^|/)(migrations|alembic/versions)/'; then echo "migration-critical"; return; fi
+  front=$(printf '%s\n' "$files" | grep -ciE '\.(tsx|jsx|vue|svelte|css|scss)$' || true)
+  back=$(printf '%s\n' "$files" | grep -ciE '\.(py|go|rs|java|rb|php|sql)$' || true)
+  front="${front:-0}"; back="${back:-0}"
+  if [[ "$front" -gt "$back" && "$front" -gt 0 ]]; then echo "ui-heavy"; return; fi
+  if [[ "$back" -gt 0 ]]; then echo "backend-critical"; return; fi
+  echo "senior-code-review"
+}
+
+# --------------------------------------------------------------------------
+# Invocação de cada CLI (não-interativo). $2 = prompt
+# --------------------------------------------------------------------------
+run_agent() {
+  local agent="$1" prompt="$2"
+  case "$agent" in
+    codex)  [[ -n "$CODEX_BIN"  ]] || { echo "[codex ausente]";  return 0; }; run_to "$ORCH_TIMEOUT" "$CODEX_BIN"  exec --dangerously-bypass-approvals-and-sandbox "$prompt" 2>&1 ;;
+    agy)    [[ -n "$AGY_BIN"    ]] || { echo "[agy ausente]";    return 0; }; run_to "$ORCH_TIMEOUT" "$AGY_BIN"    -- "$prompt" 2>&1 ;;
+    claude) [[ -n "$CLAUDE_BIN" ]] || { echo "[claude ausente]"; return 0; }; run_to "$ORCH_TIMEOUT" "$CLAUDE_BIN" --dangerously-skip-permissions -p "$prompt" 2>&1 ;;
+    *) echo "[agente desconhecido: $agent]"; return 0 ;;
+  esac
+}
+
+# --------------------------------------------------------------------------
+# Prompts
+# --------------------------------------------------------------------------
+build_prompt() {  # <agente> <task> <can_write> <repo> <prev_file>
+  local agent="$1" task="$2" can_write="$3" root="$4" prev="$5" role mode
+  case "$agent" in
+    codex)  role="implementer/finalizer: implemente, rode testes, finalize" ;;
+    agy)    role="scout/decompositor/revisor independente" ;;
+    claude) role="crítico de arquitetura, segurança e risco" ;;
+    *)      role="agente" ;;
+  esac
+  if [[ "$can_write" == "1" ]]; then
+    mode="MODO EXECUTAR: você é o IMPLEMENTADOR e PODE alterar arquivos. Faça as mudanças e rode os testes."
+  else
+    mode="ADVISORY / READ-ONLY: NÃO altere nenhum arquivo. Apenas analise, critique e proponha o diff/passos."
+  fi
+  printf 'Você é o agente "%s" (%s) numa orquestração multi-CLI.\n\n' "$(agent_label "$agent")" "$role"
+  printf 'Repositório: %s\nTarefa: %s\n\n%s\n\n' "$root" "$task" "$mode"
+  printf '%s\n' "Não leia .env, segredos, credenciais ou bancos locais."
+  if [[ -n "$prev" && -s "$prev" ]]; then
+    printf '\nContexto do agente anterior (critique e avance, não repita):\n---\n'; cat "$prev"; printf '\n---\n'
+  fi
+  printf '\n%s\n%s\n' "Ao final inclua OBRIGATORIAMENTE uma linha no formato exato:" \
+    "RISK: low|medium|high   (high = mudança arriscada que exige revisão humana)"
+}
+build_synthesis_prompt() {  # <task> <run_dir>
+  local task="$1" dir="$2" f
+  printf 'Você é o sintetizador final de uma orquestração multi-CLI (Codex/AGY/Claude).\n'
+  printf 'Tarefa original: %s\n\n' "$task"
+  printf '%s\n%s\n\n' "Consolide as saídas abaixo num único relatório Markdown com seções:" \
+    "Resumo · Achados (com severidade) · Recomendações priorizadas · Próximos passos."
+  for f in "$dir"/[0-9]*-*.md; do [[ -f "$f" ]] || continue; printf '\n===== %s =====\n' "$(basename "$f")"; cat "$f"; done
+}
+
+# --------------------------------------------------------------------------
+# Args
+# --------------------------------------------------------------------------
+PRESET=""; TASK=""; EXECUTE=0; AUTO_APPROVE=0; FROM_RUN=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --list)             print_list; exit 0 ;;
+    --list-presets-raw) for p in $PRESETS; do echo "$p"; done; exit 0 ;;
+    --preset)           PRESET="${2:-}"; shift 2 ;;
+    --task)             TASK="${2:-}"; shift 2 ;;
+    --execute)          EXECUTE=1; shift ;;
+    --auto-approve)     AUTO_APPROVE=1; shift ;;
+    --from-run)         FROM_RUN="${2:-}"; shift 2 ;;
+    --cwd)              cd "${2:-.}" || die "cwd inválido: ${2:-}"; shift 2 ;;
+    -h|--help)          print_list; exit 0 ;;
+    --*)                warn "flag ignorada: $1"; shift ;;
+    *)                  if [[ -z "$TASK" ]]; then TASK="$1"; else TASK="$TASK $1"; fi; shift ;;
+  esac
+done
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+[[ -z "$PRESET" || "$PRESET" == "adaptive" ]] && PRESET="$(detect_preset "$REPO_ROOT")"
+ORDER="$(preset_order "$PRESET")" || die "Preset desconhecido: $PRESET (use --list)"
+[[ -z "${TASK// /}" && -z "$FROM_RUN" ]] && die "Tarefa vazia. Use: ai-orchestrate --task \"...\""
+
+# Sintetizador final
+if [[ -n "${ORCH_SYNTH:-}" ]]; then SYNTH="$ORCH_SYNTH"
+elif is_review_only "$PRESET"; then SYNTH="codex"; else SYNTH="claude"; fi
+
+TS="$(date +%Y%m%d-%H%M%S)"
+RUN_DIR="${RUNS_DIR}/${TS}"
+mkdir -p "$RUN_DIR"
+
+mode_str="DRY-RUN"; [[ "$EXECUTE" == "1" ]] && mode_str="EXECUTAR"
+is_review_only "$PRESET" && mode_str="$mode_str (review/read-only)"
+banner "Orquestração ($PRESET) — $mode_str"
+say "  repo:  $REPO_ROOT"
+say "  ordem: $ORDER   síntese: $SYNTH"
+say "  run:   $RUN_DIR"
+[[ -n "$ORCH_SKIP" ]] && warn "  pulando: $ORCH_SKIP"
+[[ -z "$TIMEOUT_BIN" ]] && warn "  (sem 'timeout' no sistema — agentes rodam sem limite de tempo)"
+
+# --------------------------------------------------------------------------
+# Cadeia
+# --------------------------------------------------------------------------
+prev_file=""; idx=0; gate_tripped=0
+if [[ -n "$FROM_RUN" ]]; then
+  banner "Reaproveitando run anterior: $FROM_RUN"
+  [[ -d "$FROM_RUN" ]] || die "--from-run: diretório inexistente: $FROM_RUN"
+  cp "${FROM_RUN%/}"/[0-9]*-*.md "$RUN_DIR"/ 2>/dev/null || true
+else
+  for agent in $ORDER; do
+    if skipped "$agent"; then warn "pulando $agent (ORCH_SKIP)"; continue; fi
+    idx=$((idx+1)); label="$(agent_label "$agent")"
+    out_file="$RUN_DIR/$(printf '%02d' "$idx")-${agent}.md"
+
+    # quem pode escrever: só o implementer, em --execute, e não em preset de review
+    can_write=0
+    if [[ "$EXECUTE" == "1" && "$agent" == "$IMPLEMENTER" ]] && ! is_review_only "$PRESET"; then
+      can_write=1
+    fi
+
+    # Gate ANTES de uma etapa de escrita
+    if [[ "$can_write" == "1" && "$AUTO_APPROVE" != "1" ]]; then
+      printf '%sPróxima etapa (%s) pode ESCREVER arquivos. Continuar? [y/N] %s' "$YEL" "$label" "$RST" >&2
+      read -r ans || ans=""
+      case "$ans" in y|Y|s|S) ;; *) gate_tripped=1; warn "Gate: escrita não autorizada — interrompendo."; break ;; esac
+    fi
+
+    banner "[$idx] $label$( [[ "$can_write" == 1 ]] && echo ' (escrita)' || echo ' (read-only)')"
+    prompt="$(build_prompt "$agent" "$TASK" "$can_write" "$REPO_ROOT" "$prev_file")"
+    run_agent "$agent" "$prompt" | tee "$out_file" || true
+
+    if grep -qiE '^RISK:[[:space:]]*high' "$out_file" 2>/dev/null; then
+      warn "⚠ $label sinalizou RISK: high"
+    fi
+    prev_file="$out_file"
+  done
+fi
+
+# --------------------------------------------------------------------------
+# Síntese final
+# --------------------------------------------------------------------------
+REPORT="$RUN_DIR/report.md"
+synth_bin_ok=0
+case "$SYNTH" in codex) [[ -n "$CODEX_BIN" ]] && synth_bin_ok=1;; agy) [[ -n "$AGY_BIN" ]] && synth_bin_ok=1;; claude) [[ -n "$CLAUDE_BIN" ]] && synth_bin_ok=1;; esac
+if [[ "$gate_tripped" != "1" && "$SYNTH" != "none" && "$synth_bin_ok" == "1" ]] && ! skipped "$SYNTH"; then
+  banner "Síntese final ($(agent_label "$SYNTH"))"
+  run_agent "$SYNTH" "$(build_synthesis_prompt "$TASK" "$RUN_DIR")" | tee "$REPORT" || true
+else
+  { echo "# Relatório de orquestração ($PRESET)"; echo; echo "Tarefa: $TASK"; echo
+    for f in "$RUN_DIR"/[0-9]*-*.md; do [[ -f "$f" ]] && { echo "## $(basename "$f")"; cat "$f"; echo; }; done
+  } > "$REPORT"
+fi
+cp "$REPORT" "${ORCH_HOME}/reports/${TS}.md" 2>/dev/null || true
+
+# --------------------------------------------------------------------------
+# meta.json
+# --------------------------------------------------------------------------
+je() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+{
+  printf '{\n'
+  printf '  "timestamp": "%s",\n'    "$TS"
+  printf '  "preset": "%s",\n'       "$PRESET"
+  printf '  "order": "%s",\n'        "$ORDER"
+  printf '  "synthesizer": "%s",\n'  "$SYNTH"
+  printf '  "repo": "%s",\n'         "$(je "$REPO_ROOT")"
+  printf '  "task": "%s",\n'         "$(je "$TASK")"
+  printf '  "execute": %s,\n'        "$EXECUTE"
+  printf '  "auto_approve": %s,\n'   "$AUTO_APPROVE"
+  printf '  "gate_tripped": %s,\n'   "$gate_tripped"
+  printf '  "skipped": "%s",\n'      "$(je "$ORCH_SKIP")"
+  printf '  "report": "%s"\n'        "$(je "$REPORT")"
+  printf '}\n'
+} > "$RUN_DIR/meta.json"
+
+banner "Concluído"
+say "  relatório: $REPORT"
+say "  run:       $RUN_DIR"
+[[ "$gate_tripped" == "1" ]] && exit 2 || exit 0

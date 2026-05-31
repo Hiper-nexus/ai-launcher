@@ -1,0 +1,17 @@
+{
+  "default_preset": "adaptive",
+  "synthesizer_default": "claude",
+  "synthesizer_overrides": {
+    "senior-code-review": "codex",
+    "review-council": "codex"
+  },
+  "implementer": "codex",
+  "review_only_presets": ["senior-code-review", "review-council"],
+  "timeout_seconds": 900,
+  "keep_runs": 20,
+  "agents": {
+    "codex":  { "cmd": "codex",  "role": "implementer/finalizer" },
+    "agy":    { "cmd": "agy",    "role": "scout/decomposer/reviewer" },
+    "claude": { "cmd": "claude", "role": "critic/security/risk" }
+  }
+}

@@ -115,3 +115,27 @@ echo -e "${YELLOW}Pré-requisitos (instale os que quiser usar):${RESET}"
 echo "  npm install -g @anthropic-ai/claude-code   # Claude"
 echo "  npm install -g @openai/codex               # Codex"
 echo "  npm install -g @google/gemini-cli           # Gemini"
+
+# >>> ai-orchestration layer >>>
+install_orchestration_layer() {
+    local raw="https://raw.githubusercontent.com/cleofasvolarehost/ai-launcher/main"
+    local bin_dir="${HOME}/.local/bin"
+    local orch="${HOME}/.ai-orchestration"
+    mkdir -p "$bin_dir" "$orch/scripts" "$orch/runs" "$orch/reports" "$orch/templates"
+
+    echo "Instalando camada de orquestração multi-CLI..."
+    curl -fsSL "$raw/ai-orchestrate" -o "$bin_dir/ai-orchestrate" && chmod +x "$bin_dir/ai-orchestrate"
+    for f in status collect cleanup; do
+        curl -fsSL "$raw/orchestration/scripts/$f.sh" -o "$orch/scripts/$f.sh" && chmod +x "$orch/scripts/$f.sh"
+    done
+    curl -fsSL "$raw/orchestration/config.json" -o "$orch/config.json"
+    # não sobrescreve perfis personalizados do usuário
+    if [ ! -f "$orch/project-profiles.json" ]; then
+        curl -fsSL "$raw/orchestration/project-profiles.json" -o "$orch/project-profiles.json"
+    fi
+    echo "Camada de orquestração instalada em $orch (runner: $bin_dir/ai-orchestrate)."
+}
+install_orchestration_layer
+# <<< ai-orchestration layer <<<
+
+
