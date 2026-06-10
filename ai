@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.8.0"
+AI_LAUNCHER_VERSION="1.9.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -69,6 +69,15 @@ ACCOUNTS_DIR="${HOME}/.local/share/ai-launcher/accounts"
 CONTA_AUTO_SWITCH="${AI_CONTA_AUTO_SWITCH:-true}"
 CONTA_AUTO_THRESHOLD="${AI_CONTA_AUTO_THRESHOLD:-100}"
 CLAUDE_USAGE_URL="https://api.anthropic.com/api/oauth/usage"
+# Cache de uso: o endpoint tem rate limit agressivo; reusa leituras recentes
+USAGE_CACHE_FILE="${HOME}/.local/share/ai-launcher/usage-cache.json"
+USAGE_CACHE_TTL="${AI_USAGE_CACHE_TTL:-120}"
+
+# ── Contas Codex (troca sem logout) ──────────────────────
+# Sessão ChatGPT do Codex em ~/.codex/auth.json (modo arquivo)
+CODEX_AUTH_FILE="${HOME}/.codex/auth.json"
+XACCOUNT_KEYCHAIN_PREFIX="ai-launcher-xconta"
+XACCOUNTS_DIR="${HOME}/.local/share/ai-launcher/accounts-codex"
 
 # Providers disponíveis: nome=base_url (URLs confirmadas pelo multi-claude)
 declare -A PROVIDER_URLS=(
@@ -494,39 +503,176 @@ conta_rm() {
     fi
 }
 
+_usage_cache_get() {
+    # $1 = chave  → imprime "u5 u7 reset" se houver entrada fresca (< TTL)
+    [[ -f "$USAGE_CACHE_FILE" ]] || return 1
+    UC_FILE="$USAGE_CACHE_FILE" UC_KEY="$1" UC_TTL="$USAGE_CACHE_TTL" python3 - <<'PY' 2>/dev/null || return 1
+import os, json, time
+try:
+    c = json.load(open(os.environ['UC_FILE']))
+    e = c.get(os.environ['UC_KEY'])
+    if e and (time.time() - e['ts']) < float(os.environ['UC_TTL']):
+        print(e['line'])
+    else:
+        raise SystemExit(1)
+except (OSError, ValueError, KeyError):
+    raise SystemExit(1)
+PY
+}
+
+_usage_cache_put() {
+    # $1 = chave, $2 = linha "u5 u7 reset" — escrita atômica
+    command -v python3 >/dev/null 2>&1 || return 0
+    UC_FILE="$USAGE_CACHE_FILE" UC_KEY="$1" UC_LINE="$2" python3 - <<'PY' 2>/dev/null || true
+import os, json, time
+f = os.environ['UC_FILE']
+try:
+    c = json.load(open(f))
+    if not isinstance(c, dict):
+        c = {}
+except (OSError, ValueError):
+    c = {}
+c[os.environ['UC_KEY']] = {'line': os.environ['UC_LINE'], 'ts': time.time()}
+tmp = f + '.tmp'
+with open(tmp, 'w') as fh:
+    json.dump(c, fh)
+os.chmod(tmp, 0o600)
+os.replace(tmp, f)
+PY
+}
+
+_conta_usage_py() {
+    # CONTA_BLOB (env): JSON do keychain do Claude → stdout "u5 u7 reset"
+    # (+ "REFRESHED <blob>" se o accessToken foi renovado via refreshToken).
+    # Diferente do Symbioose: renova o token OAuth quando dá 401, mantendo a
+    # sessão viva em vez de só reportar indisponível.
+    python3 - <<'PY'
+import os, json, datetime, urllib.request, urllib.parse
+
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
+CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+def fetch(tok):
+    # retorna (http_code, data|None); code 0 = erro de rede
+    req = urllib.request.Request(USAGE_URL)
+    req.add_header("Authorization", "Bearer " + tok)
+    req.add_header("anthropic-beta", "oauth-2025-04-20")
+    req.add_header("Accept", "application/json")
+    req.add_header("User-Agent", "ai-launcher")
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return 200, json.load(r)
+    except urllib.error.HTTPError as e:
+        return e.code, None
+    except Exception:
+        return 0, None
+
+def refresh(oauth):
+    rt = oauth.get("refreshToken")
+    if not rt:
+        return None
+    body = json.dumps({
+        "grant_type": "refresh_token",
+        "refresh_token": rt,
+        "client_id": CLIENT_ID,
+    }).encode()
+    req = urllib.request.Request(TOKEN_URL, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Accept", "application/json")
+    req.add_header("User-Agent", "ai-launcher")  # console.anthropic.com bane UA do urllib (CF 1010)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.load(r)
+    except Exception:
+        return None
+
+def emit(u):
+    fh = u.get("five_hour") or {}
+    sd = u.get("seven_day") or {}
+    u5 = fh.get("utilization")
+    if u5 is None:
+        return False
+    u7 = sd.get("utilization") or 0
+    reset = "?"
+    try:
+        reset = datetime.datetime.fromisoformat(fh.get("resets_at", "")).astimezone().strftime("%H:%M")
+    except Exception:
+        pass
+    print(int(round(u5)), int(round(u7)), reset)
+    return True
+
+try:
+    blob = json.loads(os.environ.get("CONTA_BLOB", ""))
+    oauth = blob.get("claudeAiOauth") or {}
+except Exception:
+    raise SystemExit(1)
+
+# Conta ativa: o Claude Code é o dono do token e o rotaciona — não renovamos
+# para não competir (refresh aqui invalidaria a sessão dele). Backups inativos
+# podem renovar com segurança.
+is_active = os.environ.get("CONTA_IS_ACTIVE") == "1"
+
+tok = oauth.get("accessToken")
+code, u = fetch(tok) if tok else (0, None)
+if u is not None and emit(u):
+    raise SystemExit(0)
+if code == 429:
+    raise SystemExit(3)   # rate limited: token provavelmente bom, só esperar
+if is_active:
+    raise SystemExit(1)   # não renova a sessão ativa do Claude Code
+
+new = refresh(oauth)
+if new and new.get("access_token"):
+    oauth["accessToken"] = new["access_token"]
+    if new.get("refresh_token"):
+        oauth["refreshToken"] = new["refresh_token"]
+    if new.get("expires_in"):
+        oauth["expiresAt"] = int(datetime.datetime.now().timestamp() * 1000 + new["expires_in"] * 1000)
+    blob["claudeAiOauth"] = oauth
+    code, u = fetch(oauth["accessToken"])
+    if u is not None and emit(u):
+        print("REFRESHED " + json.dumps(blob))
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 conta_usage_pct() {
     # conta_usage_pct [nome]  ("" = conta ativa)
-    # stdout: "<pct_5h> <pct_7d> <reset_5h_local>" — return 1 se indisponível
-    local nome="${1:-}" svc tok
+    # stdout: "<pct_5h> <pct_7d> <reset_5h_local>" — return 1 se indisponível.
+    # Renova e regrava o token quando expirado, mantendo a sessão utilizável.
+    local nome="${1:-}" svc blob out linha1 refreshed cache_key
     if [[ -n "$nome" ]]; then
         svc="${ACCOUNT_KEYCHAIN_PREFIX}:${nome}"
+        cache_key="claude:${nome}"
     else
         svc="$CLAUDE_KEYCHAIN_SERVICE"
+        cache_key="claude:__active__"
     fi
-    tok=$(security find-generic-password -s "$svc" -a "$USER" -w 2>/dev/null | python3 -c "
-import sys, json
-try:
-    print(json.load(sys.stdin)['claudeAiOauth']['accessToken'])
-except Exception:
-    pass" 2>/dev/null) || true
-    [[ -z "$tok" ]] && return 1
-    curl -s -m 6 -H "Authorization: Bearer $tok" -H "anthropic-beta: oauth-2025-04-20" \
-        "$CLAUDE_USAGE_URL" 2>/dev/null | python3 -c "
-import sys, json, datetime
-d = json.load(sys.stdin)
-fh = d.get('five_hour') or {}
-sd = d.get('seven_day') or {}
-u5 = fh.get('utilization')
-if u5 is None:
-    raise SystemExit(1)
-u7 = sd.get('utilization') or 0
-reset = '?'
-try:
-    r = datetime.datetime.fromisoformat(fh.get('resets_at', ''))
-    reset = r.astimezone().strftime('%H:%M')
-except Exception:
-    pass
-print(int(round(u5)), int(round(u7)), reset)" 2>/dev/null || return 1
+    # Cache fresco evita o rate limit do endpoint
+    if linha1=$(_usage_cache_get "$cache_key"); then
+        printf '%s\n' "$linha1"
+        return 0
+    fi
+    blob=$(security find-generic-password -s "$svc" -a "$USER" -w 2>/dev/null) || true
+    [[ -z "$blob" ]] && return 1
+    local is_active=0
+    [[ -z "$nome" ]] && is_active=1
+    local rc
+    out=$(CONTA_BLOB="$blob" CONTA_IS_ACTIVE="$is_active" _conta_usage_py)
+    rc=$?
+    if (( rc == 3 )); then printf 'RATELIMIT\n'; return 0; fi
+    (( rc != 0 )) && return 1
+    linha1=$(printf '%s\n' "$out" | sed -n '1p')
+    refreshed=$(printf '%s\n' "$out" | sed -n '2p')
+    if [[ "$refreshed" == REFRESHED\ * ]]; then
+        local novo_blob="${refreshed#REFRESHED }"
+        security add-generic-password -U -s "$svc" -a "$USER" -w "$novo_blob" 2>/dev/null || true
+    fi
+    [[ -z "$linha1" ]] && return 1
+    _usage_cache_put "$cache_key" "$linha1"
+    printf '%s\n' "$linha1"
 }
 
 conta_status() {
@@ -552,7 +698,10 @@ conta_status() {
             marker="${DIM}○${RESET}"
             out=$(conta_usage_pct "$nome" || true)
         fi
-        if [[ -n "$out" ]]; then
+        if [[ "$out" == "RATELIMIT" ]]; then
+            printf "  %b %-14s %-30s ${DIM}uso rate-limitado — tente em instantes${RESET}\n" \
+                "$marker" "$nome" "${email:-?}"
+        elif [[ -n "$out" ]]; then
             u5=$(echo "$out" | cut -d' ' -f1)
             u7=$(echo "$out" | cut -d' ' -f2)
             reset=$(echo "$out" | cut -d' ' -f3)
@@ -562,7 +711,7 @@ conta_status() {
             printf "  %b %-14s %-30s 5h: %b%3d%%%b  7d: %3d%%  ${DIM}reseta %s${RESET}\n" \
                 "$marker" "$nome" "${email:-?}" "$cor" "$u5" "$RESET" "$u7" "$reset"
         else
-            printf "  %b %-14s %-30s ${DIM}uso indisponível (token antigo? reative: ai conta use %s)${RESET}\n" \
+            printf "  %b %-14s %-30s ${DIM}uso indisponível (sessão expirada? reative: ai conta use %s)${RESET}\n" \
                 "$marker" "$nome" "${email:-?}" "$nome"
         fi
     done
@@ -575,7 +724,6 @@ conta_autoswitch_if_needed() {
     # threshold, troca para outra conta salva com quota. Fail-open: problema
     # de rede/API nunca bloqueia o launch.
     [[ "$CONTA_AUTO_SWITCH" == "true" ]] || return 0
-    command -v curl >/dev/null 2>&1 || return 0
     command -v python3 >/dev/null 2>&1 || return 0
     command -v security >/dev/null 2>&1 || return 0
     local f nomes=()
@@ -587,8 +735,10 @@ conta_autoswitch_if_needed() {
 
     local out u5
     out=$(conta_usage_pct "" || true)
-    [[ -z "$out" ]] && return 0
+    # Sem dado ou rate-limitado: não há sinal de esgotamento → não troca
+    [[ -z "$out" || "$out" == "RATELIMIT" ]] && return 0
     u5=${out%% *}
+    [[ "$u5" =~ ^[0-9]+$ ]] || return 0
     (( u5 >= CONTA_AUTO_THRESHOLD )) || return 0
 
     local email_ativo nome_ativo
@@ -600,7 +750,8 @@ conta_autoswitch_if_needed() {
     local nome alvo="" fallback="" out2 u2
     for nome in "${nomes[@]}"; do
         [[ "$nome" == "$nome_ativo" ]] && continue
-        if out2=$(conta_usage_pct "$nome"); then
+        out2=$(conta_usage_pct "$nome" || true)
+        if [[ -n "$out2" && "$out2" != "RATELIMIT" && "${out2%% *}" =~ ^[0-9]+$ ]]; then
             u2=${out2%% *}
             if (( u2 < CONTA_AUTO_THRESHOLD )); then
                 alvo="$nome"
@@ -667,8 +818,10 @@ conta_add() {
     echo ""
     echo -e "  ${BOLD}No navegador que vai abrir, entre com a conta NOVA.${RESET}"
     [[ -n "$nome_anterior" ]] && echo -e "  ${DIM}(a conta '${nome_anterior}' já está protegida no Keychain)${RESET}"
+    echo -e "  ${DIM}Dica: se o navegador reabrir já logado na conta antiga, saia dela no site primeiro.${RESET}"
     echo ""
-    claude auth logout >/dev/null 2>&1 || true
+    # NÃO usar 'claude auth logout': ele pode revogar os tokens da conta ativa
+    # no servidor, inutilizando o backup recém-salvo. 'login' regrava o slot.
     if ! claude auth login; then
         echo -e "${RED}Login falhou ou foi cancelado.${RESET}"
         if [[ -n "$nome_anterior" ]]; then
@@ -733,12 +886,14 @@ conta_menu() {
     echo -e "  ${BOLD}a)${RESET} Adicionar conta nova (login guiado)"
     echo -e "  ${BOLD}u)${RESET} Ver uso das contas (5h/7d)"
     echo -e "  ${BOLD}s)${RESET} Salvar conta ativa com novo nome"
+    echo -e "  ${BOLD}x)${RESET} Contas Codex →"
     echo -e "  ${DIM}0) Voltar${RESET}"
     read -rp "Escolha: " escolha
     case "$escolha" in
         0|"") return 0 ;;
         a|A) conta_add ;;
         u|U) conta_status ;;
+        x|X) xconta_menu ;;
         s|S)
             local novo
             read -rp "  Nome para a conta ativa: " novo
@@ -747,6 +902,630 @@ conta_menu() {
         *)
             if [[ "$escolha" =~ ^[0-9]+$ ]] && (( escolha >= 1 && escolha <= ${#nomes[@]} )); then
                 conta_use "${nomes[$((escolha-1))]}"
+            else
+                echo "Opção inválida."
+                return 1
+            fi
+            ;;
+    esac
+}
+
+# ── Contas Codex (troca de conta sem logout) ─────────────
+# O Codex CLI guarda a sessão ChatGPT em ~/.codex/auth.json (modo arquivo).
+# Cada conta salva vira:
+#   - Keychain "ai-launcher-xconta:<nome>"  → auth.json completo (criptografado)
+#   - ${XACCOUNTS_DIR}/<nome>.json          → email + savedAt (0600)
+# Uso/limites via chatgpt.com/backend-api (janelas primária 5h / semanal),
+# com refresh automático do token salvo quando ele envelhece.
+
+xconta_active_email() {
+    python3 - <<'PY' 2>/dev/null || true
+import json, os, base64
+try:
+    d = json.load(open(os.path.expanduser('~/.codex/auth.json')))
+    tok = (d.get('tokens') or {}).get('id_token', '')
+    p = tok.split('.')[1]
+    p += '=' * ((4 - len(p) % 4) % 4)
+    print(json.loads(base64.urlsafe_b64decode(p)).get('email', ''))
+except Exception:
+    pass
+PY
+}
+
+xconta_meta_get() {
+    local f="${XACCOUNTS_DIR}/$1.json"
+    [[ -f "$f" ]] || return 1
+    CONTA_META_FILE="$f" CONTA_META_KEY="$2" python3 - <<'PY' 2>/dev/null || true
+import json, os
+try:
+    with open(os.environ['CONTA_META_FILE']) as f:
+        print(json.load(f).get(os.environ['CONTA_META_KEY'], ''))
+except Exception:
+    pass
+PY
+}
+
+xconta_keychain_has() {
+    security find-generic-password -s "${XACCOUNT_KEYCHAIN_PREFIX}:$1" -a "$USER" >/dev/null 2>&1
+}
+
+_xconta_write_active() {
+    # Escrita atômica do ~/.codex/auth.json com 0600
+    local blob="$1" tmp
+    mkdir -p "$(dirname "$CODEX_AUTH_FILE")"
+    tmp=$(mktemp "${CODEX_AUTH_FILE}.tmp.XXXXXX") || return 1
+    printf '%s' "$blob" > "$tmp" || { rm -f "$tmp"; return 1; }
+    chmod 600 "$tmp"
+    mv "$tmp" "$CODEX_AUTH_FILE"
+}
+
+_xconta_compact_json() {
+    # stdin: JSON (qualquer formatação) → stdout: JSON em 1 linha (ASCII)
+    # O Keychain devolve valores com quebra de linha em hex; gravar compacto evita isso.
+    python3 -c "import sys, json; print(json.dumps(json.load(sys.stdin), separators=(',', ':')))" 2>/dev/null
+}
+
+_xconta_read_backup() {
+    # Lê backup do Keychain normalizando saída hex → texto (estilo Symbioose)
+    security find-generic-password -s "${XACCOUNT_KEYCHAIN_PREFIX}:$1" -a "$USER" -w 2>/dev/null | python3 -c "
+import sys, json, re
+raw = sys.stdin.read().strip()
+try:
+    json.loads(raw)
+    sys.stdout.write(raw)
+    raise SystemExit(0)
+except ValueError:
+    pass
+compact = ''.join(raw.split())
+if compact and len(compact) % 2 == 0 and re.fullmatch(r'[0-9a-fA-F]+', compact):
+    try:
+        dec = bytes.fromhex(compact).decode('utf-8').strip()
+        json.loads(dec)
+        sys.stdout.write(dec)
+        raise SystemExit(0)
+    except Exception:
+        pass
+raise SystemExit(1)" 2>/dev/null
+}
+
+xconta_snapshot_to() {
+    # Fotografa a sessão ativa do Codex como backup <nome>
+    local nome="$1" blob email
+    blob=$(cat "$CODEX_AUTH_FILE" 2>/dev/null) || true
+    if [[ -z "$blob" ]]; then
+        echo -e "${RED}Nenhuma sessão ativa do Codex (~/.codex/auth.json não existe).${RESET}"
+        echo -e "  Faça login primeiro: ${BOLD}codex login${RESET}"
+        return 1
+    fi
+    email=$(xconta_active_email)
+    if [[ -z "$email" ]]; then
+        echo -e "${RED}Sessão do Codex sem login ChatGPT (modo API key?) — nada para salvar.${RESET}"
+        return 1
+    fi
+    # Compacta para 1 linha: valores multi-linha voltam do Keychain como hex
+    local blob_compact
+    blob_compact=$(printf '%s' "$blob" | _xconta_compact_json) || true
+    [[ -z "$blob_compact" ]] && blob_compact="$blob"
+    if ! security add-generic-password -U -s "${XACCOUNT_KEYCHAIN_PREFIX}:${nome}" -a "$USER" -w "$blob_compact" 2>/dev/null; then
+        echo -e "${RED}Falha ao gravar backup '${nome}' no Keychain.${RESET}"
+        return 1
+    fi
+    mkdir -p "$XACCOUNTS_DIR" && chmod 700 "$XACCOUNTS_DIR"
+    CONTA_NOME="$nome" CONTA_DIR="$XACCOUNTS_DIR" CONTA_EMAIL="$email" python3 - <<'PY'
+import json, os, datetime
+meta = {
+    'email': os.environ.get('CONTA_EMAIL', ''),
+    'savedAt': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+}
+path = os.path.join(os.environ['CONTA_DIR'], os.environ['CONTA_NOME'] + '.json')
+tmp = path + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump(meta, f, indent=2, ensure_ascii=False)
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+PY
+}
+
+xconta_save() {
+    local nome="${1:-}"
+    _conta_require_deps || return 1
+    if [[ -z "$nome" ]]; then
+        echo -e "${RED}Uso: ai xconta save <nome>${RESET}   ${DIM}ex.: ai xconta save trabalho${RESET}"
+        return 1
+    fi
+    if ! _validate_account_name "$nome"; then
+        echo -e "${RED}Nome inválido: use letras minúsculas, números, '-' e '_'.${RESET}"
+        return 1
+    fi
+    xconta_snapshot_to "$nome" || return 1
+    local email
+    email=$(xconta_meta_get "$nome" email || true)
+    echo -e "${GREEN}✔ Conta Codex '${nome}' salva${RESET} ${DIM}(${email:-email desconhecido})${RESET}"
+}
+
+xconta_find_by_email() {
+    local email="$1" f nome
+    [[ -n "$email" ]] || return 1
+    for f in "$XACCOUNTS_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        nome=$(basename "$f" .json)
+        if [[ "$(xconta_meta_get "$nome" email || true)" == "$email" ]]; then
+            echo "$nome"
+            return 0
+        fi
+    done
+    return 1
+}
+
+xconta_use() {
+    local nome="${1:-}" email_ativo nome_ativo email_destino blob
+    _conta_require_deps || return 1
+    if [[ -z "$nome" ]]; then
+        echo -e "${RED}Uso: ai xconta use <nome>${RESET}"
+        xconta_list
+        return 1
+    fi
+    if ! _validate_account_name "$nome"; then
+        echo -e "${RED}Nome inválido.${RESET}"
+        return 1
+    fi
+    if ! xconta_keychain_has "$nome"; then
+        echo -e "${RED}Conta Codex '${nome}' não encontrada no Keychain.${RESET}"
+        xconta_list
+        return 1
+    fi
+
+    email_ativo=$(xconta_active_email)
+    email_destino=$(xconta_meta_get "$nome" email || true)
+
+    # Re-snapshot da sessão ativa (tokens do Codex rotacionam rápido)
+    if nome_ativo=$(xconta_find_by_email "$email_ativo"); then
+        if ! xconta_snapshot_to "$nome_ativo"; then
+            echo -e "${RED}Falha ao atualizar snapshot da conta ativa ('${nome_ativo}'). Troca abortada.${RESET}"
+            return 1
+        fi
+    elif [[ -n "$email_ativo" ]]; then
+        echo -e "${YELLOW}A conta Codex ativa (${email_ativo}) não está salva — sem backup ela exigirá novo login depois.${RESET}"
+        if [[ -t 0 ]]; then
+            local novo_nome
+            read -rp "$(echo -e "  Salvar conta ativa como ${DIM}(vazio = não salvar)${RESET}: ")" novo_nome
+            if [[ -n "$novo_nome" ]]; then
+                xconta_save "$novo_nome" || return 1
+            fi
+        else
+            echo -e "  Salve antes: ${BOLD}ai xconta save <nome>${RESET}"
+            return 1
+        fi
+    fi
+
+    if [[ -n "$email_destino" && "$email_destino" == "$email_ativo" ]]; then
+        echo -e "${GREEN}✔ '${nome}' já é a conta Codex ativa${RESET} ${DIM}(${email_ativo}) — snapshot atualizado.${RESET}"
+        return 0
+    fi
+
+    blob=$(_xconta_read_backup "$nome") || true
+    if [[ -z "$blob" ]]; then
+        echo -e "${RED}Falha ao ler o backup '${nome}' do Keychain.${RESET}"
+        return 1
+    fi
+    [[ -f "$CODEX_AUTH_FILE" ]] && cp "$CODEX_AUTH_FILE" "${CODEX_AUTH_FILE}.bak-ai-launcher" 2>/dev/null
+    if ! _xconta_write_active "$blob"; then
+        echo -e "${RED}Falha ao gravar ~/.codex/auth.json.${RESET}"
+        return 1
+    fi
+
+    echo -e "${GREEN}✔ Conta Codex ativa agora: ${BOLD}${nome}${RESET} ${DIM}(${email_destino:-?})${RESET}"
+    echo -e "${DIM}  Sessões codex já abertas continuam na conta anterior — reinicie-as para usar a nova.${RESET}"
+}
+
+_xconta_usage_py() {
+    # XCONTA_BLOB (env): blob auth.json → stdout: "u5 u7 reset" (+ "REFRESHED <blob>")
+    # Usa env var em vez de stdin: o heredoc PY já ocupa o stdin do python.
+    python3 - <<'PY'
+import os, json, base64, datetime, urllib.request, urllib.parse
+
+USAGE_URLS = (
+    'https://chatgpt.com/backend-api/wham/usage',
+    'https://chatgpt.com/backend-api/api/codex/usage',
+)
+
+def jwt_payload(tok):
+    try:
+        p = tok.split('.')[1]
+        p += '=' * ((4 - len(p) % 4) % 4)
+        return json.loads(base64.urlsafe_b64decode(p))
+    except Exception:
+        return None
+
+def fetch(blob):
+    try:
+        d = json.loads(blob)
+    except Exception:
+        return None
+    t = d.get('tokens') or {}
+    tok = t.get('access_token')
+    acc = t.get('account_id')
+    if not acc and t.get('id_token'):
+        p = jwt_payload(t['id_token']) or {}
+        a = p.get('https://api.openai.com/auth', {})
+        if isinstance(a, dict):
+            acc = a.get('chatgpt_account_id')
+    if not tok or not acc:
+        return None
+    for url in USAGE_URLS:
+        req = urllib.request.Request(url)
+        req.add_header('Authorization', 'Bearer ' + tok)
+        req.add_header('ChatGPT-Account-Id', str(acc))
+        req.add_header('Accept', 'application/json')
+        req.add_header('User-Agent', 'ai-launcher')
+        try:
+            with urllib.request.urlopen(req, timeout=8) as r:
+                return json.load(r)
+        except Exception:
+            continue
+    return None
+
+def refresh(blob):
+    try:
+        d = json.loads(blob)
+    except Exception:
+        return None
+    t = d.get('tokens') or {}
+    rt = t.get('refresh_token')
+    if not rt:
+        return None
+    body = urllib.parse.urlencode({
+        'grant_type': 'refresh_token',
+        'refresh_token': rt,
+        'client_id': 'app_EMoamEEZ73f0CkXaXp7hrann',
+    }).encode()
+    req = urllib.request.Request('https://auth.openai.com/oauth/token', data=body, method='POST')
+    req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+    req.add_header('Accept', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            new = json.load(r)
+    except Exception:
+        return None
+    for k in ('access_token', 'refresh_token', 'id_token'):
+        if new.get(k):
+            t[k] = new[k]
+    if new.get('account_id'):
+        t['account_id'] = new['account_id']
+    d['tokens'] = t
+    d['last_refresh'] = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    return json.dumps(d)
+
+def emit(u):
+    rl = (u or {}).get('rate_limit') or {}
+    pw = rl.get('primary_window') or {}
+    sw = rl.get('secondary_window') or {}
+    u1 = pw.get('used_percent')
+    if u1 is None:
+        return False
+    u2 = sw.get('used_percent')
+    reset = '?'
+    try:
+        reset = datetime.datetime.fromtimestamp(pw.get('reset_at')).astimezone().strftime('%H:%M')
+    except Exception:
+        pass
+    print(int(round(u1)), int(round(u2 if u2 is not None else 0)), reset)
+    return True
+
+blob = os.environ.get('XCONTA_BLOB', '')
+u = fetch(blob)
+if u is not None and emit(u):
+    raise SystemExit(0)
+nb = refresh(blob)
+if nb:
+    u = fetch(nb)
+    if u is not None and emit(u):
+        print('REFRESHED ' + nb)
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+xconta_usage_pct() {
+    # xconta_usage_pct [nome] ("" = sessão ativa) → "u5 u7 reset_local"
+    local nome="${1:-}" blob out linha1 refreshed cache_key
+    if [[ -n "$nome" ]]; then
+        cache_key="codex:${nome}"
+    else
+        cache_key="codex:__active__"
+    fi
+    if linha1=$(_usage_cache_get "$cache_key"); then
+        printf '%s\n' "$linha1"
+        return 0
+    fi
+    if [[ -n "$nome" ]]; then
+        blob=$(_xconta_read_backup "$nome") || true
+    else
+        blob=$(cat "$CODEX_AUTH_FILE" 2>/dev/null) || true
+    fi
+    [[ -z "$blob" ]] && return 1
+    out=$(XCONTA_BLOB="$blob" _xconta_usage_py) || return 1
+    linha1=$(printf '%s\n' "$out" | sed -n '1p')
+    refreshed=$(printf '%s\n' "$out" | sed -n '2p')
+    # Token renovado durante a consulta: regrava para manter a sessão viva
+    if [[ "$refreshed" == REFRESHED\ * ]]; then
+        local novo_blob="${refreshed#REFRESHED }"
+        if [[ -n "$nome" ]]; then
+            security add-generic-password -U -s "${XACCOUNT_KEYCHAIN_PREFIX}:${nome}" -a "$USER" -w "$novo_blob" 2>/dev/null || true
+        else
+            _xconta_write_active "$novo_blob" 2>/dev/null || true
+        fi
+    fi
+    [[ -z "$linha1" ]] && return 1
+    _usage_cache_put "$cache_key" "$linha1"
+    printf '%s\n' "$linha1"
+}
+
+xconta_status() {
+    _conta_require_deps || return 1
+    local email_ativo f nome email out u5 u7 reset marker cor n=0
+    email_ativo=$(xconta_active_email)
+    echo -e "${BOLD}${CYAN}📊 Uso das contas Codex${RESET} ${DIM}(janela 5h / semanal)${RESET}"
+    echo ""
+    for f in "$XACCOUNTS_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        n=$((n+1))
+        nome=$(basename "$f" .json)
+        email=$(xconta_meta_get "$nome" email || true)
+        if [[ -n "$email" && "$email" == "$email_ativo" ]]; then
+            marker="${GREEN}●${RESET}"
+            out=$(xconta_usage_pct "" || true)
+        else
+            marker="${DIM}○${RESET}"
+            out=$(xconta_usage_pct "$nome" || true)
+        fi
+        if [[ -n "$out" ]]; then
+            u5=$(echo "$out" | cut -d' ' -f1)
+            u7=$(echo "$out" | cut -d' ' -f2)
+            reset=$(echo "$out" | cut -d' ' -f3)
+            cor="$GREEN"
+            (( u5 >= 80 )) && cor="$YELLOW"
+            (( u5 >= 100 )) && cor="$RED"
+            printf "  %b %-14s %-30s 5h: %b%3d%%%b  7d: %3d%%  ${DIM}reseta %s${RESET}\n" \
+                "$marker" "$nome" "${email:-?}" "$cor" "$u5" "$RESET" "$u7" "$reset"
+        else
+            printf "  %b %-14s %-30s ${DIM}uso indisponível (sessão expirada? recadastre: ai xconta add %s)${RESET}\n" \
+                "$marker" "$nome" "${email:-?}" "$nome"
+        fi
+    done
+    (( n == 0 )) && echo -e "  ${DIM}Nenhuma conta Codex salva. Adicione: ${RESET}${BOLD}ai xconta add <nome>${RESET}"
+    echo ""
+}
+
+xconta_autoswitch_if_needed() {
+    [[ "$CONTA_AUTO_SWITCH" == "true" ]] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    command -v security >/dev/null 2>&1 || return 0
+    local f nomes=()
+    for f in "$XACCOUNTS_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        nomes+=("$(basename "$f" .json)")
+    done
+    (( ${#nomes[@]} >= 2 )) || return 0
+
+    local out u5
+    out=$(xconta_usage_pct "" || true)
+    [[ -z "$out" ]] && return 0
+    u5=${out%% *}
+    [[ "$u5" =~ ^[0-9]+$ ]] || return 0
+    (( u5 >= CONTA_AUTO_THRESHOLD )) || return 0
+
+    local email_ativo nome_ativo
+    email_ativo=$(xconta_active_email)
+    nome_ativo=$(xconta_find_by_email "$email_ativo" || true)
+    [[ -z "$nome_ativo" ]] && return 0
+
+    echo -e "${YELLOW}⚠ Conta Codex '${nome_ativo}' está em ${u5}% da janela de 5h — procurando outra conta...${RESET}"
+    local nome alvo="" fallback="" out2 u2
+    for nome in "${nomes[@]}"; do
+        [[ "$nome" == "$nome_ativo" ]] && continue
+        out2=$(xconta_usage_pct "$nome" || true)
+        if [[ -n "$out2" && "${out2%% *}" =~ ^[0-9]+$ ]]; then
+            u2=${out2%% *}
+            if (( u2 < CONTA_AUTO_THRESHOLD )); then
+                alvo="$nome"
+                echo -e "  ${GREEN}→ '${nome}' está em ${u2}% — trocando.${RESET}"
+                break
+            fi
+        else
+            [[ -z "$fallback" ]] && fallback="$nome"
+        fi
+    done
+    if [[ -z "$alvo" && -n "$fallback" ]]; then
+        alvo="$fallback"
+        echo -e "  ${DIM}→ uso de '${alvo}' não verificável; tentando mesmo assim.${RESET}"
+    fi
+    if [[ -z "$alvo" ]]; then
+        echo -e "  ${RED}Todas as contas Codex salvas estão no limite — seguindo na atual.${RESET}"
+        return 0
+    fi
+    xconta_use "$alvo" || true
+}
+
+xconta_add() {
+    # Fluxo guiado: protege a sessão ativa, loga na NOVA via 'codex login',
+    # salva e oferece voltar. Rollback automático se o login falhar.
+    local nome="${1:-}"
+    _conta_require_deps || return 1
+    if ! command -v codex >/dev/null 2>&1; then
+        echo -e "${RED}Codex CLI não encontrado.${RESET}"
+        return 1
+    fi
+    if [[ ! -t 0 ]]; then
+        echo -e "${RED}'ai xconta add' precisa de terminal interativo (o login abre o navegador).${RESET}"
+        return 1
+    fi
+    if [[ -z "$nome" ]]; then
+        read -rp "$(echo -e "  Nome para a ${BOLD}nova${RESET} conta Codex ${DIM}(ex.: pessoal, trabalho)${RESET}: ")" nome
+    fi
+    [[ -z "$nome" ]] && { echo -e "${DIM}cancelado${RESET}"; return 1; }
+    if ! _validate_account_name "$nome"; then
+        echo -e "${RED}Nome inválido: use letras minúsculas, números, '-' e '_'.${RESET}"
+        return 1
+    fi
+    if xconta_keychain_has "$nome"; then
+        echo -e "${RED}Já existe uma conta Codex salva chamada '${nome}'.${RESET} ${DIM}(remova antes: ai xconta rm ${nome})${RESET}"
+        return 1
+    fi
+
+    local email_antes nome_anterior=""
+    email_antes=$(xconta_active_email)
+    if [[ -n "$email_antes" ]]; then
+        if nome_anterior=$(xconta_find_by_email "$email_antes"); then
+            xconta_snapshot_to "$nome_anterior" || return 1
+        else
+            local salvar_como
+            read -rp "$(echo -e "  A conta Codex ativa (${email_antes}) precisa ser salva antes. Nome para ela: ")" salvar_como
+            [[ -z "$salvar_como" ]] && { echo -e "${RED}cancelado — nada foi alterado.${RESET}"; return 1; }
+            xconta_save "$salvar_como" || return 1
+            nome_anterior="$salvar_como"
+        fi
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}No navegador que vai abrir, entre com a conta NOVA do ChatGPT.${RESET}"
+    [[ -n "$nome_anterior" ]] && echo -e "  ${DIM}(a conta '${nome_anterior}' já está protegida no Keychain)${RESET}"
+    echo -e "  ${DIM}Dica: se reabrir já logado na conta antiga, saia dela em chatgpt.com primeiro.${RESET}"
+    echo ""
+    # 'codex login' sobrescreve ~/.codex/auth.json; evitamos 'codex logout'
+    # para não invalidar a sessão da conta ativa antes do backup.
+    if ! codex login; then
+        echo -e "${RED}Login falhou ou foi cancelado.${RESET}"
+        if [[ -n "$nome_anterior" ]]; then
+            echo -e "  Restaurando '${nome_anterior}'..."
+            xconta_use "$nome_anterior" || true
+        fi
+        return 1
+    fi
+
+    local email_depois
+    email_depois=$(xconta_active_email)
+    if [[ -z "$email_depois" ]]; then
+        echo -e "${RED}Não foi possível confirmar o login.${RESET}"
+        if [[ -n "$nome_anterior" ]]; then
+            xconta_use "$nome_anterior" || true
+        fi
+        return 1
+    fi
+    if [[ -n "$email_antes" && "$email_depois" == "$email_antes" ]]; then
+        echo -e "${YELLOW}Você entrou na MESMA conta (${email_depois}) — nada novo para salvar.${RESET}"
+        xconta_snapshot_to "$nome_anterior" >/dev/null 2>&1 || true
+        return 1
+    fi
+    xconta_save "$nome" || return 1
+
+    echo ""
+    local ficar
+    read -rp "$(echo -e "  ${BOLD}1)${RESET} Continuar na '${nome}'   ${BOLD}2)${RESET} Voltar para '${nome_anterior:-anterior}'   [1]: ")" ficar
+    if [[ "$ficar" == "2" && -n "$nome_anterior" ]]; then
+        xconta_use "$nome_anterior"
+    else
+        echo -e "${GREEN}✔ Usando conta Codex '${nome}' (${email_depois}).${RESET}"
+    fi
+}
+
+xconta_list() {
+    _conta_require_deps || return 1
+    local email_ativo f nome email saved marker kc n=0
+    email_ativo=$(xconta_active_email)
+    echo -e "${BOLD}${CYAN}👤 Contas Codex salvas${RESET}"
+    echo ""
+    for f in "$XACCOUNTS_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        n=$((n+1))
+        nome=$(basename "$f" .json)
+        email=$(xconta_meta_get "$nome" email || true)
+        saved=$(xconta_meta_get "$nome" savedAt || true)
+        if xconta_keychain_has "$nome"; then
+            kc="${GREEN}✔${RESET}"
+        else
+            kc="${RED}✗ sem credencial${RESET}"
+        fi
+        if [[ -n "$email" && "$email" == "$email_ativo" ]]; then
+            marker="${GREEN}● ativa${RESET}"
+        else
+            marker="${DIM}○      ${RESET}"
+        fi
+        printf "  %b %-14s %-34s %b ${DIM}salva: %s${RESET}\n" "$marker" "$nome" "${email:-?}" "$kc" "${saved%%T*}"
+    done
+    if (( n == 0 )); then
+        echo -e "  ${DIM}Nenhuma conta Codex salva ainda.${RESET}"
+        echo -e "  Salve a atual: ${BOLD}ai xconta save <nome>${RESET}"
+    fi
+    if [[ -n "$email_ativo" ]] && ! xconta_find_by_email "$email_ativo" >/dev/null; then
+        echo ""
+        echo -e "  ${YELLOW}Conta Codex ativa (${email_ativo}) ainda não está salva.${RESET}"
+    fi
+    echo ""
+}
+
+xconta_rm() {
+    local nome="${1:-}"
+    if [[ -z "$nome" ]]; then
+        echo -e "${RED}Uso: ai xconta rm <nome>${RESET}"
+        return 1
+    fi
+    _validate_account_name "$nome" || { echo -e "${RED}Nome inválido.${RESET}"; return 1; }
+    local achou=false
+    if xconta_keychain_has "$nome"; then
+        security delete-generic-password -s "${XACCOUNT_KEYCHAIN_PREFIX}:${nome}" -a "$USER" >/dev/null 2>&1 && achou=true
+    fi
+    if [[ -f "${XACCOUNTS_DIR}/${nome}.json" ]]; then
+        rm -f "${XACCOUNTS_DIR}/${nome}.json" && achou=true
+    fi
+    if [[ "$achou" == true ]]; then
+        echo -e "${GREEN}✔ Backup Codex '${nome}' removido${RESET} ${DIM}(a conta ativa não é afetada)${RESET}"
+    else
+        echo -e "${YELLOW}Conta Codex '${nome}' não encontrada.${RESET}"
+    fi
+}
+
+xconta_menu() {
+    _conta_require_deps || return 1
+    xconta_list
+    if [[ ! -t 0 ]]; then
+        return 0
+    fi
+    local nomes=() f
+    for f in "$XACCOUNTS_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        nomes+=("$(basename "$f" .json)")
+    done
+    if (( ${#nomes[@]} == 0 )); then
+        local salvar
+        read -rp "$(echo -e "  Salvar a conta Codex ativa agora? Nome ${DIM}(vazio = sair)${RESET}: ")" salvar
+        [[ -n "$salvar" ]] && xconta_save "$salvar"
+        echo -e "  ${DIM}Para cadastrar a segunda conta: ${RESET}${BOLD}ai xconta add <nome>${RESET}"
+        return 0
+    fi
+    local i=1 escolha nome
+    echo -e "  ${BOLD}Trocar para:${RESET}"
+    for nome in "${nomes[@]}"; do
+        printf "  ${BOLD}%d)${RESET} %s\n" "$i" "$nome"
+        i=$((i+1))
+    done
+    echo -e "  ${BOLD}a)${RESET} Adicionar conta Codex nova (login guiado)"
+    echo -e "  ${BOLD}u)${RESET} Ver uso das contas (5h/semanal)"
+    echo -e "  ${BOLD}s)${RESET} Salvar conta ativa com novo nome"
+    echo -e "  ${DIM}0) Voltar${RESET}"
+    read -rp "Escolha: " escolha
+    case "$escolha" in
+        0|"") return 0 ;;
+        a|A) xconta_add ;;
+        u|U) xconta_status ;;
+        s|S)
+            local novo
+            read -rp "  Nome para a conta ativa: " novo
+            [[ -n "$novo" ]] && xconta_save "$novo"
+            ;;
+        *)
+            if [[ "$escolha" =~ ^[0-9]+$ ]] && (( escolha >= 1 && escolha <= ${#nomes[@]} )); then
+                xconta_use "${nomes[$((escolha-1))]}"
             else
                 echo "Opção inválida."
                 return 1
@@ -1123,6 +1902,14 @@ Contas Claude (troca sem logout, macOS):
   c --conta <nome>       Troca de conta e já lança o Claude
   Auto-switch: com 2+ contas salvas, 'ai c' troca sozinho quando a
   janela de 5h esgota. Desligar: AI_CONTA_AUTO_SWITCH=false
+
+Contas Codex (mesmos recursos, para o Codex CLI):
+  xconta                 Menu interativo de contas Codex
+  xconta add <nome>      Cadastra conta NOVA (login guiado + rollback)
+  xconta ls / status     Lista contas / uso (janela 5h / semanal)
+  xconta save|use|rm     Salva, ativa ou remove uma conta
+  x --conta <nome>       Troca de conta e já lança o Codex
+  Tokens salvos são renovados automaticamente ao consultar o uso
 
 Repos (picker inteligente quando lançado fora de repo):
   r, repo, repos   Lista repos conhecidos
@@ -1630,8 +2417,18 @@ if [[ ${1:-} == "claude" || ${1:-} == "c" ]]; then
     launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "codex" || ${1:-} == "x" ]]; then
     shift
+    if [[ "${1:-}" == "--conta" || "${1:-}" == "--account" ]]; then
+        shift
+        if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+            echo -e "${RED}Uso: ai x --conta <nome>${RESET}"; exit 1
+        fi
+        xconta_use "$1" || exit 1
+        shift
+    fi
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    # Auto-switch de conta Codex se a janela de 5h esgotou
+    xconta_autoswitch_if_needed
     enter_repo_if_needed
     launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS "$@"
 elif [[ ${1:-} == "gemini" || ${1:-} == "g" ]]; then
@@ -1871,6 +2668,25 @@ elif [[ ${1:-} == "conta" || ${1:-} == "contas" || ${1:-} == "account" || ${1:-}
             ;;
     esac
     exit 0
+elif [[ ${1:-} == "xconta" || ${1:-} == "xcontas" || ${1:-} == "contax" ]]; then
+    shift
+    subcmd="${1:-}"
+    [[ -n "$subcmd" ]] && shift
+    case "$subcmd" in
+        ls|list)          xconta_list ;;
+        add)              xconta_add "${1:-}" || exit 1 ;;
+        status|uso|usage) xconta_status ;;
+        save)             xconta_save "${1:-}" || exit 1 ;;
+        use|switch)       xconta_use "${1:-}" || exit 1 ;;
+        rm|del)           xconta_rm "${1:-}" || exit 1 ;;
+        "")               xconta_menu ;;
+        *)
+            echo -e "${RED}Subcomando desconhecido: ${subcmd}${RESET}"
+            echo "Use: ai xconta [add <nome>|ls|status|save <nome>|use <nome>|rm <nome>]"
+            exit 1
+            ;;
+    esac
+    exit 0
 elif [[ ${1:-} == "flags" || ${1:-} == "f" ]]; then
     shift
     if [[ ! -t 0 ]]; then
@@ -1981,7 +2797,7 @@ echo ""
 echo -e "  ${BOLD}6)${RESET} 🔌 Providers"
 echo -e "  ${BOLD}7)${RESET} ⚙️  Toggle Flags"
 echo -e "  ${BOLD}8)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado: Claude ↔ Agy ↔ Codex)"
-echo -e "  ${BOLD}9)${RESET} 👤 Contas Claude"
+echo -e "  ${BOLD}9)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -2006,7 +2822,8 @@ case $choice in
     1) conta_autoswitch_if_needed
        enter_repo_if_needed
        launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-    2) enter_repo_if_needed
+    2) xconta_autoswitch_if_needed
+       enter_repo_if_needed
        launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
     3) enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
