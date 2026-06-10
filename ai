@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.6.2"
+AI_LAUNCHER_VERSION="1.7.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -58,6 +58,12 @@ get_claude_profile_flags() {
 # Arquivo de credenciais (criado automaticamente)
 PROVIDERS_FILE="${HOME}/.local/share/ai-launcher/providers.conf"
 mkdir -p "$(dirname "$PROVIDERS_FILE")"
+
+# ── Contas Claude (troca sem logout) ─────────────────────
+# Slot ativo do Claude Code no Keychain + metadados por conta
+CLAUDE_KEYCHAIN_SERVICE="Claude Code-credentials"
+ACCOUNT_KEYCHAIN_PREFIX="ai-launcher-conta"
+ACCOUNTS_DIR="${HOME}/.local/share/ai-launcher/accounts"
 
 # Providers disponíveis: nome=base_url (URLs confirmadas pelo multi-claude)
 declare -A PROVIDER_URLS=(
@@ -218,6 +224,313 @@ provider_list() {
         printf "  %-12s %b  ${DIM}model: %s${RESET}\n" "$p" "$key_status" "${model:-default}"
     done
     echo ""
+}
+
+# ── Contas Claude (troca de conta sem logout) ────────────
+# O Claude Code guarda a credencial OAuth ativa no Keychain do macOS
+# (service "Claude Code-credentials") e os metadados da conta no campo
+# oauthAccount do ~/.claude.json. Cada conta salva pelo launcher vira:
+#   - Keychain "ai-launcher-conta:<nome>"  → credencial (criptografada)
+#   - ${ACCOUNTS_DIR}/<nome>.json          → email + oauthAccount (0600)
+# Trocar = re-fotografar a ativa (refresh tokens rotacionam) e restaurar
+# a escolhida no slot ativo. Sessões claude abertas mantêm a conta antiga.
+
+_validate_account_name() {
+    [[ "$1" =~ ^[a-z0-9_-]+$ ]]
+}
+
+_conta_require_deps() {
+    if ! command -v security >/dev/null 2>&1; then
+        echo -e "${RED}Erro: comando 'security' não encontrado (troca de contas é exclusiva do macOS).${RESET}"
+        return 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${RED}Erro: python3 é necessário para gerenciar contas.${RESET}"
+        return 1
+    fi
+}
+
+conta_active_email() {
+    python3 - <<'PY' 2>/dev/null || true
+import json, os
+try:
+    with open(os.path.expanduser('~/.claude.json')) as f:
+        print(json.load(f).get('oauthAccount', {}).get('emailAddress', ''))
+except Exception:
+    pass
+PY
+}
+
+conta_meta_get() {
+    # conta_meta_get <nome> <campo> → imprime o campo (vazio se ausente)
+    local f="${ACCOUNTS_DIR}/$1.json"
+    [[ -f "$f" ]] || return 1
+    CONTA_META_FILE="$f" CONTA_META_KEY="$2" python3 - <<'PY' 2>/dev/null || true
+import json, os
+try:
+    with open(os.environ['CONTA_META_FILE']) as f:
+        print(json.load(f).get(os.environ['CONTA_META_KEY'], ''))
+except Exception:
+    pass
+PY
+}
+
+conta_keychain_has() {
+    security find-generic-password -s "${ACCOUNT_KEYCHAIN_PREFIX}:$1" -a "$USER" >/dev/null 2>&1
+}
+
+conta_snapshot_to() {
+    # Fotografa credencial ativa + oauthAccount como backup <nome>
+    local nome="$1" cred
+    cred=$(security find-generic-password -s "$CLAUDE_KEYCHAIN_SERVICE" -a "$USER" -w 2>/dev/null) || true
+    if [[ -z "$cred" ]]; then
+        echo -e "${RED}Nenhuma credencial ativa do Claude Code no Keychain.${RESET}"
+        echo -e "  Faça login primeiro: ${BOLD}claude${RESET} → ${BOLD}/login${RESET}"
+        return 1
+    fi
+    if ! security add-generic-password -U -s "${ACCOUNT_KEYCHAIN_PREFIX}:${nome}" -a "$USER" -w "$cred" 2>/dev/null; then
+        echo -e "${RED}Falha ao gravar backup '${nome}' no Keychain.${RESET}"
+        return 1
+    fi
+    mkdir -p "$ACCOUNTS_DIR" && chmod 700 "$ACCOUNTS_DIR"
+    CONTA_NOME="$nome" CONTA_DIR="$ACCOUNTS_DIR" python3 - <<'PY'
+import json, os, datetime
+home = os.path.expanduser('~')
+oauth = {}
+try:
+    with open(os.path.join(home, '.claude.json')) as f:
+        oauth = json.load(f).get('oauthAccount', {}) or {}
+except Exception:
+    pass
+meta = {
+    'email': oauth.get('emailAddress', ''),
+    'oauthAccount': oauth,
+    'savedAt': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+}
+path = os.path.join(os.environ['CONTA_DIR'], os.environ['CONTA_NOME'] + '.json')
+tmp = path + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump(meta, f, indent=2, ensure_ascii=False)
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+PY
+}
+
+conta_save() {
+    local nome="${1:-}"
+    _conta_require_deps || return 1
+    if [[ -z "$nome" ]]; then
+        echo -e "${RED}Uso: ai conta save <nome>${RESET}   ${DIM}ex.: ai conta save trabalho${RESET}"
+        return 1
+    fi
+    if ! _validate_account_name "$nome"; then
+        echo -e "${RED}Nome inválido: use letras minúsculas, números, '-' e '_'.${RESET}"
+        return 1
+    fi
+    conta_snapshot_to "$nome" || return 1
+    local email
+    email=$(conta_meta_get "$nome" email || true)
+    echo -e "${GREEN}✔ Conta '${nome}' salva${RESET} ${DIM}(${email:-email desconhecido})${RESET}"
+}
+
+conta_find_by_email() {
+    # Acha o nome salvo cujo email == $1
+    local email="$1" f nome
+    [[ -n "$email" ]] || return 1
+    for f in "$ACCOUNTS_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        nome=$(basename "$f" .json)
+        if [[ "$(conta_meta_get "$nome" email || true)" == "$email" ]]; then
+            echo "$nome"
+            return 0
+        fi
+    done
+    return 1
+}
+
+conta_use() {
+    local nome="${1:-}" email_ativo nome_ativo email_destino cred
+    _conta_require_deps || return 1
+    if [[ -z "$nome" ]]; then
+        echo -e "${RED}Uso: ai conta use <nome>${RESET}"
+        conta_list
+        return 1
+    fi
+    if ! _validate_account_name "$nome"; then
+        echo -e "${RED}Nome inválido.${RESET}"
+        return 1
+    fi
+    if ! conta_keychain_has "$nome"; then
+        echo -e "${RED}Conta '${nome}' não encontrada no Keychain.${RESET}"
+        conta_list
+        return 1
+    fi
+
+    email_ativo=$(conta_active_email)
+    email_destino=$(conta_meta_get "$nome" email || true)
+
+    # 1) Re-snapshot da conta ativa — o backup precisa do token de AGORA,
+    #    não o de quando foi salvo (refresh tokens rotacionam).
+    if nome_ativo=$(conta_find_by_email "$email_ativo"); then
+        if ! conta_snapshot_to "$nome_ativo"; then
+            echo -e "${RED}Falha ao atualizar snapshot da conta ativa ('${nome_ativo}'). Troca abortada.${RESET}"
+            return 1
+        fi
+    elif [[ -n "$email_ativo" ]]; then
+        echo -e "${YELLOW}A conta ativa (${email_ativo}) não está salva — sem backup ela exigirá novo login depois.${RESET}"
+        if [[ -t 0 ]]; then
+            local novo_nome
+            read -rp "$(echo -e "  Salvar conta ativa como ${DIM}(vazio = não salvar)${RESET}: ")" novo_nome
+            if [[ -n "$novo_nome" ]]; then
+                conta_save "$novo_nome" || return 1
+            fi
+        else
+            echo -e "  Salve antes: ${BOLD}ai conta save <nome>${RESET}"
+            return 1
+        fi
+    fi
+
+    # Já é a ativa? (o re-snapshot acima já deixou o backup fresco)
+    if [[ -n "$email_destino" && "$email_destino" == "$email_ativo" ]]; then
+        echo -e "${GREEN}✔ '${nome}' já é a conta ativa${RESET} ${DIM}(${email_ativo}) — snapshot atualizado.${RESET}"
+        return 0
+    fi
+
+    # 2) Restaura a credencial escolhida no slot ativo do Claude Code
+    cred=$(security find-generic-password -s "${ACCOUNT_KEYCHAIN_PREFIX}:${nome}" -a "$USER" -w 2>/dev/null) || true
+    if [[ -z "$cred" ]]; then
+        echo -e "${RED}Falha ao ler o backup '${nome}' do Keychain.${RESET}"
+        return 1
+    fi
+    if ! security add-generic-password -U -s "$CLAUDE_KEYCHAIN_SERVICE" -a "$USER" -w "$cred" 2>/dev/null; then
+        echo -e "${RED}Falha ao gravar credencial no slot ativo do Claude Code.${RESET}"
+        return 1
+    fi
+
+    # 3) Atualiza oauthAccount no ~/.claude.json (backup .bak + escrita atômica)
+    if [[ -f "${ACCOUNTS_DIR}/${nome}.json" ]]; then
+        CONTA_NOME="$nome" CONTA_DIR="$ACCOUNTS_DIR" python3 - <<'PY' || echo -e "${YELLOW}⚠ Credencial trocada, mas falhou ao atualizar ~/.claude.json (o Claude reconcilia no próximo start).${RESET}"
+import json, os, shutil
+home = os.path.expanduser('~')
+cfg_path = os.path.join(home, '.claude.json')
+meta_path = os.path.join(os.environ['CONTA_DIR'], os.environ['CONTA_NOME'] + '.json')
+with open(meta_path) as f:
+    meta = json.load(f)
+with open(cfg_path) as f:
+    cfg = json.load(f)
+shutil.copy2(cfg_path, cfg_path + '.bak-ai-launcher')
+cfg['oauthAccount'] = meta.get('oauthAccount') or {}
+tmp = cfg_path + '.tmp-ai-launcher'
+with open(tmp, 'w') as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+os.replace(tmp, cfg_path)
+PY
+    else
+        echo -e "${YELLOW}⚠ Metadados de '${nome}' ausentes — credencial trocada sem atualizar ~/.claude.json.${RESET}"
+    fi
+
+    echo -e "${GREEN}✔ Conta ativa agora: ${BOLD}${nome}${RESET} ${DIM}(${email_destino:-?})${RESET}"
+    echo -e "${DIM}  Sessões claude já abertas continuam na conta anterior — reinicie-as para usar a nova.${RESET}"
+}
+
+conta_list() {
+    _conta_require_deps || return 1
+    local email_ativo f nome email saved marker kc n=0
+    email_ativo=$(conta_active_email)
+    echo -e "${BOLD}${CYAN}👤 Contas Claude salvas${RESET}"
+    echo ""
+    for f in "$ACCOUNTS_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        n=$((n+1))
+        nome=$(basename "$f" .json)
+        email=$(conta_meta_get "$nome" email || true)
+        saved=$(conta_meta_get "$nome" savedAt || true)
+        if conta_keychain_has "$nome"; then
+            kc="${GREEN}✔${RESET}"
+        else
+            kc="${RED}✗ sem credencial${RESET}"
+        fi
+        if [[ -n "$email" && "$email" == "$email_ativo" ]]; then
+            marker="${GREEN}● ativa${RESET}"
+        else
+            marker="${DIM}○      ${RESET}"
+        fi
+        printf "  %b %-14s %-34s %b ${DIM}salva: %s${RESET}\n" "$marker" "$nome" "${email:-?}" "$kc" "${saved%%T*}"
+    done
+    if (( n == 0 )); then
+        echo -e "  ${DIM}Nenhuma conta salva ainda.${RESET}"
+        echo -e "  Salve a atual: ${BOLD}ai conta save <nome>${RESET}"
+    fi
+    if [[ -n "$email_ativo" ]] && ! conta_find_by_email "$email_ativo" >/dev/null; then
+        echo ""
+        echo -e "  ${YELLOW}Conta ativa (${email_ativo}) ainda não está salva.${RESET}"
+    fi
+    echo ""
+}
+
+conta_rm() {
+    local nome="${1:-}"
+    if [[ -z "$nome" ]]; then
+        echo -e "${RED}Uso: ai conta rm <nome>${RESET}"
+        return 1
+    fi
+    _validate_account_name "$nome" || { echo -e "${RED}Nome inválido.${RESET}"; return 1; }
+    local achou=false
+    if conta_keychain_has "$nome"; then
+        security delete-generic-password -s "${ACCOUNT_KEYCHAIN_PREFIX}:${nome}" -a "$USER" >/dev/null 2>&1 && achou=true
+    fi
+    if [[ -f "${ACCOUNTS_DIR}/${nome}.json" ]]; then
+        rm -f "${ACCOUNTS_DIR}/${nome}.json" && achou=true
+    fi
+    if [[ "$achou" == true ]]; then
+        echo -e "${GREEN}✔ Backup '${nome}' removido${RESET} ${DIM}(a conta ativa não é afetada)${RESET}"
+    else
+        echo -e "${YELLOW}Conta '${nome}' não encontrada.${RESET}"
+    fi
+}
+
+conta_menu() {
+    _conta_require_deps || return 1
+    conta_list
+    if [[ ! -t 0 ]]; then
+        return 0
+    fi
+    local nomes=() f
+    for f in "$ACCOUNTS_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        nomes+=("$(basename "$f" .json)")
+    done
+    if (( ${#nomes[@]} == 0 )); then
+        local salvar
+        read -rp "$(echo -e "  Salvar a conta ativa agora? Nome ${DIM}(vazio = sair)${RESET}: ")" salvar
+        [[ -n "$salvar" ]] && conta_save "$salvar"
+        return 0
+    fi
+    local i=1 escolha
+    echo -e "  ${BOLD}Trocar para:${RESET}"
+    for nome in "${nomes[@]}"; do
+        printf "  ${BOLD}%d)${RESET} %s\n" "$i" "$nome"
+        i=$((i+1))
+    done
+    echo -e "  ${BOLD}s)${RESET} Salvar conta ativa com novo nome"
+    echo -e "  ${DIM}0) Voltar${RESET}"
+    read -rp "Escolha: " escolha
+    case "$escolha" in
+        0|"") return 0 ;;
+        s|S)
+            local novo
+            read -rp "  Nome para a conta ativa: " novo
+            [[ -n "$novo" ]] && conta_save "$novo"
+            ;;
+        *)
+            if [[ "$escolha" =~ ^[0-9]+$ ]] && (( escolha >= 1 && escolha <= ${#nomes[@]} )); then
+                conta_use "${nomes[$((escolha-1))]}"
+            else
+                echo "Opção inválida."
+                return 1
+            fi
+            ;;
+    esac
 }
 
 # Arquivo de histórico
@@ -576,6 +889,14 @@ Providers:
   p ls                   Lista providers e status das keys
   p add <nome> [key]     Salva API key para um provider
   p del <nome>           Remove API key de um provider
+
+Contas Claude (troca sem logout, macOS):
+  conta                  Menu interativo de contas salvas
+  conta ls               Lista contas (● marca a ativa)
+  conta save <nome>      Salva a conta logada atual como <nome>
+  conta use <nome>       Ativa a conta <nome> (sem browser/logout)
+  conta rm <nome>        Remove o backup <nome>
+  c --conta <nome>       Troca de conta e já lança o Claude
 
 Repos (picker inteligente quando lançado fora de repo):
   r, repo, repos   Lista repos conhecidos
@@ -1052,6 +1373,12 @@ if [[ ${1:-} == "claude" || ${1:-} == "c" ]]; then
                                  [[ $# -gt 0 ]] && CLAUDE_FLAGS+=("--effort" "$1") && shift ;;
             --add-dir)           shift
                                  [[ $# -gt 0 ]] && CLAUDE_FLAGS+=("--add-dir" "$1") && shift ;;
+            --conta|--account)   shift
+                                 if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+                                     echo -e "${RED}Uso: ai c --conta <nome>${RESET}"; exit 1
+                                 fi
+                                 conta_use "$1" || exit 1
+                                 shift ;;
             --bare)              CLAUDE_FLAGS+=("--bare"); shift ;;
             *)                   break ;;
         esac
@@ -1295,6 +1622,23 @@ elif [[ ${1:-} == "provider" || ${1:-} == "p" ]]; then
             ;;
     esac
     exit 0
+elif [[ ${1:-} == "conta" || ${1:-} == "contas" || ${1:-} == "account" || ${1:-} == "accounts" ]]; then
+    shift
+    subcmd="${1:-}"
+    [[ -n "$subcmd" ]] && shift
+    case "$subcmd" in
+        ls|list)    conta_list ;;
+        save|add)   conta_save "${1:-}" || exit 1 ;;
+        use|switch) conta_use "${1:-}" || exit 1 ;;
+        rm|del)     conta_rm "${1:-}" || exit 1 ;;
+        "")         conta_menu ;;
+        *)
+            echo -e "${RED}Subcomando desconhecido: ${subcmd}${RESET}"
+            echo "Use: ai conta [ls|save <nome>|use <nome>|rm <nome>]"
+            exit 1
+            ;;
+    esac
+    exit 0
 elif [[ ${1:-} == "flags" || ${1:-} == "f" ]]; then
     shift
     if [[ ! -t 0 ]]; then
@@ -1405,9 +1749,14 @@ echo ""
 echo -e "  ${BOLD}6)${RESET} 🔌 Providers"
 echo -e "  ${BOLD}7)${RESET} ⚙️  Toggle Flags"
 echo -e "  ${BOLD}8)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado: Claude ↔ Agy ↔ Codex)"
+echo -e "  ${BOLD}9)${RESET} 👤 Contas Claude"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
+_conta_ativa_email=$(conta_active_email)
+if [[ -n "$_conta_ativa_email" ]]; then
+    echo -e "${YELLOW}Conta Claude:${RESET} ${DIM}${_conta_ativa_email}${RESET}"
+fi
 echo -e "${YELLOW}Flags:${RESET}"
 echo -e "  ${DIM}Claude: ${CLAUDE_FLAGS[*]+"${CLAUDE_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Codex:  ${CODEX_FLAGS[*]+"${CODEX_FLAGS[*]}"}${RESET}"
@@ -1418,7 +1767,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-8/0]: " choice
+read -rp "Escolha [1-9/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -1452,6 +1801,7 @@ case $choice in
        esac
        ;;
     8) exec "$0" install-skills ;;
+    9) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

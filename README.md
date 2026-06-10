@@ -30,6 +30,9 @@ ai review       # Alias curto para code review senior
 ai c "prompt"   # Claude com prompt
 ai o "prompt"   # Dry-run adaptativo da orquestração
 ai o review     # Dry-run do code review senior: Codex -> AGY -> Claude -> síntese
+ai conta        # Menu de contas Claude (troca sem logout, macOS)
+ai conta save trabalho   # Salva a conta logada atual como "trabalho"
+ai c --conta pessoal     # Troca para a conta "pessoal" e já lança o Claude
 ai --history    # Ver histórico de uso
 ai --config     # Editar flags
 ai --help       # Ajuda
@@ -77,6 +80,28 @@ Presets principais:
 - `backend-critical`
 - `migration-critical`
 
+## Contas Claude (multi-conta sem logout — macOS)
+
+Troque entre várias contas Claude (pessoal, trabalho, backup) sem o ciclo logout → browser → login. As credenciais OAuth de cada conta ficam salvas no **Keychain do macOS** (nunca em texto plano); metadados em `~/.local/share/ai-launcher/accounts/` com permissão `0600`.
+
+```bash
+ai conta save trabalho   # salva a conta logada atual como "trabalho"
+ai conta save pessoal    # (faça /login na outra conta antes e salve também)
+ai conta ls              # lista contas — ● marca a ativa
+ai conta use pessoal     # ativa a conta "pessoal" na hora
+ai conta rm backup       # remove um backup salvo
+ai c --conta trabalho    # troca de conta e já lança o Claude
+ai conta                 # menu interativo (também é a opção 9 do menu principal)
+```
+
+Como funciona: o Claude Code guarda a credencial ativa no Keychain (`Claude Code-credentials`) e os metadados em `~/.claude.json`. O launcher fotografa a conta ativa antes de cada troca (refresh tokens rotacionam) e restaura a escolhida no slot ativo, atualizando o `oauthAccount` com escrita atômica e backup `.bak-ai-launcher`.
+
+Avisos:
+
+- Sessões `claude` já abertas continuam na conta anterior até serem reiniciadas.
+- Se uma conta ficar semanas sem uso, o refresh token pode expirar no servidor — refaça `/login` nela e `ai conta save` de novo.
+- Mecanismo não-oficial (mesma técnica de apps como o Claude Switcher): se a Anthropic mudar o formato do Keychain, ajuste o script.
+
 ## Features
 
 - Menu interativo com versão e status de instalação
@@ -84,6 +109,7 @@ Presets principais:
 - Histórico de uso
 - Passagem de prompt direto via linha de comando
 - Flags configuráveis no topo do script
+- Contas Claude múltiplas com troca sem logout (Keychain, macOS)
 - Providers alternativos (OpenRouter, DeepSeek, Ollama, LM Studio, LiteLLM)
 - Orquestração Codex + AGY + Claude com presets e gate antes de escrita
 - Picker de repos conhecidos quando lançado fora de um repo git
