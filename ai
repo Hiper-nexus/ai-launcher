@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.7.0"
+AI_LAUNCHER_VERSION="1.8.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -64,6 +64,11 @@ mkdir -p "$(dirname "$PROVIDERS_FILE")"
 CLAUDE_KEYCHAIN_SERVICE="Claude Code-credentials"
 ACCOUNT_KEYCHAIN_PREFIX="ai-launcher-conta"
 ACCOUNTS_DIR="${HOME}/.local/share/ai-launcher/accounts"
+# Auto-switch: ao lançar o Claude, se a janela de 5h da conta ativa estiver
+# >= threshold, troca para outra conta salva com quota (estilo Claude Switcher)
+CONTA_AUTO_SWITCH="${AI_CONTA_AUTO_SWITCH:-true}"
+CONTA_AUTO_THRESHOLD="${AI_CONTA_AUTO_THRESHOLD:-100}"
+CLAUDE_USAGE_URL="https://api.anthropic.com/api/oauth/usage"
 
 # Providers disponíveis: nome=base_url (URLs confirmadas pelo multi-claude)
 declare -A PROVIDER_URLS=(
@@ -489,6 +494,218 @@ conta_rm() {
     fi
 }
 
+conta_usage_pct() {
+    # conta_usage_pct [nome]  ("" = conta ativa)
+    # stdout: "<pct_5h> <pct_7d> <reset_5h_local>" — return 1 se indisponível
+    local nome="${1:-}" svc tok
+    if [[ -n "$nome" ]]; then
+        svc="${ACCOUNT_KEYCHAIN_PREFIX}:${nome}"
+    else
+        svc="$CLAUDE_KEYCHAIN_SERVICE"
+    fi
+    tok=$(security find-generic-password -s "$svc" -a "$USER" -w 2>/dev/null | python3 -c "
+import sys, json
+try:
+    print(json.load(sys.stdin)['claudeAiOauth']['accessToken'])
+except Exception:
+    pass" 2>/dev/null) || true
+    [[ -z "$tok" ]] && return 1
+    curl -s -m 6 -H "Authorization: Bearer $tok" -H "anthropic-beta: oauth-2025-04-20" \
+        "$CLAUDE_USAGE_URL" 2>/dev/null | python3 -c "
+import sys, json, datetime
+d = json.load(sys.stdin)
+fh = d.get('five_hour') or {}
+sd = d.get('seven_day') or {}
+u5 = fh.get('utilization')
+if u5 is None:
+    raise SystemExit(1)
+u7 = sd.get('utilization') or 0
+reset = '?'
+try:
+    r = datetime.datetime.fromisoformat(fh.get('resets_at', ''))
+    reset = r.astimezone().strftime('%H:%M')
+except Exception:
+    pass
+print(int(round(u5)), int(round(u7)), reset)" 2>/dev/null || return 1
+}
+
+conta_status() {
+    # Uso de cada conta salva (janela 5h / 7 dias), estilo Claude Switcher
+    _conta_require_deps || return 1
+    if ! command -v curl >/dev/null 2>&1; then
+        echo -e "${RED}curl é necessário para consultar uso.${RESET}"
+        return 1
+    fi
+    local email_ativo f nome email out u5 u7 reset marker cor n=0
+    email_ativo=$(conta_active_email)
+    echo -e "${BOLD}${CYAN}📊 Uso das contas Claude${RESET} ${DIM}(janela 5h / 7 dias)${RESET}"
+    echo ""
+    for f in "$ACCOUNTS_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        n=$((n+1))
+        nome=$(basename "$f" .json)
+        email=$(conta_meta_get "$nome" email || true)
+        if [[ -n "$email" && "$email" == "$email_ativo" ]]; then
+            marker="${GREEN}●${RESET}"
+            out=$(conta_usage_pct "" || true)     # ativa: token do slot, mais fresco
+        else
+            marker="${DIM}○${RESET}"
+            out=$(conta_usage_pct "$nome" || true)
+        fi
+        if [[ -n "$out" ]]; then
+            u5=$(echo "$out" | cut -d' ' -f1)
+            u7=$(echo "$out" | cut -d' ' -f2)
+            reset=$(echo "$out" | cut -d' ' -f3)
+            cor="$GREEN"
+            (( u5 >= 80 )) && cor="$YELLOW"
+            (( u5 >= 100 )) && cor="$RED"
+            printf "  %b %-14s %-30s 5h: %b%3d%%%b  7d: %3d%%  ${DIM}reseta %s${RESET}\n" \
+                "$marker" "$nome" "${email:-?}" "$cor" "$u5" "$RESET" "$u7" "$reset"
+        else
+            printf "  %b %-14s %-30s ${DIM}uso indisponível (token antigo? reative: ai conta use %s)${RESET}\n" \
+                "$marker" "$nome" "${email:-?}" "$nome"
+        fi
+    done
+    (( n == 0 )) && echo -e "  ${DIM}Nenhuma conta salva. Adicione: ${RESET}${BOLD}ai conta add <nome>${RESET}"
+    echo ""
+}
+
+conta_autoswitch_if_needed() {
+    # Antes de lançar o Claude: se a janela de 5h da conta ativa atingiu o
+    # threshold, troca para outra conta salva com quota. Fail-open: problema
+    # de rede/API nunca bloqueia o launch.
+    [[ "$CONTA_AUTO_SWITCH" == "true" ]] || return 0
+    command -v curl >/dev/null 2>&1 || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    command -v security >/dev/null 2>&1 || return 0
+    local f nomes=()
+    for f in "$ACCOUNTS_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        nomes+=("$(basename "$f" .json)")
+    done
+    (( ${#nomes[@]} >= 2 )) || return 0
+
+    local out u5
+    out=$(conta_usage_pct "" || true)
+    [[ -z "$out" ]] && return 0
+    u5=${out%% *}
+    (( u5 >= CONTA_AUTO_THRESHOLD )) || return 0
+
+    local email_ativo nome_ativo
+    email_ativo=$(conta_active_email)
+    nome_ativo=$(conta_find_by_email "$email_ativo" || true)
+    [[ -z "$nome_ativo" ]] && return 0   # ativa não salva: não arrisca trocar
+
+    echo -e "${YELLOW}⚠ Conta '${nome_ativo}' está em ${u5}% da janela de 5h — procurando outra conta...${RESET}"
+    local nome alvo="" fallback="" out2 u2
+    for nome in "${nomes[@]}"; do
+        [[ "$nome" == "$nome_ativo" ]] && continue
+        if out2=$(conta_usage_pct "$nome"); then
+            u2=${out2%% *}
+            if (( u2 < CONTA_AUTO_THRESHOLD )); then
+                alvo="$nome"
+                echo -e "  ${GREEN}→ '${nome}' está em ${u2}% — trocando.${RESET}"
+                break
+            fi
+        else
+            [[ -z "$fallback" ]] && fallback="$nome"
+        fi
+    done
+    if [[ -z "$alvo" && -n "$fallback" ]]; then
+        alvo="$fallback"
+        echo -e "  ${DIM}→ uso de '${alvo}' não verificável; tentando mesmo assim.${RESET}"
+    fi
+    if [[ -z "$alvo" ]]; then
+        echo -e "  ${RED}Todas as contas salvas estão no limite — seguindo na atual.${RESET}"
+        return 0
+    fi
+    conta_use "$alvo" || true
+}
+
+conta_add() {
+    # Fluxo guiado: protege a conta ativa, loga na NOVA via 'claude auth login',
+    # salva e oferece voltar. Rollback automático se o login falhar.
+    local nome="${1:-}"
+    _conta_require_deps || return 1
+    if ! command -v claude >/dev/null 2>&1; then
+        echo -e "${RED}Claude Code CLI não encontrado.${RESET}"
+        return 1
+    fi
+    if [[ ! -t 0 ]]; then
+        echo -e "${RED}'ai conta add' precisa de terminal interativo (o login abre o navegador).${RESET}"
+        return 1
+    fi
+    if [[ -z "$nome" ]]; then
+        read -rp "$(echo -e "  Nome para a ${BOLD}nova${RESET} conta ${DIM}(ex.: pessoal, trabalho)${RESET}: ")" nome
+    fi
+    [[ -z "$nome" ]] && { echo -e "${DIM}cancelado${RESET}"; return 1; }
+    if ! _validate_account_name "$nome"; then
+        echo -e "${RED}Nome inválido: use letras minúsculas, números, '-' e '_'.${RESET}"
+        return 1
+    fi
+    if conta_keychain_has "$nome"; then
+        echo -e "${RED}Já existe uma conta salva chamada '${nome}'.${RESET} ${DIM}(remova antes: ai conta rm ${nome})${RESET}"
+        return 1
+    fi
+
+    # 1) Protege a conta ativa antes de deslogar
+    local email_antes nome_anterior=""
+    email_antes=$(conta_active_email)
+    if [[ -n "$email_antes" ]]; then
+        if nome_anterior=$(conta_find_by_email "$email_antes"); then
+            conta_snapshot_to "$nome_anterior" || return 1
+        else
+            local salvar_como
+            read -rp "$(echo -e "  A conta ativa (${email_antes}) precisa ser salva antes. Nome para ela: ")" salvar_como
+            [[ -z "$salvar_como" ]] && { echo -e "${RED}cancelado — nada foi alterado.${RESET}"; return 1; }
+            conta_save "$salvar_como" || return 1
+            nome_anterior="$salvar_como"
+        fi
+    fi
+
+    # 2) Login na conta nova (única vez que o navegador é necessário)
+    echo ""
+    echo -e "  ${BOLD}No navegador que vai abrir, entre com a conta NOVA.${RESET}"
+    [[ -n "$nome_anterior" ]] && echo -e "  ${DIM}(a conta '${nome_anterior}' já está protegida no Keychain)${RESET}"
+    echo ""
+    claude auth logout >/dev/null 2>&1 || true
+    if ! claude auth login; then
+        echo -e "${RED}Login falhou ou foi cancelado.${RESET}"
+        if [[ -n "$nome_anterior" ]]; then
+            echo -e "  Restaurando '${nome_anterior}'..."
+            conta_use "$nome_anterior" || true
+        fi
+        return 1
+    fi
+
+    # 3) Valida e salva a conta nova
+    local email_depois
+    email_depois=$(conta_active_email)
+    if [[ -z "$email_depois" ]]; then
+        echo -e "${RED}Não foi possível confirmar o login.${RESET}"
+        if [[ -n "$nome_anterior" ]]; then
+            conta_use "$nome_anterior" || true
+        fi
+        return 1
+    fi
+    if [[ -n "$email_antes" && "$email_depois" == "$email_antes" ]]; then
+        echo -e "${YELLOW}Você entrou na MESMA conta (${email_depois}) — nada novo para salvar.${RESET}"
+        conta_snapshot_to "$nome_anterior" >/dev/null 2>&1 || true
+        return 1
+    fi
+    conta_save "$nome" || return 1
+
+    # 4) Ficar na nova ou voltar?
+    echo ""
+    local ficar
+    read -rp "$(echo -e "  ${BOLD}1)${RESET} Continuar na '${nome}'   ${BOLD}2)${RESET} Voltar para '${nome_anterior:-anterior}'   [1]: ")" ficar
+    if [[ "$ficar" == "2" && -n "$nome_anterior" ]]; then
+        conta_use "$nome_anterior"
+    else
+        echo -e "${GREEN}✔ Usando '${nome}' (${email_depois}).${RESET}"
+    fi
+}
+
 conta_menu() {
     _conta_require_deps || return 1
     conta_list
@@ -504,6 +721,7 @@ conta_menu() {
         local salvar
         read -rp "$(echo -e "  Salvar a conta ativa agora? Nome ${DIM}(vazio = sair)${RESET}: ")" salvar
         [[ -n "$salvar" ]] && conta_save "$salvar"
+        echo -e "  ${DIM}Para cadastrar a segunda conta: ${RESET}${BOLD}ai conta add <nome>${RESET}"
         return 0
     fi
     local i=1 escolha
@@ -512,11 +730,15 @@ conta_menu() {
         printf "  ${BOLD}%d)${RESET} %s\n" "$i" "$nome"
         i=$((i+1))
     done
+    echo -e "  ${BOLD}a)${RESET} Adicionar conta nova (login guiado)"
+    echo -e "  ${BOLD}u)${RESET} Ver uso das contas (5h/7d)"
     echo -e "  ${BOLD}s)${RESET} Salvar conta ativa com novo nome"
     echo -e "  ${DIM}0) Voltar${RESET}"
     read -rp "Escolha: " escolha
     case "$escolha" in
         0|"") return 0 ;;
+        a|A) conta_add ;;
+        u|U) conta_status ;;
         s|S)
             local novo
             read -rp "  Nome para a conta ativa: " novo
@@ -892,11 +1114,15 @@ Providers:
 
 Contas Claude (troca sem logout, macOS):
   conta                  Menu interativo de contas salvas
+  conta add <nome>       Cadastra conta NOVA (login guiado + rollback)
   conta ls               Lista contas (● marca a ativa)
+  conta status           Uso de cada conta (janela 5h / 7 dias)
   conta save <nome>      Salva a conta logada atual como <nome>
   conta use <nome>       Ativa a conta <nome> (sem browser/logout)
   conta rm <nome>        Remove o backup <nome>
   c --conta <nome>       Troca de conta e já lança o Claude
+  Auto-switch: com 2+ contas salvas, 'ai c' troca sozinho quando a
+  janela de 5h esgota. Desligar: AI_CONTA_AUTO_SWITCH=false
 
 Repos (picker inteligente quando lançado fora de repo):
   r, repo, repos   Lista repos conhecidos
@@ -1396,6 +1622,10 @@ if [[ ${1:-} == "claude" || ${1:-} == "c" ]]; then
             [[ -n "$local_model" ]] && CLAUDE_FLAGS+=("--model" "$local_model")
         fi
     fi
+    # Auto-switch de conta se a janela de 5h esgotou (só no provider oficial)
+    if [[ -z "$_active_provider" ]]; then
+        conta_autoswitch_if_needed
+    fi
     enter_repo_if_needed
     launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "codex" || ${1:-} == "x" ]]; then
@@ -1627,14 +1857,16 @@ elif [[ ${1:-} == "conta" || ${1:-} == "contas" || ${1:-} == "account" || ${1:-}
     subcmd="${1:-}"
     [[ -n "$subcmd" ]] && shift
     case "$subcmd" in
-        ls|list)    conta_list ;;
-        save|add)   conta_save "${1:-}" || exit 1 ;;
-        use|switch) conta_use "${1:-}" || exit 1 ;;
-        rm|del)     conta_rm "${1:-}" || exit 1 ;;
-        "")         conta_menu ;;
+        ls|list)          conta_list ;;
+        add)              conta_add "${1:-}" || exit 1 ;;
+        status|uso|usage) conta_status ;;
+        save)             conta_save "${1:-}" || exit 1 ;;
+        use|switch)       conta_use "${1:-}" || exit 1 ;;
+        rm|del)           conta_rm "${1:-}" || exit 1 ;;
+        "")               conta_menu ;;
         *)
             echo -e "${RED}Subcomando desconhecido: ${subcmd}${RESET}"
-            echo "Use: ai conta [ls|save <nome>|use <nome>|rm <nome>]"
+            echo "Use: ai conta [add <nome>|ls|status|save <nome>|use <nome>|rm <nome>]"
             exit 1
             ;;
     esac
@@ -1771,7 +2003,8 @@ read -rp "Escolha [1-9/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
-    1) enter_repo_if_needed
+    1) conta_autoswitch_if_needed
+       enter_repo_if_needed
        launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     2) enter_repo_if_needed
        launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
