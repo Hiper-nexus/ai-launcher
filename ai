@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.9.1"
+AI_LAUNCHER_VERSION="1.9.2"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -511,26 +511,46 @@ conta_rm() {
 }
 
 _usage_cache_get() {
-    # $1 = chave  → imprime "u5 u7 reset" se houver entrada fresca (< TTL)
+    # $1 = chave  → imprime "u5 u7 reset" se houver entrada fresca
+    # (TTL global, ou 'ttl' próprio da entrada quando presente)
     [[ -f "$USAGE_CACHE_FILE" ]] || return 1
     UC_FILE="$USAGE_CACHE_FILE" UC_KEY="$1" UC_TTL="$USAGE_CACHE_TTL" python3 - <<'PY' 2>/dev/null || return 1
 import os, json, time
 try:
     c = json.load(open(os.environ['UC_FILE']))
     e = c.get(os.environ['UC_KEY'])
-    if e and (time.time() - e['ts']) < float(os.environ['UC_TTL']):
+    ttl = float(e.get('ttl', os.environ['UC_TTL'])) if e else 0
+    if e and (time.time() - e['ts']) < ttl:
         print(e['line'])
     else:
         raise SystemExit(1)
-except (OSError, ValueError, KeyError):
+except (OSError, ValueError, KeyError, AttributeError):
+    raise SystemExit(1)
+PY
+}
+
+_usage_cache_get_stale() {
+    # $1 = chave → "u5 u7 reset|idade_min" da última leitura BOA, ignorando o
+    # TTL — para exibir o dado mais recente quando a API está rate-limitada
+    [[ -f "$USAGE_CACHE_FILE" ]] || return 1
+    UC_FILE="$USAGE_CACHE_FILE" UC_KEY="$1" python3 - <<'PY' 2>/dev/null || return 1
+import os, json, time
+try:
+    c = json.load(open(os.environ['UC_FILE']))
+    e = c.get(os.environ['UC_KEY'])
+    if e and e.get('line') and not str(e['line']).startswith('RATELIMIT'):
+        print('%s|%d' % (e['line'], int((time.time() - e['ts']) / 60)))
+    else:
+        raise SystemExit(1)
+except (OSError, ValueError, KeyError, AttributeError):
     raise SystemExit(1)
 PY
 }
 
 _usage_cache_put() {
-    # $1 = chave, $2 = linha "u5 u7 reset" — escrita atômica
+    # $1 = chave, $2 = linha, $3 = ttl opcional da entrada — escrita atômica
     command -v python3 >/dev/null 2>&1 || return 0
-    UC_FILE="$USAGE_CACHE_FILE" UC_KEY="$1" UC_LINE="$2" python3 - <<'PY' 2>/dev/null || true
+    UC_FILE="$USAGE_CACHE_FILE" UC_KEY="$1" UC_LINE="$2" UC_ENTRY_TTL="${3:-}" python3 - <<'PY' 2>/dev/null || true
 import os, json, time
 f = os.environ['UC_FILE']
 try:
@@ -539,7 +559,14 @@ try:
         c = {}
 except (OSError, ValueError):
     c = {}
-c[os.environ['UC_KEY']] = {'line': os.environ['UC_LINE'], 'ts': time.time()}
+e = {'line': os.environ['UC_LINE'], 'ts': time.time()}
+ttl = os.environ.get('UC_ENTRY_TTL')
+if ttl:
+    try:
+        e['ttl'] = float(ttl)
+    except ValueError:
+        pass
+c[os.environ['UC_KEY']] = e
 tmp = f + '.tmp'
 with open(tmp, 'w') as fh:
     json.dump(c, fh)
@@ -561,7 +588,7 @@ TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
 CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 def fetch(tok):
-    # retorna (http_code, data|None); code 0 = erro de rede
+    # retorna (http_code, data|None, retry_after_s); code 0 = erro de rede
     req = urllib.request.Request(USAGE_URL)
     req.add_header("Authorization", "Bearer " + tok)
     req.add_header("anthropic-beta", "oauth-2025-04-20")
@@ -569,11 +596,15 @@ def fetch(tok):
     req.add_header("User-Agent", "ai-launcher")
     try:
         with urllib.request.urlopen(req, timeout=8) as r:
-            return 200, json.load(r)
+            return 200, json.load(r), 0
     except urllib.error.HTTPError as e:
-        return e.code, None
+        try:
+            ra = int(e.headers.get("Retry-After", "0"))
+        except (TypeError, ValueError):
+            ra = 0
+        return e.code, None, ra
     except Exception:
-        return 0, None
+        return 0, None, 0
 
 def refresh(oauth):
     rt = oauth.get("refreshToken")
@@ -621,11 +652,12 @@ except Exception:
 is_active = os.environ.get("CONTA_IS_ACTIVE") == "1"
 
 tok = oauth.get("accessToken")
-code, u = fetch(tok) if tok else (0, None)
+code, u, ra = fetch(tok) if tok else (0, None, 0)
 if u is not None and emit(u):
     raise SystemExit(0)
 if code == 429:
-    raise SystemExit(3)   # rate limited: token provavelmente bom, só esperar
+    print("RATELIMIT %d" % max(ra, 60))  # rate limited: token bom, só esperar
+    raise SystemExit(3)
 if is_active:
     raise SystemExit(1)   # não renova a sessão ativa do Claude Code
 
@@ -637,10 +669,13 @@ if new and new.get("access_token"):
     if new.get("expires_in"):
         oauth["expiresAt"] = int(datetime.datetime.now().timestamp() * 1000 + new["expires_in"] * 1000)
     blob["claudeAiOauth"] = oauth
-    code, u = fetch(oauth["accessToken"])
+    code, u, ra = fetch(oauth["accessToken"])
     if u is not None and emit(u):
         print("REFRESHED " + json.dumps(blob))
         raise SystemExit(0)
+    if code == 429:
+        print("RATELIMIT %d" % max(ra, 60))
+        raise SystemExit(3)
 raise SystemExit(1)
 PY
 }
@@ -662,6 +697,11 @@ conta_usage_pct() {
         printf '%s\n' "$linha1"
         return 0
     fi
+    # Bloqueio de rate limit ainda em vigor? Não bate na rede (renovaria o ban)
+    if _usage_cache_get "${cache_key}:rl" >/dev/null 2>&1; then
+        printf 'RATELIMIT\n'
+        return 0
+    fi
     blob=$(security find-generic-password -s "$svc" -a "$USER" -w 2>/dev/null) || true
     [[ -z "$blob" ]] && return 1
     local is_active=0
@@ -669,7 +709,16 @@ conta_usage_pct() {
     local rc
     out=$(CONTA_BLOB="$blob" CONTA_IS_ACTIVE="$is_active" _conta_usage_py)
     rc=$?
-    if (( rc == 3 )); then printf 'RATELIMIT\n'; return 0; fi
+    if (( rc == 3 )); then
+        # Memoriza o bloqueio pelo tempo que a API pediu (cap 30 min)
+        local ra
+        ra=$(printf '%s\n' "$out" | sed -n 's/^RATELIMIT //p')
+        [[ "$ra" =~ ^[0-9]+$ ]] || ra=120
+        (( ra > 1800 )) && ra=1800
+        _usage_cache_put "${cache_key}:rl" "RATELIMIT" "$ra"
+        printf 'RATELIMIT\n'
+        return 0
+    fi
     (( rc != 0 )) && return 1
     linha1=$(printf '%s\n' "$out" | sed -n '1p')
     refreshed=$(printf '%s\n' "$out" | sed -n '2p')
@@ -698,16 +747,30 @@ conta_status() {
         n=$((n+1))
         nome=$(basename "$f" .json)
         email=$(conta_meta_get "$nome" email || true)
+        local ckey
         if [[ -n "$email" && "$email" == "$email_ativo" ]]; then
             marker="${GREEN}●${RESET}"
+            ckey="claude:__active__"
             out=$(conta_usage_pct "" || true)     # ativa: token do slot, mais fresco
         else
             marker="${DIM}○${RESET}"
+            ckey="claude:${nome}"
             out=$(conta_usage_pct "$nome" || true)
         fi
         if [[ "$out" == "RATELIMIT" ]]; then
-            printf "  %b %-14s %-30s ${DIM}uso rate-limitado — tente em instantes${RESET}\n" \
-                "$marker" "$nome" "${email:-?}"
+            # API bloqueou a consulta: mostra o último valor conhecido com idade
+            local stale
+            if stale=$(_usage_cache_get_stale "$ckey"); then
+                local linha="${stale%|*}" idade="${stale##*|}"
+                u5=$(echo "$linha" | cut -d' ' -f1)
+                u7=$(echo "$linha" | cut -d' ' -f2)
+                reset=$(echo "$linha" | cut -d' ' -f3)
+                printf "  %b %-14s %-30s ${DIM}5h: %3d%%  7d: %3d%%  reseta %s  (dado de %s min atrás — API limitou consultas)${RESET}\n" \
+                    "$marker" "$nome" "${email:-?}" "$u5" "$u7" "$reset" "$idade"
+            else
+                printf "  %b %-14s %-30s ${DIM}consulta de uso rate-limitada pela API — volta sozinho em alguns minutos${RESET}\n" \
+                    "$marker" "$nome" "${email:-?}"
+            fi
         elif [[ -n "$out" ]]; then
             u5=$(echo "$out" | cut -d' ' -f1)
             u7=$(echo "$out" | cut -d' ' -f2)
@@ -742,8 +805,16 @@ conta_autoswitch_if_needed() {
 
     local out u5
     out=$(conta_usage_pct "" || true)
-    # Sem dado ou rate-limitado: não há sinal de esgotamento → não troca
-    [[ -z "$out" || "$out" == "RATELIMIT" ]] && return 0
+    if [[ "$out" == "RATELIMIT" ]]; then
+        # Consulta bloqueada: usa o último valor conhecido se for recente (≤15min)
+        local stale
+        if stale=$(_usage_cache_get_stale "claude:__active__") && (( ${stale##*|} <= 15 )); then
+            out="${stale%|*}"
+        else
+            return 0
+        fi
+    fi
+    [[ -z "$out" ]] && return 0
     u5=${out%% *}
     [[ "$u5" =~ ^[0-9]+$ ]] || return 0
     (( u5 >= CONTA_AUTO_THRESHOLD )) || return 0
@@ -1162,7 +1233,8 @@ def fetch(blob):
         if isinstance(a, dict):
             acc = a.get('chatgpt_account_id')
     if not tok or not acc:
-        return None
+        return None, 0
+    ra429 = 0
     for url in USAGE_URLS:
         req = urllib.request.Request(url)
         req.add_header('Authorization', 'Bearer ' + tok)
@@ -1171,10 +1243,17 @@ def fetch(blob):
         req.add_header('User-Agent', 'ai-launcher')
         try:
             with urllib.request.urlopen(req, timeout=8) as r:
-                return json.load(r)
+                return json.load(r), 0
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                try:
+                    ra429 = max(ra429, int(e.headers.get('Retry-After', '0')))
+                except (TypeError, ValueError):
+                    ra429 = max(ra429, 60)
+            continue
         except Exception:
             continue
-    return None
+    return None, ra429
 
 def refresh(blob):
     try:
@@ -1224,15 +1303,21 @@ def emit(u):
     return True
 
 blob = os.environ.get('XCONTA_BLOB', '')
-u = fetch(blob)
+u, ra = fetch(blob)
 if u is not None and emit(u):
     raise SystemExit(0)
+if ra > 0:
+    print('RATELIMIT %d' % max(ra, 60))
+    raise SystemExit(3)
 nb = refresh(blob)
 if nb:
-    u = fetch(nb)
+    u, ra = fetch(nb)
     if u is not None and emit(u):
         print('REFRESHED ' + nb)
         raise SystemExit(0)
+    if ra > 0:
+        print('RATELIMIT %d' % max(ra, 60))
+        raise SystemExit(3)
 raise SystemExit(1)
 PY
 }
@@ -1249,13 +1334,29 @@ xconta_usage_pct() {
         printf '%s\n' "$linha1"
         return 0
     fi
+    if _usage_cache_get "${cache_key}:rl" >/dev/null 2>&1; then
+        printf 'RATELIMIT\n'
+        return 0
+    fi
     if [[ -n "$nome" ]]; then
         blob=$(_xconta_read_backup "$nome") || true
     else
         blob=$(cat "$CODEX_AUTH_FILE" 2>/dev/null) || true
     fi
     [[ -z "$blob" ]] && return 1
-    out=$(XCONTA_BLOB="$blob" _xconta_usage_py) || return 1
+    local rc
+    out=$(XCONTA_BLOB="$blob" _xconta_usage_py)
+    rc=$?
+    if (( rc == 3 )); then
+        local ra
+        ra=$(printf '%s\n' "$out" | sed -n 's/^RATELIMIT //p')
+        [[ "$ra" =~ ^[0-9]+$ ]] || ra=120
+        (( ra > 1800 )) && ra=1800
+        _usage_cache_put "${cache_key}:rl" "RATELIMIT" "$ra"
+        printf 'RATELIMIT\n'
+        return 0
+    fi
+    (( rc != 0 )) && return 1
     linha1=$(printf '%s\n' "$out" | sed -n '1p')
     refreshed=$(printf '%s\n' "$out" | sed -n '2p')
     # Token renovado durante a consulta: regrava para manter a sessão viva
@@ -1283,14 +1384,30 @@ xconta_status() {
         n=$((n+1))
         nome=$(basename "$f" .json)
         email=$(xconta_meta_get "$nome" email || true)
+        local ckey
         if [[ -n "$email" && "$email" == "$email_ativo" ]]; then
             marker="${GREEN}●${RESET}"
+            ckey="codex:__active__"
             out=$(xconta_usage_pct "" || true)
         else
             marker="${DIM}○${RESET}"
+            ckey="codex:${nome}"
             out=$(xconta_usage_pct "$nome" || true)
         fi
-        if [[ -n "$out" ]]; then
+        if [[ "$out" == "RATELIMIT" ]]; then
+            local stale
+            if stale=$(_usage_cache_get_stale "$ckey"); then
+                local linha="${stale%|*}" idade="${stale##*|}"
+                u5=$(echo "$linha" | cut -d' ' -f1)
+                u7=$(echo "$linha" | cut -d' ' -f2)
+                reset=$(echo "$linha" | cut -d' ' -f3)
+                printf "  %b %-14s %-30s ${DIM}5h: %3d%%  7d: %3d%%  reseta %s  (dado de %s min atrás — API limitou consultas)${RESET}\n" \
+                    "$marker" "$nome" "${email:-?}" "$u5" "$u7" "$reset" "$idade"
+            else
+                printf "  %b %-14s %-30s ${DIM}consulta de uso rate-limitada pela API — volta sozinho em alguns minutos${RESET}\n" \
+                    "$marker" "$nome" "${email:-?}"
+            fi
+        elif [[ -n "$out" ]]; then
             u5=$(echo "$out" | cut -d' ' -f1)
             u7=$(echo "$out" | cut -d' ' -f2)
             reset=$(echo "$out" | cut -d' ' -f3)
@@ -1321,6 +1438,14 @@ xconta_autoswitch_if_needed() {
 
     local out u5
     out=$(xconta_usage_pct "" || true)
+    if [[ "$out" == "RATELIMIT" ]]; then
+        local stale
+        if stale=$(_usage_cache_get_stale "codex:__active__") && (( ${stale##*|} <= 15 )); then
+            out="${stale%|*}"
+        else
+            return 0
+        fi
+    fi
     [[ -z "$out" ]] && return 0
     u5=${out%% *}
     [[ "$u5" =~ ^[0-9]+$ ]] || return 0
