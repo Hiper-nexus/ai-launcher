@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.9.0"
+AI_LAUNCHER_VERSION="1.9.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -262,6 +262,13 @@ _conta_require_deps() {
         echo -e "${RED}Erro: python3 é necessário para gerenciar contas.${RESET}"
         return 1
     fi
+}
+
+# Pausa o submenu até o usuário ler a saída (evita o menu re-desenhar por cima)
+_conta_pausar() {
+    [[ -t 0 ]] || return 0
+    echo ""
+    read -rp "$(echo -e "${DIM}  Enter para voltar ao menu...${RESET}")" _ || true
 }
 
 conta_active_email() {
@@ -861,53 +868,57 @@ conta_add() {
 
 conta_menu() {
     _conta_require_deps || return 1
-    conta_list
+    # Não-interativo: só lista e sai
     if [[ ! -t 0 ]]; then
+        conta_list
         return 0
     fi
-    local nomes=() f
-    for f in "$ACCOUNTS_DIR"/*.json; do
-        [[ -f "$f" ]] || continue
-        nomes+=("$(basename "$f" .json)")
+    local nomes f i escolha novo salvar
+    while true; do
+        conta_list
+        nomes=()
+        for f in "$ACCOUNTS_DIR"/*.json; do
+            [[ -f "$f" ]] || continue
+            nomes+=("$(basename "$f" .json)")
+        done
+        if (( ${#nomes[@]} == 0 )); then
+            read -rp "$(echo -e "  Salvar a conta ativa agora? Nome ${DIM}(vazio = sair)${RESET}: ")" salvar
+            [[ -n "$salvar" ]] && { conta_save "$salvar"; continue; }
+            echo -e "  ${DIM}Para cadastrar a segunda conta: ${RESET}${BOLD}ai conta add <nome>${RESET}"
+            return 0
+        fi
+        i=1
+        echo -e "  ${BOLD}Trocar para:${RESET}"
+        for nome in "${nomes[@]}"; do
+            printf "  ${BOLD}%d)${RESET} %s\n" "$i" "$nome"
+            i=$((i+1))
+        done
+        echo -e "  ${BOLD}a)${RESET} Adicionar conta nova (login guiado)"
+        echo -e "  ${BOLD}u)${RESET} Ver uso das contas (5h/7d)"
+        echo -e "  ${BOLD}s)${RESET} Salvar conta ativa com novo nome"
+        echo -e "  ${BOLD}x)${RESET} Contas Codex →"
+        echo -e "  ${DIM}0) Voltar${RESET}"
+        read -rp "Escolha: " escolha
+        case "$escolha" in
+            0|"") return 0 ;;
+            a|A) conta_add; _conta_pausar ;;
+            u|U) conta_status; _conta_pausar ;;
+            x|X) xconta_menu ;;
+            s|S)
+                read -rp "  Nome para a conta ativa: " novo
+                [[ -n "$novo" ]] && conta_save "$novo"
+                _conta_pausar
+                ;;
+            *)
+                if [[ "$escolha" =~ ^[0-9]+$ ]] && (( escolha >= 1 && escolha <= ${#nomes[@]} )); then
+                    conta_use "${nomes[$((escolha-1))]}"
+                else
+                    echo "Opção inválida."
+                fi
+                _conta_pausar
+                ;;
+        esac
     done
-    if (( ${#nomes[@]} == 0 )); then
-        local salvar
-        read -rp "$(echo -e "  Salvar a conta ativa agora? Nome ${DIM}(vazio = sair)${RESET}: ")" salvar
-        [[ -n "$salvar" ]] && conta_save "$salvar"
-        echo -e "  ${DIM}Para cadastrar a segunda conta: ${RESET}${BOLD}ai conta add <nome>${RESET}"
-        return 0
-    fi
-    local i=1 escolha
-    echo -e "  ${BOLD}Trocar para:${RESET}"
-    for nome in "${nomes[@]}"; do
-        printf "  ${BOLD}%d)${RESET} %s\n" "$i" "$nome"
-        i=$((i+1))
-    done
-    echo -e "  ${BOLD}a)${RESET} Adicionar conta nova (login guiado)"
-    echo -e "  ${BOLD}u)${RESET} Ver uso das contas (5h/7d)"
-    echo -e "  ${BOLD}s)${RESET} Salvar conta ativa com novo nome"
-    echo -e "  ${BOLD}x)${RESET} Contas Codex →"
-    echo -e "  ${DIM}0) Voltar${RESET}"
-    read -rp "Escolha: " escolha
-    case "$escolha" in
-        0|"") return 0 ;;
-        a|A) conta_add ;;
-        u|U) conta_status ;;
-        x|X) xconta_menu ;;
-        s|S)
-            local novo
-            read -rp "  Nome para a conta ativa: " novo
-            [[ -n "$novo" ]] && conta_save "$novo"
-            ;;
-        *)
-            if [[ "$escolha" =~ ^[0-9]+$ ]] && (( escolha >= 1 && escolha <= ${#nomes[@]} )); then
-                conta_use "${nomes[$((escolha-1))]}"
-            else
-                echo "Opção inválida."
-                return 1
-            fi
-            ;;
-    esac
 }
 
 # ── Contas Codex (troca de conta sem logout) ─────────────
@@ -1487,51 +1498,54 @@ xconta_rm() {
 
 xconta_menu() {
     _conta_require_deps || return 1
-    xconta_list
     if [[ ! -t 0 ]]; then
+        xconta_list
         return 0
     fi
-    local nomes=() f
-    for f in "$XACCOUNTS_DIR"/*.json; do
-        [[ -f "$f" ]] || continue
-        nomes+=("$(basename "$f" .json)")
+    local nomes f i escolha nome novo salvar
+    while true; do
+        xconta_list
+        nomes=()
+        for f in "$XACCOUNTS_DIR"/*.json; do
+            [[ -f "$f" ]] || continue
+            nomes+=("$(basename "$f" .json)")
+        done
+        if (( ${#nomes[@]} == 0 )); then
+            read -rp "$(echo -e "  Salvar a conta Codex ativa agora? Nome ${DIM}(vazio = sair)${RESET}: ")" salvar
+            [[ -n "$salvar" ]] && { xconta_save "$salvar"; continue; }
+            echo -e "  ${DIM}Para cadastrar a segunda conta: ${RESET}${BOLD}ai xconta add <nome>${RESET}"
+            return 0
+        fi
+        i=1
+        echo -e "  ${BOLD}Trocar para:${RESET}"
+        for nome in "${nomes[@]}"; do
+            printf "  ${BOLD}%d)${RESET} %s\n" "$i" "$nome"
+            i=$((i+1))
+        done
+        echo -e "  ${BOLD}a)${RESET} Adicionar conta Codex nova (login guiado)"
+        echo -e "  ${BOLD}u)${RESET} Ver uso das contas (5h/semanal)"
+        echo -e "  ${BOLD}s)${RESET} Salvar conta ativa com novo nome"
+        echo -e "  ${DIM}0) Voltar${RESET}"
+        read -rp "Escolha: " escolha
+        case "$escolha" in
+            0|"") return 0 ;;
+            a|A) xconta_add; _conta_pausar ;;
+            u|U) xconta_status; _conta_pausar ;;
+            s|S)
+                read -rp "  Nome para a conta ativa: " novo
+                [[ -n "$novo" ]] && xconta_save "$novo"
+                _conta_pausar
+                ;;
+            *)
+                if [[ "$escolha" =~ ^[0-9]+$ ]] && (( escolha >= 1 && escolha <= ${#nomes[@]} )); then
+                    xconta_use "${nomes[$((escolha-1))]}"
+                else
+                    echo "Opção inválida."
+                fi
+                _conta_pausar
+                ;;
+        esac
     done
-    if (( ${#nomes[@]} == 0 )); then
-        local salvar
-        read -rp "$(echo -e "  Salvar a conta Codex ativa agora? Nome ${DIM}(vazio = sair)${RESET}: ")" salvar
-        [[ -n "$salvar" ]] && xconta_save "$salvar"
-        echo -e "  ${DIM}Para cadastrar a segunda conta: ${RESET}${BOLD}ai xconta add <nome>${RESET}"
-        return 0
-    fi
-    local i=1 escolha nome
-    echo -e "  ${BOLD}Trocar para:${RESET}"
-    for nome in "${nomes[@]}"; do
-        printf "  ${BOLD}%d)${RESET} %s\n" "$i" "$nome"
-        i=$((i+1))
-    done
-    echo -e "  ${BOLD}a)${RESET} Adicionar conta Codex nova (login guiado)"
-    echo -e "  ${BOLD}u)${RESET} Ver uso das contas (5h/semanal)"
-    echo -e "  ${BOLD}s)${RESET} Salvar conta ativa com novo nome"
-    echo -e "  ${DIM}0) Voltar${RESET}"
-    read -rp "Escolha: " escolha
-    case "$escolha" in
-        0|"") return 0 ;;
-        a|A) xconta_add ;;
-        u|U) xconta_status ;;
-        s|S)
-            local novo
-            read -rp "  Nome para a conta ativa: " novo
-            [[ -n "$novo" ]] && xconta_save "$novo"
-            ;;
-        *)
-            if [[ "$escolha" =~ ^[0-9]+$ ]] && (( escolha >= 1 && escolha <= ${#nomes[@]} )); then
-                xconta_use "${nomes[$((escolha-1))]}"
-            else
-                echo "Opção inválida."
-                return 1
-            fi
-            ;;
-    esac
 }
 
 # Arquivo de histórico
