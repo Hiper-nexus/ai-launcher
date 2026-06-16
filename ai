@@ -82,6 +82,7 @@ XACCOUNTS_DIR="${HOME}/.local/share/ai-launcher/accounts-codex"
 # Providers disponíveis: nome=base_url (URLs confirmadas pelo multi-claude)
 declare -A PROVIDER_URLS=(
     [anthropic]=""
+    [glm]="https://api.z.ai/api/anthropic"
     [openrouter]="https://openrouter.ai/api"
     [deepseek]="https://api.deepseek.com/anthropic"
     [ollama]="http://localhost:11434"
@@ -92,6 +93,7 @@ declare -A PROVIDER_URLS=(
 # Modelos default por provider
 declare -A PROVIDER_MODELS=(
     [anthropic]=""
+    [glm]=""
     [openrouter]="anthropic/claude-sonnet-4"
     [deepseek]="deepseek-chat"
     [ollama]="qwen2.5-coder:32b"
@@ -102,6 +104,7 @@ declare -A PROVIDER_MODELS=(
 # Env vars extras por provider (timeout, tráfego, etc.)
 declare -A PROVIDER_EXTRA_ENV=(
     [anthropic]=""
+    [glm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [openrouter]=""
     [deepseek]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [ollama]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
