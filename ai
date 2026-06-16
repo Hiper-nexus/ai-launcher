@@ -2914,12 +2914,14 @@ fi
 
 while true; do
 claude_status=$(status_icon claude)
+glm_status=$(status_icon glm)
 codex_status=$(status_icon codex)
 gemini_status=$(status_icon gemini)
 agy_status=$(status_icon agy)
 orchestrate_status=$(status_icon "$ORCHESTRATE_CMD")
 
 claude_ver=$(get_version claude)
+glm_ver="${claude_ver}" # GLM usa Claude Code
 codex_ver=$(get_version codex)
 gemini_ver=$(get_version gemini)
 agy_ver=$(get_version agy)
@@ -2931,15 +2933,16 @@ echo "  └───────────────────────
 echo -e "${RESET}"
 
 printf "  ${BOLD}1)${RESET} Claude Code  %-20s %b\n" "${claude_ver}" "${claude_status}"
-printf "  ${BOLD}2)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
-printf "  ${BOLD}3)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
+printf "  ${BOLD}2)${RESET} GLM (Z.ai)   %-20s %b\n" "${glm_ver}" "${glm_status}"
+printf "  ${BOLD}3)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
+printf "  ${BOLD}4)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
 printf "  ${BOLD}4)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
 printf "  ${BOLD}5)${RESET} Orquestração %-20s %b\n" "multi-cli" "${orchestrate_status}"
 echo ""
 echo -e "  ${BOLD}6)${RESET} 🔌 Providers"
 echo -e "  ${BOLD}7)${RESET} ⚙️  Toggle Flags"
 echo -e "  ${BOLD}8)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado: Claude ↔ Agy ↔ Codex)"
-echo -e "  ${BOLD}9)${RESET} 👤 Contas (Claude / Codex)"
+echo -e "  ${BOLD}10)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -2957,23 +2960,26 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-9/0]: " choice
+read -rp "Escolha [1-10/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
     1) conta_autoswitch_if_needed
        enter_repo_if_needed
        launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-    2) xconta_autoswitch_if_needed
+	    2) provider_setup_env "glm" || continue
+	       enter_repo_if_needed
+	       launch "GLM (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+    3) xconta_autoswitch_if_needed
        enter_repo_if_needed
        launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
-    3) enter_repo_if_needed
-       launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
     4) enter_repo_if_needed
+       launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
+    5) enter_repo_if_needed
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-    5) orchestration_menu ;;
-    6) provider_list ;;
-    7) flags_menu
+    6) orchestration_menu ;;
+    7) provider_list ;;
+    8) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -2992,8 +2998,8 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
        esac
        ;;
-    8) exec "$0" install-skills ;;
-    9) conta_menu ;;
+    9) exec "$0" install-skills ;;
+    10) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
