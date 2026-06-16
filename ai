@@ -1777,6 +1777,7 @@ launch() {
         exec "$cmd" ${final_flags[@]+"${final_flags[@]}"} "$prompt_flag" "$prompt"
     else
         echo -e "${GREEN}Iniciando ${name}:${RESET} ${cmd} ${final_flags[*]+"${final_flags[*]}"}"
+
         echo ""
         exec "$cmd" ${final_flags[@]+"${final_flags[@]}"}
     fi
@@ -2969,7 +2970,7 @@ case $choice in
        launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
 	    2) provider_setup_env "glm" || continue
 	       enter_repo_if_needed
-	       launch "GLM (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+	       launch "GLM (Z.ai)" claude "" CLAUDE_FLAGS ;;
     3) xconta_autoswitch_if_needed
        enter_repo_if_needed
        launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
