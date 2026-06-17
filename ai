@@ -112,6 +112,18 @@ declare -A PROVIDER_EXTRA_ENV=(
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
 )
 
+clear_anthropic_provider_env() {
+    unset ANTHROPIC_BASE_URL 2>/dev/null || true
+    unset ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
+    unset ANTHROPIC_MODEL 2>/dev/null || true
+    unset ANTHROPIC_DEFAULT_HAIKU_MODEL 2>/dev/null || true
+    unset ANTHROPIC_DEFAULT_SONNET_MODEL 2>/dev/null || true
+    unset ANTHROPIC_DEFAULT_OPUS_MODEL 2>/dev/null || true
+    unset CLAUDE_CODE_AUTO_COMPACT_WINDOW 2>/dev/null || true
+    unset CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC 2>/dev/null || true
+    unset API_TIMEOUT_MS 2>/dev/null || true
+}
+
 _validate_provider_name() {
     [[ "$1" =~ ^[a-z0-9_-]+$ ]]
 }
@@ -145,6 +157,7 @@ provider_save_key() {
 provider_setup_env() {
     local provider="$1"
     if [[ "$provider" == "anthropic" || -z "$provider" ]]; then
+        clear_anthropic_provider_env
         return
     fi
 
@@ -2554,6 +2567,7 @@ if [[ ${1:-} == "claude" || ${1:-} == "c" ]]; then
     fi
     # Auto-switch de conta se a janela de 5h esgotou (só no provider oficial)
     if [[ -z "$_active_provider" ]]; then
+        clear_anthropic_provider_env
         conta_autoswitch_if_needed
     fi
     enter_repo_if_needed
@@ -2838,6 +2852,7 @@ elif [[ ${1:-} == "flags" || ${1:-} == "f" ]]; then
     fi
     flags_menu
     # Após toggle, lança Claude com as flags escolhidas
+    clear_anthropic_provider_env
     launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "repo" || ${1:-} == "repos" || ${1:-} == "r" ]]; then
     shift
@@ -2965,7 +2980,8 @@ read -rp "Escolha [1-10/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
-    1) conta_autoswitch_if_needed
+    1) clear_anthropic_provider_env
+       conta_autoswitch_if_needed
        enter_repo_if_needed
        launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
 	    2) provider_setup_env "glm" || continue
@@ -2992,6 +3008,7 @@ case $choice in
                for _f in "${CLAUDE_FLAGS[@]}"; do
                    [[ "$_f" == "--continue" || "$_f" == "--resume" ]] && _is_continuing=true
                done
+               clear_anthropic_provider_env
                enter_repo_if_needed
                launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS
                ;;
