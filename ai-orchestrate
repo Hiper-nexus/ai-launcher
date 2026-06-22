@@ -140,7 +140,7 @@ run_agent() {
   local agent="$1" prompt="$2"
   case "$agent" in
     codex)  [[ -n "$CODEX_BIN"  ]] || { echo "[codex ausente]";  return 0; }; run_to "$ORCH_TIMEOUT" "$CODEX_BIN"  exec --dangerously-bypass-approvals-and-sandbox "$prompt" 2>&1 ;;
-    agy)    [[ -n "$AGY_BIN"    ]] || { echo "[agy ausente]";    return 0; }; run_to "$ORCH_TIMEOUT" "$AGY_BIN"    -- "$prompt" 2>&1 ;;
+    agy)    [[ -n "$AGY_BIN"    ]] || { echo "[agy ausente]";    return 0; }; run_to "$ORCH_TIMEOUT" "$AGY_BIN"    --dangerously-skip-permissions -p "$prompt" 2>&1 ;;
     claude) [[ -n "$CLAUDE_BIN" ]] || { echo "[claude ausente]"; return 0; }; run_to "$ORCH_TIMEOUT" "$CLAUDE_BIN" --dangerously-skip-permissions -p "$prompt" 2>&1 ;;
     *) echo "[agente desconhecido: $agent]"; return 0 ;;
   esac

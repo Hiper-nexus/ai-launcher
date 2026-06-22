@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.9.2"
+AI_LAUNCHER_VERSION="1.9.4"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -35,7 +35,7 @@ ORCHESTRATE_CMD="${ORCHESTRATE_CMD:-${HOME}/.local/bin/ai-orchestrate}"
 
 # Flag de prompt para cada CLI (cada uma usa sintaxe diferente)
 CLAUDE_PROMPT_FLAG="-p"
-CODEX_PROMPT_FLAG="-p"
+CODEX_PROMPT_FLAG=""
 GEMINI_PROMPT_FLAG="-p"
 AGY_PROMPT_FLAG="-p"
 
@@ -83,6 +83,7 @@ XACCOUNTS_DIR="${HOME}/.local/share/ai-launcher/accounts-codex"
 declare -A PROVIDER_URLS=(
     [anthropic]=""
     [glm]="https://api.z.ai/api/anthropic"
+    [sakana]="https://api.sakana.ai/v1"
     [openrouter]="https://openrouter.ai/api"
     [deepseek]="https://api.deepseek.com/anthropic"
     [ollama]="http://localhost:11434"
@@ -94,6 +95,7 @@ declare -A PROVIDER_URLS=(
 declare -A PROVIDER_MODELS=(
     [anthropic]=""
     [glm]=""
+    [sakana]="fugu"
     [openrouter]="anthropic/claude-sonnet-4"
     [deepseek]="deepseek-chat"
     [ollama]="qwen2.5-coder:32b"
@@ -105,6 +107,7 @@ declare -A PROVIDER_MODELS=(
 declare -A PROVIDER_EXTRA_ENV=(
     [anthropic]=""
     [glm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.5-air ANTHROPIC_DEFAULT_SONNET_MODEL=glm-5.2[1m] ANTHROPIC_DEFAULT_OPUS_MODEL=glm-5.2[1m]"
+    [sakana]=""
     [openrouter]=""
     [deepseek]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [ollama]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
@@ -160,6 +163,15 @@ provider_setup_env() {
         clear_anthropic_provider_env
         return
     fi
+
+    case "$provider" in
+        sakana|fugu|fugu-ultra)
+            echo -e "${RED}Provider ${provider} usa Codex, não Claude Code.${RESET}"
+            echo "  Use: ai fugu"
+            echo "  Ou:  ai x --via sakana"
+            return 1
+            ;;
+    esac
 
     local base_url="${PROVIDER_URLS[$provider]:-}"
     if [[ -z "$base_url" ]]; then
@@ -229,6 +241,256 @@ provider_setup_env() {
     fi
 
     echo -e "${CYAN}Provider:${RESET} ${provider} → ${base_url}"
+}
+
+sakana_write_fugu_catalog() {
+    local catalog="$1"
+    cat > "$catalog" <<'JSON'
+{
+  "models": [
+    {
+      "slug": "fugu",
+      "display_name": "Fugu",
+      "context_window": 1000000,
+      "supported_reasoning_levels": [
+        {
+          "effort": "high",
+          "description": "Deep reasoning for complex problems"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and your ability to help until it is restarted, give the exact recovery steps, and let the user run it manually when they are ready. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
+      "supports_reasoning_summaries": false,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": ["text", "image"],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    },
+    {
+      "slug": "fugu-ultra",
+      "display_name": "Fugu Ultra",
+      "context_window": 1000000,
+      "supported_reasoning_levels": [
+        {
+          "effort": "high",
+          "description": "Deep reasoning for complex problems"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and your ability to help until it is restarted, give the exact recovery steps, and let the user run it manually when they are ready. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
+      "supports_reasoning_summaries": true,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": ["text", "image"],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    }
+  ]
+}
+JSON
+}
+
+sakana_write_fugu_profile() {
+    local profile="$1"
+    local catalog="$2"
+    local catalog_escaped="${catalog//\\/\\\\}"
+    catalog_escaped="${catalog_escaped//\"/\\\"}"
+    cat > "$profile" <<TOML
+model = "fugu"
+model_reasoning_effort = "high"
+model_provider = "sakana"
+model_catalog_json = "${catalog_escaped}"
+
+[features]
+image_generation = false
+apps = false
+TOML
+}
+
+sakana_write_provider_config() {
+    local config="$1"
+    cat >> "$config" <<'TOML'
+
+# ai-launcher: Sakana Fugu provider
+[model_providers.sakana]
+name = "Sakana API"
+base_url = "https://api.sakana.ai/v1"
+env_key = "SAKANA_API_KEY"
+wire_api = "responses"
+stream_idle_timeout_ms = 7200000
+stream_max_retries = 5
+request_max_retries = 4
+TOML
+}
+
+sakana_remove_provider_config() {
+    local config="$1"
+    local tmp_config
+    tmp_config=$(mktemp) || return 1
+    trap "rm -f '$tmp_config'" RETURN
+    awk '
+        /^# ai-launcher: Sakana Fugu provider$/ { pending_comment = $0; next }
+        /^\[model_providers\.sakana\]$/ { pending_comment = ""; skip = 1; next }
+        /^\[/ && skip { skip = 0 }
+        {
+            if (pending_comment != "") {
+                print pending_comment
+                pending_comment = ""
+            }
+            if (!skip) print
+        }
+        END {
+            if (pending_comment != "") print pending_comment
+        }
+    ' "$config" > "$tmp_config"
+    mv "$tmp_config" "$config"
+    chmod 600 "$config"
+    trap - RETURN
+}
+
+sakana_write_codex_wrapper() {
+    local wrapper="$1"
+    cat > "$wrapper" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+providers_file="${HOME}/.local/share/ai-launcher/providers.conf"
+if [[ -z "${SAKANA_API_KEY:-}" && -f "$providers_file" ]]; then
+    key=$(grep -F "sakana=" "$providers_file" 2>/dev/null | grep "^sakana=" | tail -1 | cut -d= -f2- || true)
+    if [[ -n "$key" ]]; then
+        export SAKANA_API_KEY="$key"
+    fi
+fi
+
+if [[ -z "${SAKANA_API_KEY:-}" ]]; then
+    echo "Erro: SAKANA_API_KEY nao configurada."
+    echo "  Configure: ai p add sakana"
+    exit 1
+fi
+
+exec codex -p fugu "$@"
+SH
+    chmod 755 "$wrapper"
+}
+
+sakana_install_codex_config() {
+    local mode="${1:-}"
+    local quiet=false
+    local force=false
+    case "$mode" in
+        quiet) quiet=true ;;
+        force) force=true ;;
+        force-quiet) quiet=true; force=true ;;
+    esac
+    local codex_home="${CODEX_HOME:-${HOME}/.codex}"
+    local catalog="${codex_home}/fugu.json"
+    local profile="${codex_home}/fugu.config.toml"
+    local config="${codex_home}/config.toml"
+    local wrapper="${HOME}/.local/bin/codex-fugu"
+    local changed=false
+
+    mkdir -p "$codex_home" "$(dirname "$wrapper")"
+
+    if [[ "$force" == true || ! -f "$catalog" ]]; then
+        sakana_write_fugu_catalog "$catalog"
+        chmod 600 "$catalog"
+        changed=true
+    fi
+
+    if [[ "$force" == true || ! -f "$profile" ]]; then
+        sakana_write_fugu_profile "$profile" "$catalog"
+        chmod 600 "$profile"
+        changed=true
+    fi
+
+    if [[ ! -f "$config" ]]; then
+        install -m 600 /dev/null "$config"
+        changed=true
+    fi
+
+    if [[ "$force" == true && -f "$config" ]] && grep -q '^\[model_providers\.sakana\]' "$config" 2>/dev/null; then
+        sakana_remove_provider_config "$config"
+        changed=true
+    fi
+
+    if ! grep -q '^\[model_providers\.sakana\]' "$config" 2>/dev/null; then
+        sakana_write_provider_config "$config"
+        chmod 600 "$config"
+        changed=true
+    fi
+
+    if [[ "$force" == true || ! -x "$wrapper" ]]; then
+        sakana_write_codex_wrapper "$wrapper"
+        changed=true
+    fi
+
+    if [[ "$quiet" != true || "$changed" == true ]]; then
+        echo -e "${GREEN}✔ Sakana Fugu configurado no Codex${RESET}"
+        echo -e "  ${DIM}${catalog}${RESET}"
+        echo -e "  ${DIM}${profile}${RESET}"
+        echo -e "  ${DIM}${config}${RESET}"
+        echo -e "  ${DIM}${wrapper}${RESET}"
+    fi
+}
+
+codex_provider_setup_env() {
+    local provider="$1"
+    case "$provider" in
+        sakana|fugu|fugu-ultra)
+            provider="sakana"
+            ;;
+        ""|codex|openai)
+            return 0
+            ;;
+        *)
+            echo -e "${RED}Provider ${provider} não está configurado para Codex no launcher.${RESET}"
+            echo "  Para Sakana/Fugu use: ai x --via sakana"
+            return 1
+            ;;
+    esac
+
+    sakana_install_codex_config quiet
+
+    local api_key
+    api_key=$(provider_load_key "$provider") || true
+    api_key="${api_key:-${SAKANA_API_KEY:-}}"
+
+    if [[ -z "$api_key" ]]; then
+        if [[ -t 0 ]]; then
+            read -rsp "$(echo -e "  ${BOLD}API Key para sakana:${RESET} ")" api_key
+            echo ""
+            if [[ -n "$api_key" ]]; then
+                provider_save_key "$provider" "$api_key"
+                echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET}"
+            fi
+        else
+            echo -e "${RED}Erro: API key para sakana não configurada.${RESET}"
+            echo "  Configure: ai p add sakana"
+            return 1
+        fi
+    fi
+
+    export SAKANA_API_KEY="$api_key"
+    echo -e "${CYAN}Provider:${RESET} sakana → https://api.sakana.ai/v1"
 }
 
 provider_list() {
@@ -1734,6 +1996,19 @@ status_icon() {
     fi
 }
 
+provider_cli_status_icon() {
+    local provider="$1" cmd="$2"
+    if ! check_installed "$cmd"; then
+        echo -e "${RED}✗ ${cmd} não instalado${RESET}"
+    elif [[ -n "$(provider_load_key "$provider")" ]]; then
+        echo -e "${GREEN}✔${RESET}"
+    elif [[ "$provider" == "sakana" && -n "${SAKANA_API_KEY:-}" ]]; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${YELLOW}✗ sem key${RESET}"
+    fi
+}
+
 save_history() {
     echo "$(date '+%Y-%m-%d %H:%M') | $1" >> "$HISTORY_FILE"
 }
@@ -1785,15 +2060,55 @@ launch() {
 
     if [[ $# -gt 0 ]]; then
         local prompt="$*"
-        echo -e "${GREEN}Iniciando ${name}:${RESET} ${cmd} ${final_flags[*]+"${final_flags[*]}"} ${prompt_flag} \"${prompt}\""
+        if [[ -n "$prompt_flag" ]]; then
+            echo -e "${GREEN}Iniciando ${name}:${RESET} ${cmd} ${final_flags[*]+"${final_flags[*]}"} ${prompt_flag} \"${prompt}\""
+        else
+            echo -e "${GREEN}Iniciando ${name}:${RESET} ${cmd} ${final_flags[*]+"${final_flags[*]}"} -- \"${prompt}\""
+        fi
         echo ""
-        exec "$cmd" ${final_flags[@]+"${final_flags[@]}"} "$prompt_flag" "$prompt"
+        if [[ -n "$prompt_flag" ]]; then
+            exec "$cmd" ${final_flags[@]+"${final_flags[@]}"} "$prompt_flag" "$prompt"
+        else
+            exec "$cmd" ${final_flags[@]+"${final_flags[@]}"} -- "$prompt"
+        fi
     else
         echo -e "${GREEN}Iniciando ${name}:${RESET} ${cmd} ${final_flags[*]+"${final_flags[*]}"}"
 
         echo ""
         exec "$cmd" ${final_flags[@]+"${final_flags[@]}"}
     fi
+}
+
+codex_add_profile_flag() {
+    local profile="$1"
+    local flag
+    for flag in "${CODEX_FLAGS[@]+"${CODEX_FLAGS[@]}"}"; do
+        [[ "$flag" == "-p" || "$flag" == "--profile" ]] && return 0
+    done
+    CODEX_FLAGS=("-p" "$profile" "${CODEX_FLAGS[@]+"${CODEX_FLAGS[@]}"}")
+}
+
+codex_add_model_flag() {
+    local model="$1"
+    local flag
+    for flag in "${CODEX_FLAGS[@]+"${CODEX_FLAGS[@]}"}"; do
+        [[ "$flag" == "-m" || "$flag" == "--model" ]] && return 0
+    done
+    CODEX_FLAGS+=("-m" "$model")
+}
+
+launch_sakana_fugu() {
+    local model="${1:-fugu}"
+    shift || true
+
+    codex_provider_setup_env "sakana" || exit 1
+    codex_add_profile_flag "fugu"
+    if [[ "$model" == "fugu-ultra" ]]; then
+        codex_add_model_flag "fugu-ultra"
+    fi
+
+    enter_repo_if_needed
+    launch "Sakana ${model}" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS "$@"
 }
 
 orchestration_missing_cmd() {
@@ -2031,6 +2346,8 @@ CLIs de IA:
   c -n "nome"            Sessão nomeada
   c --bare               Modo mínimo (sem hooks/plugins)
   codex,  x              Abre Codex CLI
+  sakana, fugu           Abre Codex com Sakana Fugu
+  fugu-ultra             Abre Codex com Sakana Fugu Ultra
   gemini, g              Abre Gemini CLI
   agy,     a              Abre Antigravity CLI
   orchestrate, o          Orquestra Codex + AGY + Claude por preset
@@ -2039,13 +2356,14 @@ CLIs de IA:
   o review ["escopo"]     Dry-run senior review: Codex -> AGY -> Claude -> síntese
   o status|collect|cleanup Utilitários da camada ~/.ai-orchestration
 
-  --via <provider>       Usa provider alternativo (openrouter, deepseek, ollama...)
+  --via <provider>       Usa provider alternativo (ex: glm no Claude, sakana no Codex)
 
 Providers:
   provider, p            Menu de providers
   p ls                   Lista providers e status das keys
   p add <nome> [key]     Salva API key para um provider
   p del <nome>           Remove API key de um provider
+  sakana setup           Instala/atualiza perfil Fugu no Codex
 
 Contas Claude (troca sem logout, macOS):
   conta                  Menu interativo de contas salvas
@@ -2092,6 +2410,10 @@ Exemplos:
   ai c -c                         Continua sessão
   ai c --via openrouter           Claude via OpenRouter
   ai x                            Codex
+  ai fugu                         Codex via Sakana Fugu
+  ai fugu-ultra "tarefa pesada"   Codex via Sakana Fugu Ultra
+  ai x --via sakana               Codex via provider Sakana
+  ai p add sakana                 Salva SAKANA_API_KEY para o Fugu
   ai g                            Gemini
   ai a                            Antigravity
   ai o                            Lista perfil e presets do projeto atual
@@ -2584,10 +2906,34 @@ elif [[ ${1:-} == "codex" || ${1:-} == "x" ]]; then
     fi
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
-    # Auto-switch de conta Codex se a janela de 5h esgotou
-    xconta_autoswitch_if_needed
+    if [[ -n "$_active_provider" ]]; then
+        codex_provider_setup_env "$_active_provider" || exit 1
+        case "$_active_provider" in
+            sakana|fugu)
+                codex_add_profile_flag "fugu"
+                ;;
+            fugu-ultra)
+                codex_add_profile_flag "fugu"
+                codex_add_model_flag "fugu-ultra"
+                ;;
+        esac
+    else
+        # Auto-switch de conta Codex se a janela de 5h esgotou
+        xconta_autoswitch_if_needed
+    fi
     enter_repo_if_needed
     launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS "$@"
+elif [[ ${1:-} == "sakana" || ${1:-} == "fugu" ]]; then
+    shift
+    if [[ "${1:-}" == "setup" || "${1:-}" == "install" ]]; then
+        shift
+        sakana_install_codex_config force
+        exit 0
+    fi
+    launch_sakana_fugu "fugu" "$@"
+elif [[ ${1:-} == "fugu-ultra" || ${1:-} == "sakana-ultra" ]]; then
+    shift
+    launch_sakana_fugu "fugu-ultra" "$@"
 elif [[ ${1:-} == "gemini" || ${1:-} == "g" ]]; then
     shift
     parse_global_flags "$@"
@@ -2774,6 +3120,9 @@ elif [[ ${1:-} == "provider" || ${1:-} == "p" ]]; then
             if [[ -n "$pkey" ]]; then
                 provider_save_key "$pname" "$pkey"
                 echo -e "${GREEN}✔ Key salva para ${pname}${RESET}"
+                if [[ "$pname" == "sakana" ]]; then
+                    sakana_install_codex_config quiet
+                fi
             else
                 echo -e "${RED}Erro: key vazia.${RESET}"
                 exit 1
@@ -2930,7 +3279,8 @@ fi
 
 while true; do
 claude_status=$(status_icon claude)
-glm_status=$(status_icon glm)
+glm_status=$(provider_cli_status_icon glm claude)
+sakana_status=$(provider_cli_status_icon sakana codex)
 codex_status=$(status_icon codex)
 gemini_status=$(status_icon gemini)
 agy_status=$(status_icon agy)
@@ -2938,6 +3288,7 @@ orchestrate_status=$(status_icon "$ORCHESTRATE_CMD")
 
 claude_ver=$(get_version claude)
 glm_ver="${claude_ver}" # GLM usa Claude Code
+sakana_ver=$(get_version codex)
 codex_ver=$(get_version codex)
 gemini_ver=$(get_version gemini)
 agy_ver=$(get_version agy)
@@ -2950,15 +3301,16 @@ echo -e "${RESET}"
 
 printf "  ${BOLD}1)${RESET} Claude Code  %-20s %b\n" "${claude_ver}" "${claude_status}"
 printf "  ${BOLD}2)${RESET} GLM (Z.ai)   %-20s %b\n" "${glm_ver}" "${glm_status}"
-printf "  ${BOLD}3)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
-printf "  ${BOLD}4)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
-printf "  ${BOLD}4)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
-printf "  ${BOLD}5)${RESET} Orquestração %-20s %b\n" "multi-cli" "${orchestrate_status}"
+printf "  ${BOLD}3)${RESET} Sakana Fugu  %-20s %b\n" "${sakana_ver}" "${sakana_status}"
+printf "  ${BOLD}4)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
+printf "  ${BOLD}5)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
+printf "  ${BOLD}6)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
+printf "  ${BOLD}7)${RESET} Orquestração %-20s %b\n" "multi-cli" "${orchestrate_status}"
 echo ""
-echo -e "  ${BOLD}6)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}7)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}8)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado: Claude ↔ Agy ↔ Codex)"
-echo -e "  ${BOLD}10)${RESET} 👤 Contas (Claude / Codex)"
+echo -e "  ${BOLD}8)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}9)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}10)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado: Claude ↔ Agy ↔ Codex)"
+echo -e "  ${BOLD}11)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -2976,7 +3328,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-10/0]: " choice
+read -rp "Escolha [1-11/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -2987,16 +3339,17 @@ case $choice in
 	    2) provider_setup_env "glm" || continue
 	       enter_repo_if_needed
 	       launch "GLM (Z.ai)" claude "" CLAUDE_FLAGS ;;
-    3) xconta_autoswitch_if_needed
+    3) launch_sakana_fugu "fugu" ;;
+    4) xconta_autoswitch_if_needed
        enter_repo_if_needed
        launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
-    4) enter_repo_if_needed
-       launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
     5) enter_repo_if_needed
+       launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
+    6) enter_repo_if_needed
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-    6) orchestration_menu ;;
-    7) provider_list ;;
-    8) flags_menu
+    7) orchestration_menu ;;
+    8) provider_list ;;
+    9) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -3014,10 +3367,10 @@ case $choice in
                ;;
            2) ;;
            *) echo "Opção inválida."; exit 1 ;;
-       esac
-       ;;
-    9) exec "$0" install-skills ;;
-    10) conta_menu ;;
+	       esac
+	       ;;
+    10) exec "$0" install-skills ;;
+    11) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

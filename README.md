@@ -23,6 +23,7 @@ chmod +x ~/.local/bin/ai
 ai              # Menu interativo com status de cada CLI
 ai c            # Claude Code direto
 ai x            # Codex direto
+ai fugu         # Codex via Sakana Fugu
 ai g            # Gemini direto
 ai o            # Orquestração Codex + AGY + Claude
 ai trio "prompt" # Alias curto para orquestração
@@ -44,6 +45,7 @@ ai --help       # Ajuda
 |-----|--------|-------------|
 | Claude Code | `ai c` | `--dangerously-skip-permissions` |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
+| Sakana Fugu | `ai fugu`, `ai fugu-ultra` | Codex profile `fugu` |
 | Gemini | `ai g` | `--yolo` |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Multi-CLI Orchestration | `ai o`, `ai trio`, `ai review` | `ai-orchestrate` |
@@ -133,7 +135,7 @@ Avisos:
 - Passagem de prompt direto via linha de comando
 - Flags configuráveis no topo do script
 - Contas Claude múltiplas com troca sem logout (Keychain, macOS)
-- Providers alternativos (OpenRouter, DeepSeek, Ollama, LM Studio, LiteLLM)
+- Providers alternativos (GLM/Z.ai, Sakana Fugu, OpenRouter, DeepSeek, Ollama, LM Studio, LiteLLM)
 - Orquestração Codex + AGY + Claude com presets e gate antes de escrita
 - Picker de repos conhecidos quando lançado fora de um repo git
 - Funciona em Linux e no macOS padrão
@@ -150,6 +152,25 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash  # Antigravity
 ```
 
 Depois, autentique cada ferramenta usando o fluxo nativo dela (`claude`, `codex` e `gemini`). O launcher não valida nem exige variáveis como `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` ou `GEMINI_API_KEY`.
+
+## Sakana Fugu no Codex
+
+O launcher instala o perfil Fugu do Codex e usa a API compatível com Responses da Sakana.
+
+```bash
+ai p add sakana                 # salva a SAKANA_API_KEY e instala o perfil
+ai fugu                         # abre Codex com model fugu
+ai fugu-ultra "tarefa pesada"   # abre Codex com model fugu-ultra
+ai x --via sakana               # equivalente via Codex
+ai x --via fugu-ultra           # Codex via Sakana Fugu Ultra
+codex-fugu                      # wrapper direto criado em ~/.local/bin
+```
+
+Arquivos criados pelo setup:
+
+- `${CODEX_HOME:-~/.codex}/fugu.json`
+- `${CODEX_HOME:-~/.codex}/fugu.config.toml`
+- bloco `[model_providers.sakana]` em `${CODEX_HOME:-~/.codex}/config.toml`
 
 ## Personalização
 
