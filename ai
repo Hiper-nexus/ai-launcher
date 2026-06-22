@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.9.4"
+AI_LAUNCHER_VERSION="1.9.5"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -2079,6 +2079,91 @@ launch() {
     fi
 }
 
+run_with_timeout() {
+    local seconds="${1:-}"
+    shift || true
+    if [[ "${1:-}" == "--" ]]; then
+        shift
+    fi
+    if [[ -z "$seconds" || $# -eq 0 ]]; then
+        echo "Uso: ai timeout <segundos> -- <comando> [args...]" >&2
+        return 2
+    fi
+    if [[ ! "$seconds" =~ ^[0-9]+$ || "$seconds" -le 0 ]]; then
+        echo "Erro: timeout inválido: $seconds" >&2
+        return 2
+    fi
+
+    local timeout_bin
+    timeout_bin="$(command -v timeout || command -v gtimeout || true)"
+    if [[ -n "$timeout_bin" ]]; then
+        "$timeout_bin" "$seconds" "$@"
+        return $?
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$seconds" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+timeout = int(sys.argv[1])
+cmd = sys.argv[2:]
+timed_out = [False]
+
+try:
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        start_new_session=True,
+    )
+except FileNotFoundError:
+    print(f"[erro] comando não encontrado: {cmd[0]}", file=sys.stderr)
+    sys.exit(127)
+
+def kill_proc():
+    timed_out[0] = True
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    time.sleep(2)
+    if proc.poll() is None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+timer = threading.Timer(timeout, kill_proc)
+timer.daemon = True
+timer.start()
+try:
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+    rc = proc.wait()
+finally:
+    timer.cancel()
+
+if timed_out[0]:
+    print(f"\n[TIMEOUT] comando excedeu {timeout}s e foi encerrado.")
+    sys.exit(124)
+sys.exit(rc)
+PY
+        return $?
+    fi
+
+    echo "Aviso: timeout/gtimeout/python3 indisponível; executando sem limite: $*" >&2
+    "$@"
+}
+
 codex_add_profile_flag() {
     local profile="$1"
     local flag
@@ -2401,7 +2486,8 @@ Geral:
   -v, --version    Mostra a versão
   --config         Abre este script para editar
   --history        Mostra histórico de uso
-  install-skills   Instala as skills de code review (Claude ↔ Gemini)
+  timeout <s> -- <cmd>  Executa comando com timeout portátil
+  install-skills   Instala skills de review com guardrails (Codex ↔ AGY ↔ Claude ↔ Gemini)
 Exemplos:
   ai                              Menu interativo
   ai c                            Claude Code
@@ -2837,7 +2923,11 @@ enter_repo_if_needed() {
     fi
 }
 
-if [[ ${1:-} == "claude" || ${1:-} == "c" ]]; then
+if [[ ${1:-} == "timeout" ]]; then
+    shift
+    run_with_timeout "$@"
+    exit $?
+elif [[ ${1:-} == "claude" || ${1:-} == "c" ]]; then
     shift
     # Verifica se o primeiro arg é um perfil
     profile_name="${1:-}"
@@ -2953,7 +3043,7 @@ elif [[ ${1:-} == "orchestrate" || ${1:-} == "orchestration" || ${1:-} == "o" ||
     shift
     launch_orchestration "$@"
 elif [[ ${1:-} == "install-skills" ]]; then
-    echo -e "${GREEN}Instalando skills de Code Review (Claude ↔ Antigravity ↔ Codex)...${RESET}"
+    echo -e "${GREEN}Instalando skills de Code Review (Codex ↔ AGY ↔ Claude ↔ Gemini)...${RESET}"
     
     _fail() {
         echo -e "${RED}Erro: $1${RESET}" >&2
@@ -2962,7 +3052,9 @@ elif [[ ${1:-} == "install-skills" ]]; then
 
     # Definir caminhos
     CODEX_SKILL_DIR="$HOME/.codex/skills/claude-code-review"
+    CODEX_GEMINI_SKILL_DIR="$HOME/.codex/skills/gemini-code-review"
     CLAUDE_SKILL_DIR="$HOME/.claude/skills/agy-code-review"
+    CLAUDE_GEMINI_SKILL_DIR="$HOME/.claude/skills/gemini-code-review"
     
     # Antigravity (Agy) usa o diretório de plugins do Gemini
     AGY_PLUGIN_DIR="$HOME/.gemini/config/plugins/agy-launcher"
@@ -2970,13 +3062,13 @@ elif [[ ${1:-} == "install-skills" ]]; then
     AGY_SKILL_DIR_CLAUDE="$AGY_SKILL_DIR_BASE/claude-code-review"
     AGY_SKILL_DIR_CODEX="$AGY_SKILL_DIR_BASE/codex-code-review"
 
-    mkdir -p "$CODEX_SKILL_DIR" "$CLAUDE_SKILL_DIR" "$AGY_SKILL_DIR_BASE" "$AGY_SKILL_DIR_CLAUDE" "$AGY_SKILL_DIR_CODEX"
+    mkdir -p "$CODEX_SKILL_DIR" "$CODEX_GEMINI_SKILL_DIR" "$CLAUDE_SKILL_DIR" "$CLAUDE_GEMINI_SKILL_DIR" "$AGY_SKILL_DIR_BASE" "$AGY_SKILL_DIR_CLAUDE" "$AGY_SKILL_DIR_CODEX"
 
     # Criar plugin.json para o Antigravity reconhecer as skills
     cat << 'EOF' > "${AGY_PLUGIN_DIR}/plugin.json"
 {
   "name": "agy-launcher-skills",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Skills instaladas via AI CLI Launcher",
   "author": { "name": "Cleofas Rocha" }
 }
@@ -3037,11 +3129,41 @@ description: Senior-level code review using Claude Code. High accuracy, architec
 
 Delegates code review to `claude`.
 
+## Anti-freeze rules
+- If `AI_ORCHESTRATION_ACTIVE=1`, do not run Claude. Return a short note saying nested agent delegation is blocked by the launcher.
+- Do not ask Claude to call Gemini, Codex, AGY, `ai`, or `ai-orchestrate`.
+- Keep the target bounded: prefer the current diff or named files, not the whole home directory.
+- Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
+- If auth, permissions, TTY, or timeout blocks execution, stop and report the blocker.
+
 ## Usage
 Execute via `run_shell_command`:
-`claude -p --dangerously-skip-permissions --effort max "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, security, and edge cases. Be concise but deep. Skip formatting."`
+`ai timeout 900 -- claude --dangerously-skip-permissions -p "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, security, and edge cases. Be concise but deep. Skip formatting. Do not call other AI CLIs. Finish with RISK: low|medium|high."`
 
 **Note:** For very large diffs, suggest reviewing file-by-file to avoid timeouts.
+EOF
+
+    # Skill para Codex chamar Gemini com guardrails anti-trava
+    cat << 'EOF' > "${CODEX_GEMINI_SKILL_DIR}/SKILL.md"
+---
+name: gemini-code-review
+description: Senior-level code review using Gemini CLI with anti-freeze guardrails.
+---
+
+# Gemini Code Review (Senior, Bounded)
+
+Delegates code review to `gemini` only when explicitly requested.
+
+## Anti-freeze rules
+- If `AI_ORCHESTRATION_ACTIVE=1`, do not run Gemini. Return a short note saying nested agent delegation is blocked by the launcher.
+- Use non-interactive Gemini only: `gemini -p "..." -y --skip-trust`.
+- Do not ask Gemini to call Claude, Codex, AGY, `ai`, or `ai-orchestrate`.
+- Keep scope bounded to a diff, staged diff, or named files.
+- Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
+- If Gemini asks for auth/trust/permissions, hangs, or needs TTY, stop and report the blocker.
+
+## Usage
+`ai timeout 900 -- gemini -p "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, hidden bugs, security, and performance. Do not call other AI CLIs. Finish with RISK: low|medium|high." -y --skip-trust`
 EOF
 
     # Skill para o Claude chamar o Antigravity
@@ -3055,9 +3177,39 @@ description: Senior-level code review using Antigravity CLI (agy). Robust and fa
 
 Delegates code review to `agy` (Antigravity CLI).
 
+## Anti-freeze rules
+- If `AI_ORCHESTRATION_ACTIVE=1`, do not run AGY. Return a short note saying nested agent delegation is blocked by the launcher.
+- Do not ask AGY to call Gemini, Claude, Codex, `ai`, or `ai-orchestrate`.
+- Use non-interactive print mode only.
+- Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
+- If auth, permissions, TTY, or timeout blocks execution, stop and report the blocker.
+
 ## Usage
 Execute in shell:
-`agy -p --dangerously-skip-permissions "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, hidden bugs, and performance. Provide refactored examples."`
+`ai timeout 900 -- agy --dangerously-skip-permissions -p "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, hidden bugs, and performance. Do not call other AI CLIs. Finish with RISK: low|medium|high."`
+EOF
+
+    # Skill para Claude chamar Gemini com guardrails anti-trava
+    cat << 'EOF' > "${CLAUDE_GEMINI_SKILL_DIR}/SKILL.md"
+---
+name: gemini-code-review
+description: Senior-level code review using Gemini CLI with anti-freeze guardrails.
+---
+
+# Gemini Code Review (Senior, Bounded)
+
+Delegates code review to `gemini` only when explicitly requested.
+
+## Anti-freeze rules
+- If `AI_ORCHESTRATION_ACTIVE=1`, do not run Gemini. Return a short note saying nested agent delegation is blocked by the launcher.
+- Use non-interactive Gemini only: `gemini -p "..." -y --skip-trust`.
+- Do not ask Gemini to call Claude, Codex, AGY, `ai`, or `ai-orchestrate`.
+- Keep scope bounded to a diff, staged diff, or named files.
+- Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
+- If Gemini asks for auth/trust/permissions, hangs, or needs TTY, stop and report the blocker.
+
+## Usage
+`ai timeout 900 -- gemini -p "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, hidden bugs, security, and performance. Do not call other AI CLIs. Finish with RISK: low|medium|high." -y --skip-trust`
 EOF
 
     # Skill para o Antigravity chamar o Claude
@@ -3071,8 +3223,14 @@ description: Senior-level code review using Claude Code CLI.
 
 Delegates to `claude` with max effort for deep analysis.
 
+## Anti-freeze rules
+- If `AI_ORCHESTRATION_ACTIVE=1`, do not run Claude. Return a short note saying nested agent delegation is blocked by the launcher.
+- Do not ask Claude to call Gemini, Codex, AGY, `ai`, or `ai-orchestrate`.
+- Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
+- If auth, permissions, TTY, or timeout blocks execution, stop and report the blocker.
+
 ## Usage
-`claude -p --dangerously-skip-permissions --effort max "Act as a Senior Engineer. Deep review of [TARGET]. Focus on architecture, security, and performance. Concrete fixes only."`
+`ai timeout 900 -- claude --dangerously-skip-permissions -p "Act as a Senior Engineer. Deep review of [TARGET]. Focus on architecture, security, and performance. Concrete fixes only. Do not call other AI CLIs. Finish with RISK: low|medium|high."`
 
 **Anti-Freeze:** If the diff is > 1000 lines, instruct Claude to only review the most critical files first.
 EOF
@@ -3088,8 +3246,14 @@ description: Senior-level code review using Codex CLI.
 
 Delegates to `codex exec`.
 
+## Anti-freeze rules
+- If `AI_ORCHESTRATION_ACTIVE=1`, do not run Codex. Return a short note saying nested agent delegation is blocked by the launcher.
+- Do not ask Codex to call Gemini, Claude, AGY, `ai`, or `ai-orchestrate`.
+- Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
+- If auth, permissions, TTY, or timeout blocks execution, stop and report the blocker.
+
 ## Usage
-`codex exec "Act as a Senior Engineer. Review [TARGET]. Focus on logic and architecture." --dangerously-bypass-approvals-and-sandbox`
+`ai timeout 900 -- codex exec --dangerously-bypass-approvals-and-sandbox "Act as a Senior Engineer. Review [TARGET]. Focus on logic and architecture. Do not call other AI CLIs. Finish with RISK: low|medium|high."`
 EOF
 
     echo -e "${GREEN}✔ Skills sênior instaladas e otimizadas!${RESET}"

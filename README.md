@@ -71,6 +71,27 @@ ai o collect                              # Gera report do último run
 
 Dentro do Codex, Claude ou AGY, você não precisa decorar o nome técnico da skill. Frases como "review senior", "revisar com os 3", "usa os 3", "orquestra isso", "AGY primeiro", "Claude primeiro", "validar com outro agente" e "corrigir ate low" foram adicionadas como gatilhos naturais para a orquestração.
 
+A orquestração é protegida contra travas: cada agente roda com timeout portátil no macOS/Linux e recebe uma regra explícita para não chamar outros CLIs de IA por dentro. Ajustes úteis:
+
+```bash
+ORCH_TIMEOUT=900                 # timeout padrão por agente
+ORCH_TIMEOUT_AGY=1200            # timeout específico do AGY
+ORCH_TIMEOUT_CLAUDE=1200         # timeout específico do Claude
+ORCH_TIMEOUT_CODEX=1200          # timeout específico do Codex
+ORCH_SYNTH_TIMEOUT=600           # timeout da síntese final
+ORCH_CONTEXT_CHARS=24000         # limite de contexto herdado do agente anterior
+ORCH_SKIP="claude"               # pula agente problemático temporariamente
+ORCH_SYNTH=none                  # desliga síntese final
+```
+
+Rode `ai install-skills` depois de atualizar o launcher para reinstalar as skills de review com guardrails anti-loop em Codex, Claude, AGY e Gemini.
+
+Para rodar qualquer CLI com limite de tempo fora da orquestração:
+
+```bash
+ai timeout 900 -- gemini -p "revise o diff" -y --skip-trust
+```
+
 Presets principais:
 
 - `adaptive`

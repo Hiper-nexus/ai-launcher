@@ -23,7 +23,10 @@
 # Env de override:
 #   CODEX_BIN / AGY_BIN / CLAUDE_BIN   caminhos dos binários
 #   AI_ORCHESTRATION_HOME              base da camada (default ~/.ai-orchestration)
-#   ORCH_TIMEOUT                       timeout por agente em s (default 900)
+#   ORCH_TIMEOUT                       timeout padrão por agente em s (default 900)
+#   ORCH_TIMEOUT_CODEX/AGY/CLAUDE      timeout por agente em s
+#   ORCH_SYNTH_TIMEOUT                 timeout da síntese final em s
+#   ORCH_CONTEXT_CHARS                 máximo de chars herdados do agente anterior
 #   ORCH_SKIP                          agentes a pular, ex: "agy" ou "codex agy"
 #   ORCH_SYNTH                         sintetizador final (codex|agy|claude|none)
 set -euo pipefail
@@ -33,6 +36,11 @@ ORCH_HOME="${AI_ORCHESTRATION_HOME:-${HOME}/.ai-orchestration}"
 RUNS_DIR="${ORCH_HOME}/runs"
 PROFILES="${ORCH_HOME}/project-profiles.json"
 ORCH_TIMEOUT="${ORCH_TIMEOUT:-900}"
+ORCH_TIMEOUT_CODEX="${ORCH_TIMEOUT_CODEX:-$ORCH_TIMEOUT}"
+ORCH_TIMEOUT_AGY="${ORCH_TIMEOUT_AGY:-$ORCH_TIMEOUT}"
+ORCH_TIMEOUT_CLAUDE="${ORCH_TIMEOUT_CLAUDE:-$ORCH_TIMEOUT}"
+ORCH_SYNTH_TIMEOUT="${ORCH_SYNTH_TIMEOUT:-$ORCH_TIMEOUT}"
+ORCH_CONTEXT_CHARS="${ORCH_CONTEXT_CHARS:-24000}"
 ORCH_SKIP="${ORCH_SKIP:-}"
 IMPLEMENTER="codex"
 REVIEW_ONLY="senior-code-review review-council"
@@ -65,7 +73,104 @@ CLAUDE_BIN="$(resolve_bin claude "${CLAUDE_BIN:-}" \
   "$HOME/.local/bin/claude" "$HOME/.npm-global/bin/claude" || true)"
 
 TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
-run_to() { local s="$1"; shift; if [[ -n "$TIMEOUT_BIN" ]]; then "$TIMEOUT_BIN" "$s" "$@"; else "$@"; fi; }
+if [[ -n "$TIMEOUT_BIN" ]]; then
+  TIMEOUT_MODE="$TIMEOUT_BIN"
+elif command -v python3 >/dev/null 2>&1; then
+  TIMEOUT_MODE="python3"
+else
+  TIMEOUT_MODE="none"
+fi
+
+run_to() {
+  local s="$1"; shift
+  if [[ ! "$s" =~ ^[0-9]+$ || "$s" -le 0 ]]; then
+    "$@"; return $?
+  fi
+  if [[ -n "$TIMEOUT_BIN" ]]; then
+    "$TIMEOUT_BIN" "$s" "$@"; return $?
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$s" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+import time
+import threading
+
+timeout = int(sys.argv[1])
+cmd = sys.argv[2:]
+timed_out = [False]
+
+try:
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        start_new_session=True,
+    )
+except FileNotFoundError:
+    print(f"[erro] comando não encontrado: {cmd[0]}", file=sys.stderr)
+    sys.exit(127)
+
+def kill_proc():
+    timed_out[0] = True
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    time.sleep(2)
+    if proc.poll() is None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+timer = threading.Timer(timeout, kill_proc)
+timer.daemon = True
+timer.start()
+try:
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+    rc = proc.wait()
+finally:
+    timer.cancel()
+
+if timed_out[0]:
+    print(f"\n[TIMEOUT] comando excedeu {timeout}s e foi encerrado.")
+    sys.exit(124)
+sys.exit(rc)
+PY
+    return $?
+  fi
+  warn "sem timeout/gtimeout/python3; executando sem limite: $*"
+  "$@"
+}
+
+agent_timeout() {
+  case "$1" in
+    codex)  printf '%s\n' "$ORCH_TIMEOUT_CODEX" ;;
+    agy)    printf '%s\n' "$ORCH_TIMEOUT_AGY" ;;
+    claude) printf '%s\n' "$ORCH_TIMEOUT_CLAUDE" ;;
+    *)      printf '%s\n' "$ORCH_TIMEOUT" ;;
+  esac
+}
+
+emit_limited_file() {
+  local file="$1" limit="${2:-$ORCH_CONTEXT_CHARS}" bytes
+  [[ -s "$file" ]] || return 0
+  bytes="$(wc -c < "$file" | tr -d '[:space:]')"
+  if [[ "$bytes" =~ ^[0-9]+$ && "$bytes" -gt "$limit" ]]; then
+    printf '[contexto truncado: mostrando os últimos %s de %s bytes]\n' "$limit" "$bytes"
+    tail -c "$limit" "$file"
+  else
+    cat "$file"
+  fi
+}
 
 # --------------------------------------------------------------------------
 # Presets — ordem = tokens (codex|agy|claude), conforme a skill
@@ -137,12 +242,13 @@ PY
 # Invocação de cada CLI (não-interativo). $2 = prompt
 # --------------------------------------------------------------------------
 run_agent() {
-  local agent="$1" prompt="$2"
+  local agent="$1" prompt="$2" timeout="${3:-}"
+  [[ -n "$timeout" ]] || timeout="$(agent_timeout "$agent")"
   case "$agent" in
-    codex)  [[ -n "$CODEX_BIN"  ]] || { echo "[codex ausente]";  return 0; }; run_to "$ORCH_TIMEOUT" "$CODEX_BIN"  exec --dangerously-bypass-approvals-and-sandbox "$prompt" 2>&1 ;;
-    agy)    [[ -n "$AGY_BIN"    ]] || { echo "[agy ausente]";    return 0; }; run_to "$ORCH_TIMEOUT" "$AGY_BIN"    --dangerously-skip-permissions -p "$prompt" 2>&1 ;;
-    claude) [[ -n "$CLAUDE_BIN" ]] || { echo "[claude ausente]"; return 0; }; run_to "$ORCH_TIMEOUT" "$CLAUDE_BIN" --dangerously-skip-permissions -p "$prompt" 2>&1 ;;
-    *) echo "[agente desconhecido: $agent]"; return 0 ;;
+    codex)  [[ -n "$CODEX_BIN"  ]] || { echo "[codex ausente]";  return 0; }; AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$CODEX_BIN"  exec --dangerously-bypass-approvals-and-sandbox "$prompt" 2>&1 ;;
+    agy)    [[ -n "$AGY_BIN"    ]] || { echo "[agy ausente]";    return 0; }; AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$AGY_BIN"    --dangerously-skip-permissions -p "$prompt" 2>&1 ;;
+    claude) [[ -n "$CLAUDE_BIN" ]] || { echo "[claude ausente]"; return 0; }; AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$CLAUDE_BIN" --dangerously-skip-permissions -p "$prompt" 2>&1 ;;
+    *) echo "[agente desconhecido: $agent]"; return 127 ;;
   esac
 }
 
@@ -165,8 +271,10 @@ build_prompt() {  # <agente> <task> <can_write> <repo> <prev_file>
   printf 'Você é o agente "%s" (%s) numa orquestração multi-CLI.\n\n' "$(agent_label "$agent")" "$role"
   printf 'Repositório: %s\nTarefa: %s\n\n%s\n\n' "$root" "$task" "$mode"
   printf '%s\n' "Não leia .env, segredos, credenciais ou bancos locais."
+  printf '%s\n' "Regra anti-trava: NÃO execute outros CLIs/agentes de IA (claude, codex, agy, gemini, ai, ai-orchestrate) e NÃO invoque skills de review cruzado. O orquestrador já chama cada agente. Se outro agente for necessário, apenas recomende isso no texto."
+  printf '%s\n' "Se uma ferramenta pedir login, permissão, TTY ou ficar indisponível, registre o bloqueio e finalize com RISK: medium ou high em vez de tentar abrir fluxo interativo."
   if [[ -n "$prev" && -s "$prev" ]]; then
-    printf '\nContexto do agente anterior (critique e avance, não repita):\n---\n'; cat "$prev"; printf '\n---\n'
+    printf '\nContexto do agente anterior (critique e avance, não repita):\n---\n'; emit_limited_file "$prev"; printf '\n---\n'
   fi
   printf '\n%s\n%s\n' "Ao final inclua OBRIGATORIAMENTE uma linha no formato exato:" \
     "RISK: low|medium|high   (high = mudança arriscada que exige revisão humana)"
@@ -175,9 +283,10 @@ build_synthesis_prompt() {  # <task> <run_dir>
   local task="$1" dir="$2" f
   printf 'Você é o sintetizador final de uma orquestração multi-CLI (Codex/AGY/Claude).\n'
   printf 'Tarefa original: %s\n\n' "$task"
+  printf '%s\n\n' "Não chame outros CLIs/agentes. Apenas sintetize os arquivos abaixo."
   printf '%s\n%s\n\n' "Consolide as saídas abaixo num único relatório Markdown com seções:" \
     "Resumo · Achados (com severidade) · Recomendações priorizadas · Próximos passos."
-  for f in "$dir"/[0-9]*-*.md; do [[ -f "$f" ]] || continue; printf '\n===== %s =====\n' "$(basename "$f")"; cat "$f"; done
+  for f in "$dir"/[0-9]*-*.md; do [[ -f "$f" ]] || continue; printf '\n===== %s =====\n' "$(basename "$f")"; emit_limited_file "$f"; done
 }
 
 # --------------------------------------------------------------------------
@@ -210,8 +319,9 @@ if [[ -n "${ORCH_SYNTH:-}" ]]; then SYNTH="$ORCH_SYNTH"
 elif is_review_only "$PRESET"; then SYNTH="codex"; else SYNTH="claude"; fi
 
 TS="$(date +%Y%m%d-%H%M%S)"
-RUN_DIR="${RUNS_DIR}/${TS}"
-mkdir -p "$RUN_DIR"
+mkdir -p "$RUNS_DIR" "${ORCH_HOME}/reports"
+RUN_DIR="$(mktemp -d "${RUNS_DIR}/${TS}.XXXXXX")" || die "falha ao criar diretório de run"
+RUN_ID="$(basename "$RUN_DIR")"
 
 mode_str="DRY-RUN"; [[ "$EXECUTE" == "1" ]] && mode_str="EXECUTAR"
 is_review_only "$PRESET" && mode_str="$mode_str (review/read-only)"
@@ -219,8 +329,9 @@ banner "Orquestração ($PRESET) — $mode_str"
 say "  repo:  $REPO_ROOT"
 say "  ordem: $ORDER   síntese: $SYNTH"
 say "  run:   $RUN_DIR"
+say "  timeout: codex=${ORCH_TIMEOUT_CODEX}s agy=${ORCH_TIMEOUT_AGY}s claude=${ORCH_TIMEOUT_CLAUDE}s synth=${ORCH_SYNTH_TIMEOUT}s (${TIMEOUT_MODE})"
 [[ -n "$ORCH_SKIP" ]] && warn "  pulando: $ORCH_SKIP"
-[[ -z "$TIMEOUT_BIN" ]] && warn "  (sem 'timeout' no sistema — agentes rodam sem limite de tempo)"
+[[ "$TIMEOUT_MODE" == "none" ]] && warn "  (sem timeout/gtimeout/python3 — agentes rodam sem limite de tempo)"
 
 # --------------------------------------------------------------------------
 # Cadeia
@@ -251,7 +362,39 @@ else
 
     banner "[$idx] $label$( [[ "$can_write" == 1 ]] && echo ' (escrita)' || echo ' (read-only)')"
     prompt="$(build_prompt "$agent" "$TASK" "$can_write" "$REPO_ROOT" "$prev_file")"
-    run_agent "$agent" "$prompt" | tee "$out_file" || true
+    set +e
+    run_agent "$agent" "$prompt" | tee "$out_file"
+    agent_rc=${PIPESTATUS[0]}
+    set -e
+    if [[ "$agent_rc" != "0" ]]; then
+      warn "⚠ $label terminou com código $agent_rc"
+      {
+        echo
+        echo "AGENT_STATUS: failed exit_code=${agent_rc}"
+        if [[ "$agent_rc" == "124" ]]; then
+          echo "AGENT_ERROR: timeout after $(agent_timeout "$agent")s"
+        fi
+        echo "RISK: medium"
+      } >> "$out_file"
+    fi
+
+    if grep -qiE '(authentication required|authentication timed out|please visit the url to log in|oauth|login required|permission denied|requires tty|not a tty)' "$out_file" 2>/dev/null; then
+      warn "⚠ $label bloqueado por autenticação/permissão/fluxo interativo"
+      {
+        echo
+        echo "AGENT_STATUS: blocked external_auth_or_interactive_flow"
+        grep -qiE '^RISK:' "$out_file" 2>/dev/null || echo "RISK: medium"
+      } >> "$out_file"
+    fi
+
+    if ! grep -qiE '^RISK:[[:space:]]*(low|medium|high)' "$out_file" 2>/dev/null; then
+      warn "⚠ $label não retornou linha RISK; marcando como medium"
+      {
+        echo
+        echo "AGENT_STATUS: incomplete missing_risk_line"
+        echo "RISK: medium"
+      } >> "$out_file"
+    fi
 
     if grep -qiE '^RISK:[[:space:]]*high' "$out_file" 2>/dev/null; then
       warn "⚠ $label sinalizou RISK: high"
@@ -268,13 +411,23 @@ synth_bin_ok=0
 case "$SYNTH" in codex) [[ -n "$CODEX_BIN" ]] && synth_bin_ok=1;; agy) [[ -n "$AGY_BIN" ]] && synth_bin_ok=1;; claude) [[ -n "$CLAUDE_BIN" ]] && synth_bin_ok=1;; esac
 if [[ "$gate_tripped" != "1" && "$SYNTH" != "none" && "$synth_bin_ok" == "1" ]] && ! skipped "$SYNTH"; then
   banner "Síntese final ($(agent_label "$SYNTH"))"
-  run_agent "$SYNTH" "$(build_synthesis_prompt "$TASK" "$RUN_DIR")" | tee "$REPORT" || true
+  set +e
+  run_agent "$SYNTH" "$(build_synthesis_prompt "$TASK" "$RUN_DIR")" "$ORCH_SYNTH_TIMEOUT" | tee "$REPORT"
+  synth_rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "$synth_rc" != "0" ]]; then
+    warn "⚠ síntese terminou com código $synth_rc; gerando relatório fallback"
+    { echo "# Relatório de orquestração ($PRESET)"; echo; echo "Tarefa: $TASK"; echo
+      echo "Síntese automática falhou com exit_code=${synth_rc}."; echo
+      for f in "$RUN_DIR"/[0-9]*-*.md; do [[ -f "$f" ]] && { echo "## $(basename "$f")"; emit_limited_file "$f"; echo; }; done
+    } > "$REPORT"
+  fi
 else
   { echo "# Relatório de orquestração ($PRESET)"; echo; echo "Tarefa: $TASK"; echo
-    for f in "$RUN_DIR"/[0-9]*-*.md; do [[ -f "$f" ]] && { echo "## $(basename "$f")"; cat "$f"; echo; }; done
+    for f in "$RUN_DIR"/[0-9]*-*.md; do [[ -f "$f" ]] && { echo "## $(basename "$f")"; emit_limited_file "$f"; echo; }; done
   } > "$REPORT"
 fi
-cp "$REPORT" "${ORCH_HOME}/reports/${TS}.md" 2>/dev/null || true
+cp "$REPORT" "${ORCH_HOME}/reports/${RUN_ID}.md" 2>/dev/null || true
 
 # --------------------------------------------------------------------------
 # meta.json
@@ -283,6 +436,7 @@ je() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 {
   printf '{\n'
   printf '  "timestamp": "%s",\n'    "$TS"
+  printf '  "run_id": "%s",\n'       "$(je "$RUN_ID")"
   printf '  "preset": "%s",\n'       "$PRESET"
   printf '  "order": "%s",\n'        "$ORDER"
   printf '  "synthesizer": "%s",\n'  "$SYNTH"
