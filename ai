@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.9.5"
+AI_LAUNCHER_VERSION="1.9.6"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -2164,6 +2164,25 @@ PY
     "$@"
 }
 
+agy_add_workspace_flag() {
+    local root="${1:-}"
+    if [[ -z "$root" ]]; then
+        root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    fi
+    [[ -n "$root" && -d "$root" ]] || return 0
+
+    local i next
+    for i in "${!AGY_FLAGS[@]}"; do
+        if [[ "${AGY_FLAGS[$i]}" == "--add-dir" ]]; then
+            next=$((i + 1))
+            if [[ $next -lt ${#AGY_FLAGS[@]} && "${AGY_FLAGS[$next]}" == "$root" ]]; then
+                return 0
+            fi
+        fi
+    done
+    AGY_FLAGS+=(--add-dir "$root")
+}
+
 codex_add_profile_flag() {
     local profile="$1"
     local flag
@@ -2229,21 +2248,26 @@ run_orchestration_script() {
     exec "$script_path" "$@"
 }
 
-orchestration_has_execute_flag() {
-    local arg
-    for arg in "$@"; do
-        [[ "$arg" == "--execute" ]] && return 0
-    done
-    return 1
-}
-
 setup_orchestration_provider_if_needed() {
     if [[ -z "${_active_provider:-}" ]]; then
         return
     fi
-    if orchestration_has_execute_flag "$@"; then
-        provider_setup_env "$_active_provider" || exit 1
-    fi
+
+    unset ORCH_CODEX_PROFILE ORCH_CODEX_MODEL 2>/dev/null || true
+    case "$_active_provider" in
+        sakana|fugu)
+            codex_provider_setup_env "$_active_provider" || exit 1
+            export ORCH_CODEX_PROFILE="fugu"
+            ;;
+        fugu-ultra)
+            codex_provider_setup_env "$_active_provider" || exit 1
+            export ORCH_CODEX_PROFILE="fugu"
+            export ORCH_CODEX_MODEL="fugu-ultra"
+            ;;
+        *)
+            provider_setup_env "$_active_provider" || exit 1
+            ;;
+    esac
 }
 
 launch_orchestration() {
@@ -2430,9 +2454,13 @@ CLIs de IA:
   c -r                   Resume sessão (picker interativo)
   c -n "nome"            Sessão nomeada
   c --bare               Modo mínimo (sem hooks/plugins)
+  glm, zai               Abre Claude Code usando GLM/Z.ai
+  glm review ["escopo"]  Senior review multi-CLI usando GLM na perna Claude
   codex,  x              Abre Codex CLI
   sakana, fugu           Abre Codex com Sakana Fugu
+  fugu review ["escopo"] Senior review multi-CLI usando Fugu na perna Codex
   fugu-ultra             Abre Codex com Sakana Fugu Ultra
+  fugu-ultra review      Senior review multi-CLI usando Fugu Ultra
   gemini, g              Abre Gemini CLI
   agy,     a              Abre Antigravity CLI
   orchestrate, o          Orquestra Codex + AGY + Claude por preset
@@ -2495,10 +2523,16 @@ Exemplos:
   ai c full "refatora tudo"       Opus max effort com prompt
   ai c -c                         Continua sessão
   ai c --via openrouter           Claude via OpenRouter
+  ai glm                          Claude via GLM/Z.ai
+  ai glm review                   Senior review multi-CLI com GLM
   ai x                            Codex
   ai fugu                         Codex via Sakana Fugu
+  ai fugu review                  Senior review multi-CLI com Fugu
   ai fugu-ultra "tarefa pesada"   Codex via Sakana Fugu Ultra
+  ai fugu-ultra review            Senior review multi-CLI com Fugu Ultra
   ai x --via sakana               Codex via provider Sakana
+  ai review --via glm             Senior review multi-CLI usando GLM
+  ai review --via fugu            Senior review multi-CLI usando Fugu
   ai p add sakana                 Salva SAKANA_API_KEY para o Fugu
   ai g                            Gemini
   ai a                            Antigravity
@@ -2927,6 +2961,17 @@ if [[ ${1:-} == "timeout" ]]; then
     shift
     run_with_timeout "$@"
     exit $?
+elif [[ ${1:-} == "glm" || ${1:-} == "zai" || ${1:-} == "z.ai" ]]; then
+    shift
+    if [[ "${1:-}" == "review" || "${1:-}" == "revisar" || "${1:-}" == "sr" || "${1:-}" == "validar" ]]; then
+        shift
+        launch_orchestration --via glm review "$@"
+    fi
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    provider_setup_env "glm" || exit 1
+    enter_repo_if_needed
+    launch "GLM (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "claude" || ${1:-} == "c" ]]; then
     shift
     # Verifica se o primeiro arg é um perfil
@@ -3020,9 +3065,17 @@ elif [[ ${1:-} == "sakana" || ${1:-} == "fugu" ]]; then
         sakana_install_codex_config force
         exit 0
     fi
+    if [[ "${1:-}" == "review" || "${1:-}" == "revisar" || "${1:-}" == "sr" || "${1:-}" == "validar" ]]; then
+        shift
+        launch_orchestration --via fugu review "$@"
+    fi
     launch_sakana_fugu "fugu" "$@"
 elif [[ ${1:-} == "fugu-ultra" || ${1:-} == "sakana-ultra" ]]; then
     shift
+    if [[ "${1:-}" == "review" || "${1:-}" == "revisar" || "${1:-}" == "sr" || "${1:-}" == "validar" ]]; then
+        shift
+        launch_orchestration --via fugu-ultra review "$@"
+    fi
     launch_sakana_fugu "fugu-ultra" "$@"
 elif [[ ${1:-} == "gemini" || ${1:-} == "g" ]]; then
     shift
@@ -3035,6 +3088,7 @@ elif [[ ${1:-} == "agy" || ${1:-} == "a" || ${1:-} == "antigravity" ]]; then
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
+    agy_add_workspace_flag
     launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS "$@"
 elif [[ ${1:-} == "review" || ${1:-} == "revisar" || ${1:-} == "sr" || ${1:-} == "validar" ]]; then
     shift
@@ -3181,12 +3235,13 @@ Delegates code review to `agy` (Antigravity CLI).
 - If `AI_ORCHESTRATION_ACTIVE=1`, do not run AGY. Return a short note saying nested agent delegation is blocked by the launcher.
 - Do not ask AGY to call Gemini, Claude, Codex, `ai`, or `ai-orchestrate`.
 - Use non-interactive print mode only.
+- Always pass the current repo explicitly with `--add-dir "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"`.
 - Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
 - If auth, permissions, TTY, or timeout blocks execution, stop and report the blocker.
 
 ## Usage
 Execute in shell:
-`ai timeout 900 -- agy --dangerously-skip-permissions -p "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, hidden bugs, and performance. Do not call other AI CLIs. Finish with RISK: low|medium|high."`
+`ai timeout 900 -- agy --dangerously-skip-permissions --add-dir "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" -p "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, hidden bugs, and performance. Do not call other AI CLIs. Finish with RISK: low|medium|high."`
 EOF
 
     # Skill para Claude chamar Gemini com guardrails anti-trava
@@ -3473,7 +3528,7 @@ printf "  ${BOLD}7)${RESET} Orquestração %-20s %b\n" "multi-cli" "${orchestrat
 echo ""
 echo -e "  ${BOLD}8)${RESET} 🔌 Providers"
 echo -e "  ${BOLD}9)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}10)${RESET} 🛠️  Instalar Skills Sênior (Review Cruzado: Claude ↔ Agy ↔ Codex)"
+echo -e "  ${BOLD}10)${RESET} 🛠️  Instalar Skills Sênior (Codex ↔ AGY ↔ Claude ↔ Gemini)"
 echo -e "  ${BOLD}11)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
@@ -3500,9 +3555,9 @@ case $choice in
        conta_autoswitch_if_needed
        enter_repo_if_needed
        launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-	    2) provider_setup_env "glm" || continue
-	       enter_repo_if_needed
-	       launch "GLM (Z.ai)" claude "" CLAUDE_FLAGS ;;
+    2) provider_setup_env "glm" || continue
+       enter_repo_if_needed
+       launch "GLM (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     3) launch_sakana_fugu "fugu" ;;
     4) xconta_autoswitch_if_needed
        enter_repo_if_needed
@@ -3510,6 +3565,7 @@ case $choice in
     5) enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
     6) enter_repo_if_needed
+       agy_add_workspace_flag
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
     7) orchestration_menu ;;
     8) provider_list ;;

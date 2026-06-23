@@ -29,6 +29,8 @@
 #   ORCH_CONTEXT_CHARS                 máximo de chars herdados do agente anterior
 #   ORCH_SKIP                          agentes a pular, ex: "agy" ou "codex agy"
 #   ORCH_SYNTH                         sintetizador final (codex|agy|claude|none)
+#   ORCH_CODEX_PROFILE                 perfil Codex usado na perna Codex (ex: fugu)
+#   ORCH_CODEX_MODEL                   modelo Codex usado na perna Codex (ex: fugu-ultra)
 set -euo pipefail
 
 # --------------------------------------------------------------------------
@@ -42,6 +44,8 @@ ORCH_TIMEOUT_CLAUDE="${ORCH_TIMEOUT_CLAUDE:-$ORCH_TIMEOUT}"
 ORCH_SYNTH_TIMEOUT="${ORCH_SYNTH_TIMEOUT:-$ORCH_TIMEOUT}"
 ORCH_CONTEXT_CHARS="${ORCH_CONTEXT_CHARS:-24000}"
 ORCH_SKIP="${ORCH_SKIP:-}"
+ORCH_CODEX_PROFILE="${ORCH_CODEX_PROFILE:-}"
+ORCH_CODEX_MODEL="${ORCH_CODEX_MODEL:-}"
 IMPLEMENTER="codex"
 REVIEW_ONLY="senior-code-review review-council"
 
@@ -245,8 +249,19 @@ run_agent() {
   local agent="$1" prompt="$2" timeout="${3:-}"
   [[ -n "$timeout" ]] || timeout="$(agent_timeout "$agent")"
   case "$agent" in
-    codex)  [[ -n "$CODEX_BIN"  ]] || { echo "[codex ausente]";  return 0; }; AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$CODEX_BIN"  exec --dangerously-bypass-approvals-and-sandbox "$prompt" 2>&1 ;;
-    agy)    [[ -n "$AGY_BIN"    ]] || { echo "[agy ausente]";    return 0; }; AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$AGY_BIN"    --dangerously-skip-permissions -p "$prompt" 2>&1 ;;
+    codex)
+      [[ -n "$CODEX_BIN"  ]] || { echo "[codex ausente]";  return 0; }
+      local -a codex_args=()
+      [[ -n "$ORCH_CODEX_PROFILE" ]] && codex_args+=(-p "$ORCH_CODEX_PROFILE")
+      [[ -n "$ORCH_CODEX_MODEL" ]] && codex_args+=(-m "$ORCH_CODEX_MODEL")
+      AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$CODEX_BIN" "${codex_args[@]+"${codex_args[@]}"}" exec --dangerously-bypass-approvals-and-sandbox "$prompt" 2>&1
+      ;;
+    agy)
+      [[ -n "$AGY_BIN"    ]] || { echo "[agy ausente]";    return 0; }
+      local -a agy_args=(--dangerously-skip-permissions)
+      [[ -n "${REPO_ROOT:-}" && -d "${REPO_ROOT:-}" ]] && agy_args+=(--add-dir "$REPO_ROOT")
+      AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$AGY_BIN" "${agy_args[@]}" -p "$prompt" 2>&1
+      ;;
     claude) [[ -n "$CLAUDE_BIN" ]] || { echo "[claude ausente]"; return 0; }; AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$CLAUDE_BIN" --dangerously-skip-permissions -p "$prompt" 2>&1 ;;
     *) echo "[agente desconhecido: $agent]"; return 127 ;;
   esac
@@ -330,6 +345,7 @@ say "  repo:  $REPO_ROOT"
 say "  ordem: $ORDER   síntese: $SYNTH"
 say "  run:   $RUN_DIR"
 say "  timeout: codex=${ORCH_TIMEOUT_CODEX}s agy=${ORCH_TIMEOUT_AGY}s claude=${ORCH_TIMEOUT_CLAUDE}s synth=${ORCH_SYNTH_TIMEOUT}s (${TIMEOUT_MODE})"
+[[ -n "$ORCH_CODEX_PROFILE" ]] && say "  codex: profile=${ORCH_CODEX_PROFILE}${ORCH_CODEX_MODEL:+ model=${ORCH_CODEX_MODEL}}"
 [[ -n "$ORCH_SKIP" ]] && warn "  pulando: $ORCH_SKIP"
 [[ "$TIMEOUT_MODE" == "none" ]] && warn "  (sem timeout/gtimeout/python3 — agentes rodam sem limite de tempo)"
 

@@ -24,6 +24,8 @@ ai              # Menu interativo com status de cada CLI
 ai c            # Claude Code direto
 ai x            # Codex direto
 ai fugu         # Codex via Sakana Fugu
+ai glm review   # Senior review multi-CLI usando GLM na perna Claude
+ai fugu review  # Senior review multi-CLI usando Fugu na perna Codex
 ai g            # Gemini direto
 ai o            # Orquestração Codex + AGY + Claude
 ai trio "prompt" # Alias curto para orquestração
@@ -44,8 +46,9 @@ ai --help       # Ajuda
 | CLI | Atalho | Flag padrão |
 |-----|--------|-------------|
 | Claude Code | `ai c` | `--dangerously-skip-permissions` |
+| GLM/Z.ai | `ai glm`, `ai glm review` | Claude Code via provider `glm` |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
-| Sakana Fugu | `ai fugu`, `ai fugu-ultra` | Codex profile `fugu` |
+| Sakana Fugu | `ai fugu`, `ai fugu-ultra`, `ai fugu review` | Codex profile `fugu` |
 | Gemini | `ai g` | `--yolo` |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Multi-CLI Orchestration | `ai o`, `ai trio`, `ai review` | `ai-orchestrate` |
@@ -58,6 +61,9 @@ O atalho `ai o` integra a camada `~/.ai-orchestration`, que roteia tarefas entre
 ai o                                      # Lista perfil detectado e presets
 ai trio "mapear pagamentos"               # Alias curto para orquestração
 ai review                                 # Dry-run do senior review do diff atual
+ai review --via glm                       # Senior review com Claude via GLM/Z.ai
+ai review --via fugu                      # Senior review com Codex via Sakana Fugu
+ai review --via fugu-ultra                # Senior review com Codex via Fugu Ultra
 ai review --execute                       # Executa senior review do diff atual
 ai o "implementar fix aprovado"           # Dry-run adaptativo
 ai o --preset agy-first --task "mapear pagamentos"
@@ -85,6 +91,19 @@ ORCH_SYNTH=none                  # desliga síntese final
 ```
 
 Rode `ai install-skills` depois de atualizar o launcher para reinstalar as skills de review com guardrails anti-loop em Codex, Claude, AGY e Gemini.
+
+O AGY recebe o repo atual explicitamente com `--add-dir <repo-root>` no atalho `ai a`, na orquestração e na skill instalada. Isso evita o caso em que o AGY abre sem enxergar os arquivos do projeto.
+
+Providers no senior review multi-CLI:
+
+```bash
+ai glm review                 # Claude leg via GLM/Z.ai
+ai fugu review                # Codex leg via Sakana Fugu
+ai fugu-ultra review          # Codex leg via Fugu Ultra
+ai review --via glm
+ai review --via fugu
+ai review --via fugu-ultra
+```
 
 Para rodar qualquer CLI com limite de tempo fora da orquestração:
 
