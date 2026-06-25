@@ -1,53 +1,82 @@
 #!/usr/bin/env bash
-# ai-orchestrate — runner de orquestração multi-CLI (Codex + AGY + Claude)
+# ai-orchestrate — runner de orquestração multi-CLI
+#
+# Agentes suportados (review e implementação):
+#   codex   = OpenAI Codex (gpt-5.x)          implementer/finalizer/synth
+#   fugu    = Sakana Fugu (via Codex -p fugu)  reviewer independente
+#   glm     = GLM/Z.ai (via binário claude)    reviewer independente
+#   claude  = Anthropic Claude                 crítico de arquitetura/segurança
+#   agy     = Google Antigravity (PTY)         scout/decompositor/revisor
+#   gemini  = Google Gemini CLI (OPT-IN)       reviewer — conta free-tier foi
+#             descontinuada pelo Google (IneligibleTierError); auto-skip limpo.
 #
 # Contrato chamado pelo launcher `ai` (ai o / ai trio / ai review):
 #   ai-orchestrate --list
 #   ai-orchestrate --list-presets-raw
-#   ai-orchestrate [--preset NAME] [--execute] [--auto-approve] [--from-run DIR] --task "TAREFA"
+#   ai-orchestrate [--preset NAME] [--agents "a b c"] [--seq|--parallel] \
+#                  [--execute] [--auto-approve] [--from-run DIR] --task "TAREFA"
 #   ai-orchestrate "TAREFA"            # adaptive, dry-run
 #
-# Papéis (ver ~/.ai-orchestration/config.json):
-#   Codex  = implementer / finalizer        (único que escreve, em --execute)
-#   AGY    = scout / decompositor / revisor  (advisory, read-only)
-#   Claude = crítico de arquitetura / segurança / risco (advisory, read-only)
+# Presets de REVIEW (council paralelo, ninguém escreve):
+#   senior-code-review | review-council
+#     -> roster paralelo independente = ORCH_REVIEW_AGENTS, síntese pelo Codex.
+# Presets de IMPLEMENTAÇÃO (cadeia/relay sequencial):
+#   adaptive | codex-first | agy-first | claude-first | ui-heavy |
+#   backend-critical | migration-critical
 #
-# Presets: adaptive | senior-code-review | review-council | codex-first |
-#          agy-first | claude-first | ui-heavy | backend-critical | migration-critical
-#
-# Sem --execute  => DRY-RUN  (ninguém altera arquivos; só análise + diff proposto)
-# Com --execute  => só o implementer (codex) pode escrever; advisory continuam read-only;
-#                   presets de review nunca escrevem; o gate para antes da escrita
+# Sem --execute  => DRY-RUN (ninguém altera arquivos; só análise + diff proposto).
+# Com --execute  => só o implementer (codex) escreve; advisory ficam read-only;
+#                   presets de review nunca escrevem; gate para antes da escrita
 #                   se algum agente sinalizar RISK: high (a menos que --auto-approve).
 #
 # Env de override:
-#   CODEX_BIN / AGY_BIN / CLAUDE_BIN   caminhos dos binários
-#   AI_ORCHESTRATION_HOME              base da camada (default ~/.ai-orchestration)
-#   ORCH_TIMEOUT                       timeout padrão por agente em s (default 900)
-#   ORCH_TIMEOUT_CODEX/AGY/CLAUDE      timeout por agente em s
-#   ORCH_SYNTH_TIMEOUT                 timeout da síntese final em s
-#   ORCH_CONTEXT_CHARS                 máximo de chars herdados do agente anterior
-#   ORCH_SKIP                          agentes a pular, ex: "agy" ou "codex agy"
-#   ORCH_SYNTH                         sintetizador final (codex|agy|claude|none)
-#   ORCH_CODEX_PROFILE                 perfil Codex usado na perna Codex (ex: fugu)
-#   ORCH_CODEX_MODEL                   modelo Codex usado na perna Codex (ex: fugu-ultra)
+#   CODEX_BIN / AGY_BIN / CLAUDE_BIN / GEMINI_BIN  caminhos dos binários
+#   AI_ORCHESTRATION_HOME           base da camada (default ~/.ai-orchestration)
+#   ORCH_TIMEOUT                    timeout padrão por agente em s (default 600)
+#   ORCH_TIMEOUT_CODEX/AGY/CLAUDE/GLM/FUGU/GEMINI   timeout por agente em s
+#   ORCH_SYNTH_TIMEOUT             timeout da síntese final (default 600)
+#   ORCH_CONTEXT_CHARS            máx. de chars herdados do agente anterior (12000)
+#   ORCH_SKIP                    agentes a pular, ex: "agy" ou "claude agy"
+#   ORCH_REVIEW_AGENTS          roster do council (default "codex glm fugu claude agy")
+#   ORCH_SYNTH                 sintetizador final (codex|glm|fugu|claude|agy|none)
+#   ORCH_PARALLEL            força council paralelo (1) ou cadeia (0)
+#   ORCH_RETRIES           retries por agente em falha transitória (default 1)
+#   ORCH_BACKOFF          segundos entre retries (default 6)
+#   ORCH_CODEX_EFFORT    reasoning effort do codex/fugu (low|medium|high; default medium)
+#   ORCH_CODEX_PROFILE / ORCH_CODEX_MODEL   profile/modelo extra na perna Codex
+#   ORCH_GLM_BASE_URL / ORCH_GLM_MODEL      endpoint/modelo GLM (Z.ai)
+#   ORCH_GEMINI_MODEL                        modelo do gemini (default pro)
 set -euo pipefail
 
 # --------------------------------------------------------------------------
 ORCH_HOME="${AI_ORCHESTRATION_HOME:-${HOME}/.ai-orchestration}"
 RUNS_DIR="${ORCH_HOME}/runs"
 PROFILES="${ORCH_HOME}/project-profiles.json"
-ORCH_TIMEOUT="${ORCH_TIMEOUT:-900}"
+ORCH_TIMEOUT="${ORCH_TIMEOUT:-600}"
 ORCH_TIMEOUT_CODEX="${ORCH_TIMEOUT_CODEX:-$ORCH_TIMEOUT}"
+ORCH_TIMEOUT_FUGU="${ORCH_TIMEOUT_FUGU:-$ORCH_TIMEOUT}"
+ORCH_TIMEOUT_GLM="${ORCH_TIMEOUT_GLM:-$ORCH_TIMEOUT}"
 ORCH_TIMEOUT_AGY="${ORCH_TIMEOUT_AGY:-$ORCH_TIMEOUT}"
 ORCH_TIMEOUT_CLAUDE="${ORCH_TIMEOUT_CLAUDE:-$ORCH_TIMEOUT}"
+ORCH_TIMEOUT_GEMINI="${ORCH_TIMEOUT_GEMINI:-$ORCH_TIMEOUT}"
 ORCH_SYNTH_TIMEOUT="${ORCH_SYNTH_TIMEOUT:-$ORCH_TIMEOUT}"
-ORCH_CONTEXT_CHARS="${ORCH_CONTEXT_CHARS:-24000}"
+ORCH_CONTEXT_CHARS="${ORCH_CONTEXT_CHARS:-12000}"
 ORCH_SKIP="${ORCH_SKIP:-}"
+ORCH_REVIEW_AGENTS="${ORCH_REVIEW_AGENTS:-codex glm fugu claude agy}"
+ORCH_PARALLEL="${ORCH_PARALLEL:-}"
+ORCH_RETRIES="${ORCH_RETRIES:-1}"
+ORCH_BACKOFF="${ORCH_BACKOFF:-6}"
+ORCH_CODEX_EFFORT="${ORCH_CODEX_EFFORT:-medium}"
+ORCH_FUGU_EFFORT="${ORCH_FUGU_EFFORT:-high}"   # Sakana só aceita high|xhigh|max
+ORCH_FUGU_MODEL="${ORCH_FUGU_MODEL:-fugu-ultra}"   # ultra = mais poderoso
 ORCH_CODEX_PROFILE="${ORCH_CODEX_PROFILE:-}"
 ORCH_CODEX_MODEL="${ORCH_CODEX_MODEL:-}"
+ORCH_GLM_BASE_URL="${ORCH_GLM_BASE_URL:-https://api.z.ai/api/anthropic}"
+ORCH_GLM_MODEL="${ORCH_GLM_MODEL:-glm-5.2[1m]}"
+ORCH_GEMINI_MODEL="${ORCH_GEMINI_MODEL:-pro}"
 IMPLEMENTER="codex"
 REVIEW_ONLY="senior-code-review review-council"
+PROVIDERS_FILE="${HOME}/.local/share/ai-launcher/providers.conf"
 
 if [[ -t 1 ]]; then
   BOLD=$'\033[1m'; RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; RST=$'\033[0m'
@@ -58,6 +87,24 @@ say()    { printf '%s\n' "$*" >&2; }
 banner() { printf '\n%s==> %s%s\n' "$BOLD" "$*" "$RST" >&2; }
 warn()   { printf '%s%s%s\n' "$YEL" "$*" "$RST" >&2; }
 die()    { printf '%s%s%s\n' "$RED" "$*" "$RST" >&2; exit 1; }
+
+# python3 é obrigatório: run_cli usa pty + timeout próprios
+command -v python3 >/dev/null 2>&1 || die "python3 é obrigatório para o orquestrador (run_cli). Instale python3 e tente de novo."
+
+# sanitiza inteiros vindos do ambiente (evita timeout=0 / erro aritmético no Bash)
+_uint() { case "${1:-}" in ''|*[!0-9]*) printf '%s' "$2";; *) printf '%s' "$1";; esac; }
+ORCH_TIMEOUT="$(_uint "$ORCH_TIMEOUT" 600)"
+ORCH_TIMEOUT_CODEX="$(_uint "$ORCH_TIMEOUT_CODEX" "$ORCH_TIMEOUT")"
+ORCH_TIMEOUT_FUGU="$(_uint "$ORCH_TIMEOUT_FUGU" "$ORCH_TIMEOUT")"
+ORCH_TIMEOUT_GLM="$(_uint "$ORCH_TIMEOUT_GLM" "$ORCH_TIMEOUT")"
+ORCH_TIMEOUT_AGY="$(_uint "$ORCH_TIMEOUT_AGY" "$ORCH_TIMEOUT")"
+ORCH_TIMEOUT_CLAUDE="$(_uint "$ORCH_TIMEOUT_CLAUDE" "$ORCH_TIMEOUT")"
+ORCH_TIMEOUT_GEMINI="$(_uint "$ORCH_TIMEOUT_GEMINI" "$ORCH_TIMEOUT")"
+ORCH_SYNTH_TIMEOUT="$(_uint "$ORCH_SYNTH_TIMEOUT" "$ORCH_TIMEOUT")"
+ORCH_CONTEXT_CHARS="$(_uint "$ORCH_CONTEXT_CHARS" 12000)"
+ORCH_RETRIES="$(_uint "$ORCH_RETRIES" 1)"
+ORCH_BACKOFF="$(_uint "$ORCH_BACKOFF" 6)"
+ORCH_MAX_ARGV="$(_uint "${ORCH_MAX_ARGV:-}" 131072)"
 
 # --------------------------------------------------------------------------
 # Resolução de binários (PATH pode não ter ~/.npm-global em shell não-login)
@@ -75,91 +122,145 @@ AGY_BIN="$(resolve_bin agy "${AGY_BIN:-}" \
   /opt/homebrew/bin/agy "$HOME/.npm-global/bin/agy" || true)"
 CLAUDE_BIN="$(resolve_bin claude "${CLAUDE_BIN:-}" \
   "$HOME/.local/bin/claude" "$HOME/.npm-global/bin/claude" || true)"
+GEMINI_BIN="$(resolve_bin gemini "${GEMINI_BIN:-}" \
+  /opt/homebrew/bin/gemini "$HOME/.npm-global/bin/gemini" || true)"
+# GLM e Fugu reaproveitam binários:  glm -> claude (env Z.ai), fugu -> codex (profile)
+GLM_BIN="$CLAUDE_BIN"
 
-TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
-if [[ -n "$TIMEOUT_BIN" ]]; then
-  TIMEOUT_MODE="$TIMEOUT_BIN"
-elif command -v python3 >/dev/null 2>&1; then
-  TIMEOUT_MODE="python3"
-else
-  TIMEOUT_MODE="none"
+# Chave Z.ai (GLM) — só leitura de presença; nunca ecoada
+GLM_KEY=""
+if [[ -f "$PROVIDERS_FILE" ]]; then
+  GLM_KEY="$(grep "^glm=" "$PROVIDERS_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+  [[ -z "$GLM_KEY" ]] && GLM_KEY="$(grep "^zai=" "$PROVIDERS_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+fi
+[[ -n "${ORCH_GLM_KEY:-}" ]] && GLM_KEY="$ORCH_GLM_KEY"
+
+# Chave Sakana (Fugu) — o profile codex `fugu` usa o provider sakana (env_key=SAKANA_API_KEY)
+SAKANA_KEY="${SAKANA_API_KEY:-}"
+if [[ -z "$SAKANA_KEY" && -f "$PROVIDERS_FILE" ]]; then
+  SAKANA_KEY="$(grep "^sakana=" "$PROVIDERS_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
 fi
 
-run_to() {
-  local s="$1"; shift
-  if [[ ! "$s" =~ ^[0-9]+$ || "$s" -le 0 ]]; then
-    "$@"; return $?
-  fi
-  if [[ -n "$TIMEOUT_BIN" ]]; then
-    "$TIMEOUT_BIN" "$s" "$@"; return $?
-  fi
-  if command -v python3 >/dev/null 2>&1; then
-    python3 - "$s" "$@" <<'PY'
-import os
-import signal
-import subprocess
-import sys
-import time
-import threading
+# --------------------------------------------------------------------------
+# run_cli — executor único: modo pipe (prompt via stdin) ou pty (TUIs/agy),
+# com timeout próprio (não depende de timeout/gtimeout). Saída -> stdout.
+# Uso:  run_cli <pipe|pty> <segundos> -- <cmd...>
+# --------------------------------------------------------------------------
+RUN_CLI_PY='
+import os, sys, pty, select, signal, subprocess, threading, time
 
-timeout = int(sys.argv[1])
-cmd = sys.argv[2:]
-timed_out = [False]
-
-try:
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        start_new_session=True,
-    )
-except FileNotFoundError:
-    print(f"[erro] comando não encontrado: {cmd[0]}", file=sys.stderr)
-    sys.exit(127)
-
-def kill_proc():
-    timed_out[0] = True
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
+def kill(p):
+    try: os.killpg(p.pid, signal.SIGTERM)
+    except Exception: return
     time.sleep(2)
-    if proc.poll() is None:
+    if p.poll() is None:
+        try: os.killpg(p.pid, signal.SIGKILL)
+        except Exception: pass
+
+def install_signals(p):
+    # se o supervisor for interrompido, mata o grupo do filho antes de sair
+    def handler(signum, frame):
+        kill(p); os._exit(143)
+    for s in (signal.SIGTERM, signal.SIGINT):
+        try: signal.signal(s, handler)
+        except Exception: pass
+
+def main():
+    a = sys.argv[1:]
+    if len(a) < 3 or a[2] != "--":
+        sys.stderr.write("run_cli: uso: MODE TIMEOUT -- cmd...\n"); sys.exit(2)
+    mode = a[0]
+    try: timeout = int(a[1])
+    except Exception: timeout = 0
+    cmd = a[3:]
+    if not cmd:
+        sys.stderr.write("run_cli: comando vazio\n"); sys.exit(2)
+    out = sys.stdout.buffer
+    timed_out = [False]
+
+    if mode == "pty":
+        try: mfd, sfd = pty.openpty()
+        except Exception as e:
+            sys.stderr.write("run_cli: pty erro: %s\n" % e); sys.exit(2)
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+            p = subprocess.Popen(cmd, stdin=sfd, stdout=sfd, stderr=sfd,
+                                 start_new_session=True, close_fds=True)
+        except FileNotFoundError:
+            sys.stderr.write("run_cli: nao encontrado: %s\n" % cmd[0]); sys.exit(127)
+        os.close(sfd)
+        install_signals(p)
+        deadline = (time.time() + timeout) if timeout > 0 else None
+        try:
+            while True:
+                if deadline is not None and time.time() >= deadline:
+                    timed_out[0] = True; break
+                wait = 1.0
+                if deadline is not None:
+                    wait = max(0.0, min(1.0, deadline - time.time()))
+                r, _, _ = select.select([mfd], [], [], wait)
+                if mfd in r:
+                    try: data = os.read(mfd, 4096)
+                    except OSError: data = b""
+                    if not data: break
+                    out.write(data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")); out.flush()
+                elif p.poll() is not None:
+                    break
+        finally:
+            try: os.close(mfd)
+            except OSError: pass
+        if timed_out[0]:
+            kill(p); out.write(b"\n[TIMEOUT] excedeu %ds\n" % timeout); out.flush(); sys.exit(124)
+        # espera o fim com guarda (o PTY pode dar EOF antes do processo encerrar)
+        gend = time.time() + 5
+        while p.poll() is None and time.time() < gend:
+            time.sleep(0.05)
+        if p.poll() is None:
+            kill(p)
+        rc = p.poll()
+        sys.exit(rc if rc is not None else 0)
 
-timer = threading.Timer(timeout, kill_proc)
-timer.daemon = True
-timer.start()
-try:
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        sys.stdout.write(line)
-        sys.stdout.flush()
-    rc = proc.wait()
-finally:
-    timer.cancel()
+    # modo pipe
+    data = sys.stdin.buffer.read()
+    try:
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, start_new_session=True)
+    except FileNotFoundError:
+        sys.stderr.write("run_cli: nao encontrado: %s\n" % cmd[0]); sys.exit(127)
+    install_signals(p)
+    def feed():
+        try:
+            if data: p.stdin.write(data)
+        except Exception: pass
+        try: p.stdin.close()
+        except Exception: pass
+    threading.Thread(target=feed, daemon=True).start()
+    timer = None
+    if timeout > 0:
+        def t():
+            timed_out[0] = True; kill(p)
+        timer = threading.Timer(timeout, t); timer.daemon = True; timer.start()
+    try:
+        for line in p.stdout:
+            out.write(line); out.flush()
+        rc = p.wait()
+    finally:
+        if timer: timer.cancel()
+    if timed_out[0]:
+        out.write(b"\n[TIMEOUT] excedeu %ds\n" % timeout); out.flush(); sys.exit(124)
+    sys.exit(rc)
 
-if timed_out[0]:
-    print(f"\n[TIMEOUT] comando excedeu {timeout}s e foi encerrado.")
-    sys.exit(124)
-sys.exit(rc)
-PY
-    return $?
-  fi
-  warn "sem timeout/gtimeout/python3; executando sem limite: $*"
-  "$@"
-}
+main()
+'
+run_cli() { python3 -c "$RUN_CLI_PY" "$@"; }
 
 agent_timeout() {
   case "$1" in
     codex)  printf '%s\n' "$ORCH_TIMEOUT_CODEX" ;;
+    fugu)   printf '%s\n' "$ORCH_TIMEOUT_FUGU" ;;
+    glm)    printf '%s\n' "$ORCH_TIMEOUT_GLM" ;;
     agy)    printf '%s\n' "$ORCH_TIMEOUT_AGY" ;;
     claude) printf '%s\n' "$ORCH_TIMEOUT_CLAUDE" ;;
+    gemini) printf '%s\n' "$ORCH_TIMEOUT_GEMINI" ;;
     *)      printf '%s\n' "$ORCH_TIMEOUT" ;;
   esac
 }
@@ -169,7 +270,7 @@ emit_limited_file() {
   [[ -s "$file" ]] || return 0
   bytes="$(wc -c < "$file" | tr -d '[:space:]')"
   if [[ "$bytes" =~ ^[0-9]+$ && "$bytes" -gt "$limit" ]]; then
-    printf '[contexto truncado: mostrando os últimos %s de %s bytes]\n' "$limit" "$bytes"
+    printf '[contexto truncado: últimos %s de %s bytes]\n' "$limit" "$bytes"
     tail -c "$limit" "$file"
   else
     cat "$file"
@@ -177,26 +278,26 @@ emit_limited_file() {
 }
 
 # --------------------------------------------------------------------------
-# Presets — ordem = tokens (codex|agy|claude), conforme a skill
+# Presets
 # --------------------------------------------------------------------------
 PRESETS="adaptive senior-code-review review-council codex-first agy-first claude-first ui-heavy backend-critical migration-critical"
 
-preset_order() {
+preset_order() {  # ordem da CADEIA (presets de implementação)
   case "$1" in
-    senior-code-review|review-council) echo "codex agy claude" ;;
     codex-first)        echo "codex agy claude" ;;
     claude-first)       echo "claude agy codex" ;;
     agy-first)          echo "agy claude codex" ;;
     ui-heavy)           echo "agy claude codex" ;;
     backend-critical)   echo "codex claude agy" ;;
     migration-critical) echo "codex agy claude" ;;
+    senior-code-review|review-council) echo "$ORCH_REVIEW_AGENTS" ;;
     *) return 1 ;;
   esac
 }
 preset_desc() {
   case "$1" in
     adaptive)           echo "detecta pelo repo (padrão)" ;;
-    senior-code-review) echo "review: codex → agy → claude (síntese codex)" ;;
+    senior-code-review) echo "council paralelo: $ORCH_REVIEW_AGENTS → síntese codex" ;;
     review-council)     echo "alias de senior-code-review" ;;
     codex-first)        echo "codex implementa → agy scout → claude revisa" ;;
     agy-first)          echo "agy decompõe → claude modela → codex implementa" ;;
@@ -210,14 +311,20 @@ preset_desc() {
 print_list() {
   printf '%sPresets de orquestração:%s\n' "$BOLD" "$RST"
   local p; for p in $PRESETS; do printf '  %s%-20s%s %s\n' "$GRN" "$p" "$RST" "$(preset_desc "$p")"; done
+  printf '\n%sAgentes de review (configuráveis via ORCH_REVIEW_AGENTS):%s codex glm fugu claude agy [gemini=opt-in]\n' "$BOLD" "$RST"
 }
 
 is_review_only() { case " $REVIEW_ONLY " in *" $1 "*) return 0;; *) return 1;; esac; }
 skipped()        { case " $ORCH_SKIP "  in *" $1 "*) return 0;; *) return 1;; esac; }
-agent_label()    { case "$1" in codex) echo "Codex";; agy) echo "Antigravity";; claude) echo "Claude";; *) echo "$1";; esac; }
+agent_label()    {
+  case "$1" in
+    codex) echo "Codex";; fugu) echo "Fugu";; glm) echo "GLM";;
+    agy) echo "Antigravity";; claude) echo "Claude";; gemini) echo "Gemini";; *) echo "$1";;
+  esac
+}
 
 # --------------------------------------------------------------------------
-# Detecção adaptativa: project-profiles.json tem prioridade; senão heurística
+# Detecção adaptativa
 # --------------------------------------------------------------------------
 detect_preset() {
   local root="$1" base; base="$(basename "$root")"
@@ -243,76 +350,267 @@ PY
 }
 
 # --------------------------------------------------------------------------
-# Invocação de cada CLI (não-interativo). $2 = prompt
+# Invocação de cada CLI (não-interativo). Saída (stdout+stderr) -> stdout.
+#   invoke_agent <agente> <prompt> <can_write> [timeout]
 # --------------------------------------------------------------------------
-run_agent() {
-  local agent="$1" prompt="$2" timeout="${3:-}"
-  [[ -n "$timeout" ]] || timeout="$(agent_timeout "$agent")"
+# pula (com status claro) se o prompt não couber em argv — agentes que só aceitam
+# o prompt por argumento (glm/agy/gemini). Retorna 0 = "deve pular".
+argv_guard() {
+  local agent="$1" len="$2"
+  if [[ "$len" -gt "$ORCH_MAX_ARGV" ]]; then
+    echo "[${agent} pulado: prompt grande demais para argv (${len} > ${ORCH_MAX_ARGV} bytes) — reduza o escopo ou use codex/claude]"
+    echo "RISK: medium"
+    return 0
+  fi
+  return 1
+}
+
+invoke_agent() {
+  local agent="$1" prompt="$2" can_write="$3" to="${4:-}"
+  [[ -n "$to" ]] || to="$(agent_timeout "$agent")"
   case "$agent" in
-    codex)
-      [[ -n "$CODEX_BIN"  ]] || { echo "[codex ausente]";  return 0; }
-      local -a codex_args=()
-      [[ -n "$ORCH_CODEX_PROFILE" ]] && codex_args+=(-p "$ORCH_CODEX_PROFILE")
-      [[ -n "$ORCH_CODEX_MODEL" ]] && codex_args+=(-m "$ORCH_CODEX_MODEL")
-      AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$CODEX_BIN" "${codex_args[@]+"${codex_args[@]}"}" exec --dangerously-bypass-approvals-and-sandbox "$prompt" 2>&1
+    codex|fugu)
+      local bin="$CODEX_BIN"
+      [[ -n "$bin" ]] || { echo "[${agent} indisponível: binário codex não encontrado]"; return 0; }
+      local last logf; last="$(mktemp "${TMPDIR:-/tmp}/orch-${agent}.XXXXXX")"; logf="${last}.log"
+      local -a args=(exec) effort="$ORCH_CODEX_EFFORT"
+      if [[ "$agent" == "fugu" ]]; then
+        args+=(-p fugu -m "$ORCH_FUGU_MODEL")   # Fugu Ultra por padrão (mais poderoso)
+        effort="$ORCH_FUGU_EFFORT"   # Sakana rejeita 'medium' (só high|xhigh|max)
+      else
+        [[ -n "$ORCH_CODEX_PROFILE" ]] && args+=(-p "$ORCH_CODEX_PROFILE")
+        [[ -n "$ORCH_CODEX_MODEL" ]] && args+=(-m "$ORCH_CODEX_MODEL")
+      fi
+      args+=(-c "model_reasoning_effort=\"$effort\"")
+      args+=(-o "$last")
+      if [[ "$can_write" == "1" ]]; then
+        args+=(--dangerously-bypass-approvals-and-sandbox)
+      else
+        args+=(-s read-only -c "approval_policy=\"never\"")
+      fi
+      # Fugu usa o provider sakana (env_key=SAKANA_API_KEY); sem a chave o codex
+      # autentica vazio e a revisão sai em branco. Exporta a chave só para a perna.
+      if [[ "$agent" == "fugu" && -z "$SAKANA_KEY" ]]; then
+        echo "[fugu indisponível: chave Sakana não configurada — use 'ai p add sakana <key>']"; echo "RISK: medium"
+        rm -f "$last" "$logf" 2>/dev/null || true; return 0
+      fi
+      set +e
+      printf '%s' "$prompt" | SAKANA_API_KEY="$SAKANA_KEY" AI_ORCHESTRATION_ACTIVE=1 run_cli pipe "$to" -- "$bin" "${args[@]}" >"$logf" 2>&1
+      local rc=$?
+      set -e
+      if [[ -s "$last" ]]; then
+        cat "$last"
+      else
+        echo "[saída final do ${agent} vazia — trecho do transcript:]"
+        emit_limited_file "$logf"
+      fi
+      rm -f "$last" "$logf" 2>/dev/null || true
+      return $rc
+      ;;
+    glm)
+      local bin="$GLM_BIN"
+      [[ -n "$bin" ]] || { echo "[glm indisponível: binário claude não encontrado]"; echo "RISK: medium"; return 0; }
+      if [[ -z "$GLM_KEY" ]]; then
+        echo "[glm indisponível: chave Z.ai não configurada — use 'ai p add glm <key>']"; echo "RISK: medium"; return 0
+      fi
+      argv_guard glm "${#prompt}" && return 0
+      local -a perm_args
+      if [[ "$can_write" == "1" ]]; then perm_args=(--dangerously-skip-permissions); else perm_args=(--permission-mode plan); fi
+      # GLM/Z.ai: usa o binário claude com endpoint Z.ai. Detalhes críticos:
+      #  1) prompt vai por ARGV (o modo -p lendo stdin trava com este endpoint).
+      #  2) CLAUDE_CONFIG_DIR próprio e PERSISTENTE: GLM autentica por
+      #     ANTHROPIC_AUTH_TOKEN, e um dir dedicado (a) isola do login nativo e
+      #     (b) evita refazer onboarding/setup a cada run — o que, sob carga
+      #     concorrente do council, fazia o GLM travar até o timeout.
+      #  3) read-only em review via --permission-mode plan.
+      #  Obs.: glm e claude (mesmo binário) são serializados no council porque o
+      #  binário claude tem trava global de instância.
+      local glmcfg="${ORCH_HOME}/glm-config"
+      mkdir -p "$glmcfg" 2>/dev/null || true
+      set +e
+      ( unset ANTHROPIC_API_KEY ANTHROPIC_MODEL CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX 2>/dev/null || true
+        export CLAUDE_CONFIG_DIR="$glmcfg" \
+               ANTHROPIC_BASE_URL="$ORCH_GLM_BASE_URL" ANTHROPIC_AUTH_TOKEN="$GLM_KEY" \
+               API_TIMEOUT_MS=600000 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+               CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 \
+               ANTHROPIC_DEFAULT_HAIKU_MODEL="glm-4.5-air" \
+               ANTHROPIC_DEFAULT_SONNET_MODEL="$ORCH_GLM_MODEL" \
+               ANTHROPIC_DEFAULT_OPUS_MODEL="$ORCH_GLM_MODEL" \
+               AI_ORCHESTRATION_ACTIVE=1
+        run_cli pipe "$to" -- "$bin" "${perm_args[@]}" -p "$prompt" < /dev/null
+      ) 2>&1 | { grep -vaE 'claude\.ai connectors are disabled' || true; }
+      local rc=${PIPESTATUS[0]}
+      set -e
+      return $rc
+      ;;
+    claude)
+      local bin="$CLAUDE_BIN"
+      [[ -n "$bin" ]] || { echo "[claude indisponível]"; return 0; }
+      # review (can_write=0) roda read-only de verdade via --permission-mode plan;
+      # só implementação real usa --dangerously-skip-permissions.
+      local -a perm_args
+      if [[ "$can_write" == "1" ]]; then perm_args=(--dangerously-skip-permissions); else perm_args=(--permission-mode plan); fi
+      set +e
+      # força Anthropic nativo (ignora qualquer override de provider no ambiente)
+      ( unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
+        printf '%s' "$prompt" | AI_ORCHESTRATION_ACTIVE=1 run_cli pipe "$to" -- "$bin" "${perm_args[@]}" -p
+      ) 2>&1
+      local rc=${PIPESTATUS[0]}
+      set -e
+      return $rc
       ;;
     agy)
-      [[ -n "$AGY_BIN"    ]] || { echo "[agy ausente]";    return 0; }
-      local -a agy_args=(--dangerously-skip-permissions)
-      [[ -n "${REPO_ROOT:-}" && -d "${REPO_ROOT:-}" ]] && agy_args+=(--add-dir "$REPO_ROOT")
-      AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$AGY_BIN" "${agy_args[@]}" -p "$prompt" 2>&1
+      local bin="$AGY_BIN"
+      [[ -n "$bin" ]] || { echo "[agy indisponível]"; return 0; }
+      argv_guard agy "${#prompt}" && return 0
+      local -a args=(--dangerously-skip-permissions)
+      [[ -n "${REPO_ROOT:-}" && -d "${REPO_ROOT:-}" ]] && args+=(--add-dir "$REPO_ROOT")
+      # agy abre TUI mesmo em -p; precisa de PTY. Prompt vai por argv (mantenha enxuto).
+      set +e
+      AI_ORCHESTRATION_ACTIVE=1 run_cli pty "$to" -- "$bin" "${args[@]}" -p "$prompt" 2>&1
+      local rc=$?
+      set -e
+      return $rc
       ;;
-    claude) [[ -n "$CLAUDE_BIN" ]] || { echo "[claude ausente]"; return 0; }; AI_ORCHESTRATION_ACTIVE=1 run_to "$timeout" "$CLAUDE_BIN" --dangerously-skip-permissions -p "$prompt" 2>&1 ;;
+    gemini)
+      local bin="$GEMINI_BIN"
+      [[ -n "$bin" ]] || { echo "[gemini indisponível]"; echo "RISK: medium"; return 0; }
+      argv_guard gemini "${#prompt}" && return 0
+      # prompt completo via argv; read-only via --approval-mode plan (não yolo)
+      set +e
+      AI_ORCHESTRATION_ACTIVE=1 run_cli pipe "$to" -- \
+        "$bin" -p "$prompt" --approval-mode plan --model "$ORCH_GEMINI_MODEL" -o text < /dev/null 2>&1
+      local rc=$?
+      set -e
+      return $rc
+      ;;
     *) echo "[agente desconhecido: $agent]"; return 127 ;;
   esac
 }
 
 # --------------------------------------------------------------------------
+# Retry + validação + marcadores; escreve direto no arquivo do agente
+#   run_agent_to_file <agente> <prompt> <can_write> <out_file>
+# --------------------------------------------------------------------------
+fatal_block_re='IneligibleTierError|no longer supported|migrate to.*antigravity|authentication required|authentication timed out|please visit the url to log in|login required|requires tty|not a tty|could not open[[:space:]]+tty'
+
+run_agent_to_file() {
+  local agent="$1" prompt="$2" can_write="$3" out_file="$4"
+  local attempts=$((ORCH_RETRIES + 1)) n=0 rc=0 meaningful
+  : > "$out_file"
+  while :; do
+    n=$((n + 1))
+    set +e
+    { invoke_agent "$agent" "$prompt" "$can_write"; } > "$out_file" 2>&1
+    rc=$?
+    set -e
+    # erro fatal (login/tier/tty): não adianta repetir
+    if grep -qiE "$fatal_block_re" "$out_file" 2>/dev/null; then break; fi
+    # timeout: repetir só dobraria a espera — desiste e marca como falho
+    if [[ "$rc" == "124" ]]; then break; fi
+    meaningful="$(tr -d '[:space:]' < "$out_file" | wc -c | tr -d ' ')"
+    [[ "$meaningful" =~ ^[0-9]+$ ]] || meaningful=0
+    if [[ "$rc" == "0" && "$meaningful" -ge 40 ]]; then break; fi
+    if [[ "$n" -ge "$attempts" ]]; then break; fi
+    warn "  ↻ $(agent_label "$agent") fraco (rc=$rc, ${meaningful}c) — retry $n/$((attempts - 1)) em ${ORCH_BACKOFF}s"
+    sleep "$ORCH_BACKOFF" 2>/dev/null || true
+  done
+  postprocess_markers "$agent" "$out_file" "$rc"
+  return 0
+}
+
+postprocess_markers() {
+  local agent="$1" f="$2" rc="$3" meaningful
+  meaningful="$(tr -d '[:space:]' < "$f" 2>/dev/null | wc -c | tr -d ' ')"
+  [[ "$meaningful" =~ ^[0-9]+$ ]] || meaningful=0
+  if grep -qiE 'IneligibleTierError|no longer supported|migrate to.*antigravity' "$f" 2>/dev/null; then
+    { echo; echo "AGENT_STATUS: skipped gemini_free_tier_descontinuado"; echo "RISK: medium"; } >> "$f"
+    return 0
+  fi
+  if grep -qiE 'authentication required|please visit the url to log in|login required|requires tty|not a tty|could not open[[:space:]]+tty|permission denied' "$f" 2>/dev/null; then
+    { echo; echo "AGENT_STATUS: blocked external_auth_or_interactive_flow"; } >> "$f"
+  fi
+  if [[ "$rc" != "0" ]]; then
+    { echo; echo "AGENT_STATUS: failed exit_code=${rc}"; [[ "$rc" == "124" ]] && echo "AGENT_ERROR: timeout after $(agent_timeout "$agent")s"; } >> "$f"
+  fi
+  if [[ "$meaningful" -lt 40 ]]; then
+    { echo; echo "AGENT_STATUS: empty_or_too_short chars=${meaningful}"; } >> "$f"
+  fi
+  if ! grep -qiE '^RISK:[[:space:]]*(low|medium|high)' "$f" 2>/dev/null; then
+    { echo; echo "AGENT_STATUS: incomplete missing_risk_line"; echo "RISK: medium"; } >> "$f"
+  fi
+  return 0
+}
+
+# --------------------------------------------------------------------------
 # Prompts
 # --------------------------------------------------------------------------
-build_prompt() {  # <agente> <task> <can_write> <repo> <prev_file>
-  local agent="$1" task="$2" can_write="$3" root="$4" prev="$5" role mode
+build_prompt() {  # <agente> <task> <can_write> <repo> <prev_file> <kind:review|work>
+  local agent="$1" task="$2" can_write="$3" root="$4" prev="$5" kind="${6:-work}" role mode
   case "$agent" in
-    codex)  role="implementer/finalizer: implemente, rode testes, finalize" ;;
-    agy)    role="scout/decompositor/revisor independente" ;;
+    codex)  role="engenheiro sênior / implementer / finalizer" ;;
+    fugu)   role="revisor sênior independente (modelo Sakana Fugu)" ;;
+    glm)    role="revisor sênior independente (modelo GLM)" ;;
     claude) role="crítico de arquitetura, segurança e risco" ;;
+    agy)    role="scout / decompositor / revisor de edge-cases" ;;
+    gemini) role="revisor sênior independente (Gemini Pro)" ;;
     *)      role="agente" ;;
   esac
   if [[ "$can_write" == "1" ]]; then
     mode="MODO EXECUTAR: você é o IMPLEMENTADOR e PODE alterar arquivos. Faça as mudanças e rode os testes."
   else
-    mode="ADVISORY / READ-ONLY: NÃO altere nenhum arquivo. Apenas analise, critique e proponha o diff/passos."
+    mode="ADVISORY / READ-ONLY: NÃO altere NENHUM arquivo, não rode comandos que escrevem. Apenas analise, critique e proponha o diff/passos."
   fi
   printf 'Você é o agente "%s" (%s) numa orquestração multi-CLI.\n\n' "$(agent_label "$agent")" "$role"
   printf 'Repositório: %s\nTarefa: %s\n\n%s\n\n' "$root" "$task" "$mode"
+  if [[ "$kind" == "review" ]]; then
+    printf '%s\n' "Faça um CODE REVIEW SÊNIOR focado no diff atual (git diff e mudanças não commitadas). Avalie:"
+    printf '%s\n' "  • bugs ocultos e regressões  • segurança (injection, authz, secrets, SSRF, XSS)"
+    printf '%s\n' "  • corretude de concorrência/erros  • arquitetura e acoplamento  • performance"
+    printf '%s\n' "Para cada achado dê: arquivo:linha, severidade (CRITICAL/HIGH/MEDIUM/LOW) e correção concreta (exemplo de código)."
+    printf '%s\n' "Seja específico e direto; nada de elogios genéricos. Se o diff estiver vazio, revise o estado atual do repo."
+  fi
   printf '%s\n' "Não leia .env, segredos, credenciais ou bancos locais."
-  printf '%s\n' "Regra anti-trava: NÃO execute outros CLIs/agentes de IA (claude, codex, agy, gemini, ai, ai-orchestrate) e NÃO invoque skills de review cruzado. O orquestrador já chama cada agente. Se outro agente for necessário, apenas recomende isso no texto."
-  printf '%s\n' "Se uma ferramenta pedir login, permissão, TTY ou ficar indisponível, registre o bloqueio e finalize com RISK: medium ou high em vez de tentar abrir fluxo interativo."
+  printf '%s\n' "Regra anti-trava: NÃO execute outros CLIs/agentes de IA (claude, codex, agy, gemini, glm, ai, ai-orchestrate) e NÃO invoque skills de review cruzado. O orquestrador já chama cada agente. Se outro agente for necessário, apenas recomende no texto."
+  printf '%s\n' "Se uma ferramenta pedir login, permissão, TTY ou ficar indisponível, registre o bloqueio e finalize com RISK: medium ou high — não tente abrir fluxo interativo."
   if [[ -n "$prev" && -s "$prev" ]]; then
     printf '\nContexto do agente anterior (critique e avance, não repita):\n---\n'; emit_limited_file "$prev"; printf '\n---\n'
   fi
   printf '\n%s\n%s\n' "Ao final inclua OBRIGATORIAMENTE uma linha no formato exato:" \
     "RISK: low|medium|high   (high = mudança arriscada que exige revisão humana)"
 }
+
 build_synthesis_prompt() {  # <task> <run_dir>
   local task="$1" dir="$2" f
-  printf 'Você é o sintetizador final de uma orquestração multi-CLI (Codex/AGY/Claude).\n'
+  printf 'Você é o SINTETIZADOR final de um council de code review multi-CLI.\n'
   printf 'Tarefa original: %s\n\n' "$task"
-  printf '%s\n\n' "Não chame outros CLIs/agentes. Apenas sintetize os arquivos abaixo."
-  printf '%s\n%s\n\n' "Consolide as saídas abaixo num único relatório Markdown com seções:" \
-    "Resumo · Achados (com severidade) · Recomendações priorizadas · Próximos passos."
-  for f in "$dir"/[0-9]*-*.md; do [[ -f "$f" ]] || continue; printf '\n===== %s =====\n' "$(basename "$f")"; emit_limited_file "$f"; done
+  printf '%s\n' "Não chame outros CLIs/agentes e NÃO altere arquivos. Apenas consolide os reviews abaixo."
+  printf '%s\n' "Vários revisores independentes (Codex, GLM, Fugu, Claude, AGY) analisaram o mesmo diff."
+  printf '%s\n\n' "Alguns podem ter falhado (veja AGENT_STATUS) — ignore os vazios/bloqueados e diga quais participaram."
+  printf '%s\n' "Produza um relatório Markdown único com as seções:"
+  printf '%s\n' "  ## Resumo executivo   ## Achados consolidados (deduplicados, com severidade e arquivo:linha)"
+  printf '%s\n' "  ## Consenso vs divergência entre revisores   ## Plano de correção priorizado   ## RISK final"
+  printf '%s\n' "Priorize CRITICAL/HIGH. Dê o caminho mais curto para deixar o código pronto para merge."
+  printf '\nAo final inclua a linha: RISK: low|medium|high\n\n'
+  for f in "$dir"/[0-9]*-*.md; do
+    [[ -f "$f" ]] || continue
+    printf '\n===== %s =====\n' "$(basename "$f")"
+    emit_limited_file "$f"
+  done
 }
 
 # --------------------------------------------------------------------------
 # Args
 # --------------------------------------------------------------------------
-PRESET=""; TASK=""; EXECUTE=0; AUTO_APPROVE=0; FROM_RUN=""
+PRESET=""; TASK=""; EXECUTE=0; AUTO_APPROVE=0; FROM_RUN=""; AGENTS_OVERRIDE=""; PARALLEL_OVERRIDE="$ORCH_PARALLEL"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --list)             print_list; exit 0 ;;
     --list-presets-raw) for p in $PRESETS; do echo "$p"; done; exit 0 ;;
     --preset)           PRESET="${2:-}"; shift 2 ;;
+    --agents)           AGENTS_OVERRIDE="${2:-}"; shift 2 ;;
+    --seq)              PARALLEL_OVERRIDE=0; shift ;;
+    --parallel)         PARALLEL_OVERRIDE=1; shift ;;
     --task)             TASK="${2:-}"; shift 2 ;;
     --execute)          EXECUTE=1; shift ;;
     --auto-approve)     AUTO_APPROVE=1; shift ;;
@@ -324,14 +622,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+[[ -n "$AGENTS_OVERRIDE" ]] && ORCH_REVIEW_AGENTS="$AGENTS_OVERRIDE"
+
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 [[ -z "$PRESET" || "$PRESET" == "adaptive" ]] && PRESET="$(detect_preset "$REPO_ROOT")"
 ORDER="$(preset_order "$PRESET")" || die "Preset desconhecido: $PRESET (use --list)"
 [[ -z "${TASK// /}" && -z "$FROM_RUN" ]] && die "Tarefa vazia. Use: ai-orchestrate --task \"...\""
 
+# council = preset de review (paralelo), salvo override explícito
+COUNCIL=0
+if is_review_only "$PRESET"; then COUNCIL=1; fi
+[[ "$PARALLEL_OVERRIDE" == "1" ]] && COUNCIL=1
+[[ "$PARALLEL_OVERRIDE" == "0" ]] && COUNCIL=0
+
 # Sintetizador final
 if [[ -n "${ORCH_SYNTH:-}" ]]; then SYNTH="$ORCH_SYNTH"
-elif is_review_only "$PRESET"; then SYNTH="codex"; else SYNTH="claude"; fi
+elif [[ "$COUNCIL" == "1" ]] || is_review_only "$PRESET"; then SYNTH="codex"; else SYNTH="claude"; fi
 
 TS="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUNS_DIR" "${ORCH_HOME}/reports"
@@ -340,36 +646,92 @@ RUN_ID="$(basename "$RUN_DIR")"
 
 mode_str="DRY-RUN"; [[ "$EXECUTE" == "1" ]] && mode_str="EXECUTAR"
 is_review_only "$PRESET" && mode_str="$mode_str (review/read-only)"
-banner "Orquestração ($PRESET) — $mode_str"
-say "  repo:  $REPO_ROOT"
-say "  ordem: $ORDER   síntese: $SYNTH"
-say "  run:   $RUN_DIR"
-say "  timeout: codex=${ORCH_TIMEOUT_CODEX}s agy=${ORCH_TIMEOUT_AGY}s claude=${ORCH_TIMEOUT_CLAUDE}s synth=${ORCH_SYNTH_TIMEOUT}s (${TIMEOUT_MODE})"
-[[ -n "$ORCH_CODEX_PROFILE" ]] && say "  codex: profile=${ORCH_CODEX_PROFILE}${ORCH_CODEX_MODEL:+ model=${ORCH_CODEX_MODEL}}"
+[[ "$COUNCIL" == "1" ]] && banner "Council de review ($PRESET) — $mode_str" || banner "Orquestração ($PRESET) — $mode_str"
+say "  repo:   $REPO_ROOT"
+if [[ "$COUNCIL" == "1" ]]; then
+  say "  roster: $ORDER   (paralelo)   síntese: $SYNTH"
+else
+  say "  ordem:  $ORDER   (cadeia)     síntese: $SYNTH"
+fi
+say "  run:    $RUN_DIR"
+say "  timeout: por agente=${ORCH_TIMEOUT}s synth=${ORCH_SYNTH_TIMEOUT}s · effort codex=${ORCH_CODEX_EFFORT} fugu=${ORCH_FUGU_EFFORT}/${ORCH_FUGU_MODEL} · retries=${ORCH_RETRIES}"
 [[ -n "$ORCH_SKIP" ]] && warn "  pulando: $ORCH_SKIP"
-[[ "$TIMEOUT_MODE" == "none" ]] && warn "  (sem timeout/gtimeout/python3 — agentes rodam sem limite de tempo)"
 
 # --------------------------------------------------------------------------
-# Cadeia
+# Execução
 # --------------------------------------------------------------------------
-prev_file=""; idx=0; gate_tripped=0
+gate_tripped=0
+
 if [[ -n "$FROM_RUN" ]]; then
   banner "Reaproveitando run anterior: $FROM_RUN"
   [[ -d "$FROM_RUN" ]] || die "--from-run: diretório inexistente: $FROM_RUN"
   cp "${FROM_RUN%/}"/[0-9]*-*.md "$RUN_DIR"/ 2>/dev/null || true
+
+elif [[ "$COUNCIL" == "1" ]]; then
+  # ----- COUNCIL: reviewers independentes, sem relay -----
+  # O binário claude tem trava global de instância: rodar claude + glm em paralelo
+  # faz um esperar o outro até estourar o timeout. Por isso a "família claude"
+  # (claude, glm) roda SERIALIZADA numa lane própria; os demais (codex, fugu, agy,
+  # gemini) rodam em paralelo de verdade. Como a trava já serializava na marra,
+  # isso não custa wall-clock e elimina os timeouts.
+  pids=(); entries=(); idx=0
+  claude_lane=()   # "agent|outfile" da família claude (mesmo binário), em ordem
+  for agent in $ORDER; do
+    if skipped "$agent"; then warn "  pulando $agent (ORCH_SKIP)"; continue; fi
+    idx=$((idx + 1))
+    out_file="$RUN_DIR/$(printf '%02d' "$idx")-${agent}.md"
+    entries+=("${agent}|${out_file}")
+    case "$agent" in
+      claude|glm)
+        claude_lane+=("${agent}|${out_file}")
+        say "  ▶ $(agent_label "$agent") (lane claude · serial) → $(basename "$out_file")"
+        ;;
+      *)
+        prompt="$(build_prompt "$agent" "$TASK" 0 "$REPO_ROOT" "" review)"
+        say "  ▶ $(agent_label "$agent") (paralelo) → $(basename "$out_file")"
+        run_agent_to_file "$agent" "$prompt" 0 "$out_file" &
+        pids+=($!)
+        ;;
+    esac
+  done
+  # lane serial da família claude: um job de fundo roda glm/claude um de cada vez
+  if [[ ${#claude_lane[@]} -gt 0 ]]; then
+    (
+      for cj in "${claude_lane[@]}"; do
+        ca="${cj%%|*}"; cf="${cj#*|}"
+        cp="$(build_prompt "$ca" "$TASK" 0 "$REPO_ROOT" "" review)"
+        run_agent_to_file "$ca" "$cp" 0 "$cf"
+      done
+    ) &
+    pids+=($!)
+  fi
+  for pid in ${pids[@]+"${pids[@]}"}; do wait "$pid" 2>/dev/null || true; done
+  banner "Reviewers concluídos"
+  for entry in ${entries[@]+"${entries[@]}"}; do
+    a="${entry%%|*}"; fpath="${entry#*|}"
+    risk="$(grep -hoiE '^RISK:[[:space:]]*(low|medium|high)' "$fpath" 2>/dev/null | tail -1 || true)"
+    st="$(grep -hoE 'AGENT_STATUS:[^|]*' "$fpath" 2>/dev/null | head -1 || true)"
+    bytes="$(wc -c < "$fpath" 2>/dev/null | tr -d ' ' || echo 0)"
+    if [[ -n "$st" ]]; then
+      warn "  • $(printf '%-12s' "$(agent_label "$a")") ${bytes}B  ${risk:-RISK: ?}  [$st]"
+    else
+      say  "  • $(printf '%-12s' "$(agent_label "$a")") ${bytes}B  ${risk:-RISK: ?}  ${GRN}ok${RST}"
+    fi
+  done
+
 else
+  # ----- CADEIA SEQUENCIAL (relay) para presets de implementação -----
+  prev_file=""; idx=0
   for agent in $ORDER; do
     if skipped "$agent"; then warn "pulando $agent (ORCH_SKIP)"; continue; fi
-    idx=$((idx+1)); label="$(agent_label "$agent")"
+    idx=$((idx + 1)); label="$(agent_label "$agent")"
     out_file="$RUN_DIR/$(printf '%02d' "$idx")-${agent}.md"
 
-    # quem pode escrever: só o implementer, em --execute, e não em preset de review
     can_write=0
     if [[ "$EXECUTE" == "1" && "$agent" == "$IMPLEMENTER" ]] && ! is_review_only "$PRESET"; then
       can_write=1
     fi
 
-    # Gate ANTES de uma etapa de escrita
     if [[ "$can_write" == "1" && "$AUTO_APPROVE" != "1" ]]; then
       printf '%sPróxima etapa (%s) pode ESCREVER arquivos. Continuar? [y/N] %s' "$YEL" "$label" "$RST" >&2
       read -r ans || ans=""
@@ -377,44 +739,10 @@ else
     fi
 
     banner "[$idx] $label$( [[ "$can_write" == 1 ]] && echo ' (escrita)' || echo ' (read-only)')"
-    prompt="$(build_prompt "$agent" "$TASK" "$can_write" "$REPO_ROOT" "$prev_file")"
-    set +e
-    run_agent "$agent" "$prompt" | tee "$out_file"
-    agent_rc=${PIPESTATUS[0]}
-    set -e
-    if [[ "$agent_rc" != "0" ]]; then
-      warn "⚠ $label terminou com código $agent_rc"
-      {
-        echo
-        echo "AGENT_STATUS: failed exit_code=${agent_rc}"
-        if [[ "$agent_rc" == "124" ]]; then
-          echo "AGENT_ERROR: timeout after $(agent_timeout "$agent")s"
-        fi
-        echo "RISK: medium"
-      } >> "$out_file"
-    fi
-
-    if grep -qiE '(authentication required|authentication timed out|please visit the url to log in|oauth|login required|permission denied|requires tty|not a tty)' "$out_file" 2>/dev/null; then
-      warn "⚠ $label bloqueado por autenticação/permissão/fluxo interativo"
-      {
-        echo
-        echo "AGENT_STATUS: blocked external_auth_or_interactive_flow"
-        grep -qiE '^RISK:' "$out_file" 2>/dev/null || echo "RISK: medium"
-      } >> "$out_file"
-    fi
-
-    if ! grep -qiE '^RISK:[[:space:]]*(low|medium|high)' "$out_file" 2>/dev/null; then
-      warn "⚠ $label não retornou linha RISK; marcando como medium"
-      {
-        echo
-        echo "AGENT_STATUS: incomplete missing_risk_line"
-        echo "RISK: medium"
-      } >> "$out_file"
-    fi
-
-    if grep -qiE '^RISK:[[:space:]]*high' "$out_file" 2>/dev/null; then
-      warn "⚠ $label sinalizou RISK: high"
-    fi
+    prompt="$(build_prompt "$agent" "$TASK" "$can_write" "$REPO_ROOT" "$prev_file" work)"
+    run_agent_to_file "$agent" "$prompt" "$can_write" "$out_file"
+    emit_limited_file "$out_file" >&2 || true
+    if grep -qiE '^RISK:[[:space:]]*high' "$out_file" 2>/dev/null; then warn "⚠ $label sinalizou RISK: high"; fi
     prev_file="$out_file"
   done
 fi
@@ -424,17 +752,24 @@ fi
 # --------------------------------------------------------------------------
 REPORT="$RUN_DIR/report.md"
 synth_bin_ok=0
-case "$SYNTH" in codex) [[ -n "$CODEX_BIN" ]] && synth_bin_ok=1;; agy) [[ -n "$AGY_BIN" ]] && synth_bin_ok=1;; claude) [[ -n "$CLAUDE_BIN" ]] && synth_bin_ok=1;; esac
+case "$SYNTH" in
+  codex|fugu) [[ -n "$CODEX_BIN" ]] && synth_bin_ok=1 ;;
+  glm|claude) [[ -n "$CLAUDE_BIN" ]] && synth_bin_ok=1 ;;
+  agy)        [[ -n "$AGY_BIN" ]] && synth_bin_ok=1 ;;
+  gemini)     [[ -n "$GEMINI_BIN" ]] && synth_bin_ok=1 ;;
+esac
 if [[ "$gate_tripped" != "1" && "$SYNTH" != "none" && "$synth_bin_ok" == "1" ]] && ! skipped "$SYNTH"; then
   banner "Síntese final ($(agent_label "$SYNTH"))"
   set +e
-  run_agent "$SYNTH" "$(build_synthesis_prompt "$TASK" "$RUN_DIR")" "$ORCH_SYNTH_TIMEOUT" | tee "$REPORT"
+  invoke_agent "$SYNTH" "$(build_synthesis_prompt "$TASK" "$RUN_DIR")" 0 "$ORCH_SYNTH_TIMEOUT" | tee "$REPORT"
   synth_rc=${PIPESTATUS[0]}
   set -e
-  if [[ "$synth_rc" != "0" ]]; then
-    warn "⚠ síntese terminou com código $synth_rc; gerando relatório fallback"
+  synth_chars="$(tr -d '[:space:]' < "$REPORT" 2>/dev/null | wc -c | tr -d ' ')"
+  [[ "$synth_chars" =~ ^[0-9]+$ ]] || synth_chars=0
+  if [[ "$synth_rc" != "0" || "$synth_chars" -lt 40 ]]; then
+    warn "⚠ síntese fraca (rc=${synth_rc}, ${synth_chars}c); gerando relatório de fallback com os reviews crus"
     { echo "# Relatório de orquestração ($PRESET)"; echo; echo "Tarefa: $TASK"; echo
-      echo "Síntese automática falhou com exit_code=${synth_rc}."; echo
+      echo "_Síntese automática falhou (rc=${synth_rc}); abaixo os reviews crus._"; echo
       for f in "$RUN_DIR"/[0-9]*-*.md; do [[ -f "$f" ]] && { echo "## $(basename "$f")"; emit_limited_file "$f"; echo; }; done
     } > "$REPORT"
   fi
@@ -454,6 +789,7 @@ je() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
   printf '  "timestamp": "%s",\n'    "$TS"
   printf '  "run_id": "%s",\n'       "$(je "$RUN_ID")"
   printf '  "preset": "%s",\n'       "$PRESET"
+  printf '  "mode": "%s",\n'         "$([[ "$COUNCIL" == 1 ]] && echo council || echo chain)"
   printf '  "order": "%s",\n'        "$ORDER"
   printf '  "synthesizer": "%s",\n'  "$SYNTH"
   printf '  "repo": "%s",\n'         "$(je "$REPO_ROOT")"

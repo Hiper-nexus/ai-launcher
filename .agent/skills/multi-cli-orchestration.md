@@ -1,12 +1,12 @@
 ---
 name: multi-cli-orchestration
-description: Coordinate Codex, Claude, and AGY with configurable execution order and local project profiles. Trigger for "review senior", "revisar com os 3", "usa os 3", "orquestra isso", "chama Claude e AGY", "AGY primeiro", "Claude primeiro", "Codex primeiro", "validar com outro agente", "tarefa complexa", "arquitetura critica", "migração", "pagamentos", "auth", "Supabase", "segurança", "corrigir ate low", "PR review", or "diff review".
+description: Coordinate Codex, GLM, Fugu, Claude, and AGY for senior code review and implementation, with configurable roster, parallel council, and local project profiles. Trigger for "review senior", "revisar com os 3", "usa os 3", "orquestra isso", "chama Claude e AGY", "AGY primeiro", "Claude primeiro", "Codex primeiro", "validar com outro agente", "tarefa complexa", "arquitetura critica", "migração", "pagamentos", "auth", "Supabase", "segurança", "corrigir ate low", "PR review", or "diff review".
 ---
 
 # Multi-CLI Orchestration
 
-Use this skill when the user wants Codex, Claude, and AGY to work together, or
-when the user wants to change who executes first.
+Use this skill when the user wants multiple AI CLIs to review or implement
+together, or when the user wants to change who executes first.
 
 Natural phrases that should trigger this workflow:
 
@@ -21,59 +21,80 @@ Shared configuration:
 - `~/.ai-orchestration/project-profiles.json`
 - `~/.local/bin/ai-orchestrate`
 - `~/.ai-orchestration/scripts/`
-- `~/.ai-orchestration/templates/`
-- `~/.ai-orchestration/runs/`
-- `~/.ai-orchestration/reports/`
+- `~/.ai-orchestration/runs/` and `~/.ai-orchestration/reports/`
 
-## Roles
+## Agents (review roster)
 
-- Codex: primary implementer, test runner, finalizer.
-- Claude: architecture critic, product/security reviewer, risk planner.
-- AGY: scout, task decomposer, independent reviewer.
+| Agent  | Engine                              | Role                                  |
+|--------|-------------------------------------|---------------------------------------|
+| codex  | OpenAI Codex (gpt-5.x)              | implementer / finalizer / synthesizer |
+| glm    | GLM/Z.ai via the `claude` binary    | independent senior reviewer           |
+| fugu   | Sakana **Fugu Ultra** via `codex -p fugu` | independent senior reviewer       |
+| claude | Anthropic Claude (native login)     | architecture / security / risk critic |
+| agy    | Google Antigravity (runs under PTY) | scout / decomposer / edge-case review |
+| gemini | Google Gemini CLI — **opt-in**      | reviewer (free tier discontinued by Google; auto-skipped) |
+
+Default review roster: `codex glm fugu claude agy`. Override with
+`ORCH_REVIEW_AGENTS` or `--agents "codex glm fugu"`.
 
 ## Presets
 
+- `senior-code-review` / `review-council`: **parallel council** — every roster
+  agent reviews the same diff independently (no anchoring), then **Codex
+  synthesizes** a single deduplicated report. This is the default for review.
 - `adaptive`: choose from project and task signals.
-- `codex-first`: Codex plans/implements, AGY scouts, Claude reviews.
-- `claude-first`: Claude plans, AGY cross-checks, Codex implements.
-- `agy-first`: AGY decomposes, Claude shapes, Codex implements.
+- `codex-first` / `claude-first` / `agy-first`: implementation chains (sequential relay).
 - `ui-heavy`: UI/UX workflow.
-- `backend-critical`: auth, tenant, webhook, queue, provider, and security workflow.
+- `backend-critical`: auth, tenant, webhook, queue, provider, security workflow.
 - `migration-critical`: SQL/data remediation workflow.
-- `senior-code-review`: Codex reviews first, AGY second, Claude third, then Codex synthesizes.
-- `review-council`: compatibility preset using the same senior review order.
 
 ## How to Run
 
-Dry-run:
+Senior code review (parallel council, dry-run / read-only):
 
 ```bash
-ai-orchestrate --task "<task>"
-ai-orchestrate --preset <preset> --task "<task>"
+ai-orchestrate --preset senior-code-review --task "code review senior do diff atual"
+ai-orchestrate --preset senior-code-review --agents "codex glm fugu" --task "<task>"
 ```
 
-Execute:
+Implementation chain:
 
 ```bash
+ai-orchestrate --preset <preset> --task "<task>"
 ai-orchestrate --preset <preset> --execute --task "<task>"
 ai-orchestrate --from-run <run-dir> --preset <preset> --execute --auto-approve --task "<task>"
 ```
 
-Write steps stop at a decision gate unless `--auto-approve` is present.
-Use `--from-run` when approving so write steps consume the outputs you reviewed.
+Inspect presets/roster: `ai-orchestrate --list`
 
-Inspect local profile:
+## Reliability (why each agent now works)
 
-```bash
-ai-orchestrate --list
-```
+- **AGY** runs under a real PTY, fixing the `bubbletea: could not open TTY` crash.
+- **Codex/Fugu** use `--output-last-message` + `model_reasoning_effort` (default
+  `medium`) and `-s read-only` in review, so output is the final review (not a
+  multi-MB transcript) and faster.
+- **Claude/GLM** review legs are truly read-only (`--permission-mode plan`) and are
+  serialized with each other (the `claude` binary has a global single-instance
+  lock; two in parallel hung one). Other agents stay parallel.
+- All prompts are passed via **stdin** where supported, avoiding `Argument list too long`.
+- Each agent gets a per-agent **timeout** and **retry** (transient failures only);
+  `run_cli` kills the child process group on SIGINT/SIGTERM.
+- **Gemini** auto-skips cleanly on `IneligibleTierError` (Google discontinued the
+  individual free tier — use `agy`/`glm`/`fugu` instead).
+- One failing agent never blocks the council; the synthesizer notes who participated.
+
+## Tuning env vars
+
+`ORCH_REVIEW_AGENTS`, `ORCH_SKIP`, `ORCH_SYNTH`, `ORCH_PARALLEL`,
+`ORCH_TIMEOUT` (+ per-agent `ORCH_TIMEOUT_CODEX/GLM/FUGU/CLAUDE/AGY/GEMINI`),
+`ORCH_SYNTH_TIMEOUT`, `ORCH_RETRIES`, `ORCH_BACKOFF`, `ORCH_CODEX_EFFORT`,
+`ORCH_CONTEXT_CHARS`, `ORCH_GLM_BASE_URL`, `ORCH_GLM_MODEL`, `ORCH_GEMINI_MODEL`.
 
 ## Safety
 
 - Read `AGENTS.md`, `CLAUDE.md`, and project manifests before acting.
 - Do not read `.env`, auth files, local databases, or secret stores.
-- Advisory actors are read-only.
-- Only the selected implementation actor may edit files.
-- Do not cross a write gate without explicit approval.
-- Resume approved gates with `--from-run` so implementation uses the reviewed outputs.
-- For migrations, payments, auth, tenant isolation, queues, and providers, use a review gate before finalizing.
+- Review presets are read-only for every agent; only the implementer writes in
+  implementation presets, and only past an approved write gate.
+- For migrations, payments, auth, tenant isolation, queues, and providers, use a
+  review gate before finalizing.
