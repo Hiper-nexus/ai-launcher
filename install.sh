@@ -109,12 +109,14 @@ echo "  ai          Menu interativo"
 echo "  ai c        Claude Code"
 echo "  ai x        Codex"
 echo "  ai g        Gemini"
+echo "  ai k        Kimi Code"
 echo "  ai --help   Ajuda completa"
 echo ""
 echo -e "${YELLOW}Pré-requisitos (instale os que quiser usar):${RESET}"
 echo "  npm install -g @anthropic-ai/claude-code   # Claude"
 echo "  npm install -g @openai/codex               # Codex"
 echo "  npm install -g @google/gemini-cli           # Gemini"
+echo "  curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash  # Kimi Code"
 
 # >>> ai-orchestration layer >>>
 install_orchestration_layer() {

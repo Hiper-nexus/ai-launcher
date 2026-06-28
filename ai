@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.9.6"
+AI_LAUNCHER_VERSION="1.10.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -28,6 +28,7 @@ CLAUDE_FLAGS=(--dangerously-skip-permissions)
 CODEX_FLAGS=(--dangerously-bypass-approvals-and-sandbox)
 GEMINI_FLAGS=(--yolo --model pro --skip-trust)
 AGY_FLAGS=(--dangerously-skip-permissions)
+KIMI_FLAGS=(--yolo)
 AI_ORCHESTRATION_HOME="${AI_ORCHESTRATION_HOME:-${HOME}/.ai-orchestration}"
 ORCHESTRATE_CMD="${ORCHESTRATE_CMD:-${HOME}/.local/bin/ai-orchestrate}"
 
@@ -38,6 +39,7 @@ CLAUDE_PROMPT_FLAG="-p"
 CODEX_PROMPT_FLAG=""
 GEMINI_PROMPT_FLAG="-p"
 AGY_PROMPT_FLAG="-p"
+KIMI_PROMPT_FLAG="-p"
 
 # Perfis do Claude (flags extras por modo)
 get_claude_profile_flags() {
@@ -2036,6 +2038,7 @@ launch() {
         CODEX_FLAGS)  flags_ref=("${CODEX_FLAGS[@]}") ;;
         GEMINI_FLAGS) flags_ref=("${GEMINI_FLAGS[@]}") ;;
         AGY_FLAGS)    flags_ref=("${AGY_FLAGS[@]+"${AGY_FLAGS[@]}"}") ;;
+        KIMI_FLAGS)   flags_ref=("${KIMI_FLAGS[@]+"${KIMI_FLAGS[@]}"}") ;;
         *)
             echo -e "${RED}Erro interno: array de flags desconhecida (${flags_name}).${RESET}"
             exit 1
@@ -2049,6 +2052,7 @@ launch() {
             codex)  echo "  Instale: npm install -g @openai/codex" ;;
             gemini) echo "  Instale: sudo npm install -g @google/gemini-cli" ;;
             agy)    echo "  Instale: curl -fsSL https://antigravity.google/cli/install.sh | bash" ;;
+            kimi)   echo "  Instale: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash" ;;
         esac
         exit 1
     fi
@@ -2462,6 +2466,7 @@ CLIs de IA:
   fugu-ultra             Abre Codex com Sakana Fugu Ultra
   fugu-ultra review      Senior review multi-CLI usando Fugu Ultra
   gemini, g              Abre Gemini CLI
+  kimi,     k              Abre Kimi Code CLI
   agy,     a              Abre Antigravity CLI
   orchestrate, o          Orquestra Codex + AGY + Claude por preset
   trio, 3                 Alias curto para orquestração
@@ -2535,6 +2540,7 @@ Exemplos:
   ai review --via fugu            Senior review multi-CLI usando Fugu
   ai p add sakana                 Salva SAKANA_API_KEY para o Fugu
   ai g                            Gemini
+  ai k                            Kimi Code
   ai a                            Antigravity
   ai o                            Lista perfil e presets do projeto atual
   ai trio "mapear pagamentos"     Alias curto para ai o
@@ -3090,6 +3096,12 @@ elif [[ ${1:-} == "agy" || ${1:-} == "a" || ${1:-} == "antigravity" ]]; then
     enter_repo_if_needed
     agy_add_workspace_flag
     launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS "$@"
+elif [[ ${1:-} == "kimi" || ${1:-} == "k" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    enter_repo_if_needed
+    launch "Kimi Code" kimi "$KIMI_PROMPT_FLAG" KIMI_FLAGS "$@"
 elif [[ ${1:-} == "review" || ${1:-} == "revisar" || ${1:-} == "sr" || ${1:-} == "validar" ]]; then
     shift
     launch_orchestration review "$@"
@@ -3097,7 +3109,7 @@ elif [[ ${1:-} == "orchestrate" || ${1:-} == "orchestration" || ${1:-} == "o" ||
     shift
     launch_orchestration "$@"
 elif [[ ${1:-} == "install-skills" ]]; then
-    echo -e "${GREEN}Instalando skills de Code Review (Codex ↔ AGY ↔ Claude ↔ Gemini)...${RESET}"
+    echo -e "${GREEN}Instalando skills de Code Review (Codex ↔ AGY ↔ Claude ↔ Gemini ↔ Kimi)...${RESET}"
     
     _fail() {
         echo -e "${RED}Erro: $1${RESET}" >&2
@@ -3185,7 +3197,7 @@ Delegates code review to `claude`.
 
 ## Anti-freeze rules
 - If `AI_ORCHESTRATION_ACTIVE=1`, do not run Claude. Return a short note saying nested agent delegation is blocked by the launcher.
-- Do not ask Claude to call Gemini, Codex, AGY, `ai`, or `ai-orchestrate`.
+- Do not ask Claude to call Gemini, Codex, AGY, Kimi, `ai`, or `ai-orchestrate`.
 - Keep the target bounded: prefer the current diff or named files, not the whole home directory.
 - Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
 - If auth, permissions, TTY, or timeout blocks execution, stop and report the blocker.
@@ -3211,7 +3223,7 @@ Delegates code review to `gemini` only when explicitly requested.
 ## Anti-freeze rules
 - If `AI_ORCHESTRATION_ACTIVE=1`, do not run Gemini. Return a short note saying nested agent delegation is blocked by the launcher.
 - Use non-interactive Gemini only: `gemini -p "..." -y --skip-trust`.
-- Do not ask Gemini to call Claude, Codex, AGY, `ai`, or `ai-orchestrate`.
+- Do not ask Gemini to call Claude, Codex, AGY, Kimi, `ai`, or `ai-orchestrate`.
 - Keep scope bounded to a diff, staged diff, or named files.
 - Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
 - If Gemini asks for auth/trust/permissions, hangs, or needs TTY, stop and report the blocker.
@@ -3233,7 +3245,7 @@ Delegates code review to `agy` (Antigravity CLI).
 
 ## Anti-freeze rules
 - If `AI_ORCHESTRATION_ACTIVE=1`, do not run AGY. Return a short note saying nested agent delegation is blocked by the launcher.
-- Do not ask AGY to call Gemini, Claude, Codex, `ai`, or `ai-orchestrate`.
+- Do not ask AGY to call Gemini, Claude, Codex, Kimi, `ai`, or `ai-orchestrate`.
 - Use non-interactive print mode only.
 - Always pass the current repo explicitly with `--add-dir "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"`.
 - Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
@@ -3258,7 +3270,7 @@ Delegates code review to `gemini` only when explicitly requested.
 ## Anti-freeze rules
 - If `AI_ORCHESTRATION_ACTIVE=1`, do not run Gemini. Return a short note saying nested agent delegation is blocked by the launcher.
 - Use non-interactive Gemini only: `gemini -p "..." -y --skip-trust`.
-- Do not ask Gemini to call Claude, Codex, AGY, `ai`, or `ai-orchestrate`.
+- Do not ask Gemini to call Claude, Codex, AGY, Kimi, `ai`, or `ai-orchestrate`.
 - Keep scope bounded to a diff, staged diff, or named files.
 - Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
 - If Gemini asks for auth/trust/permissions, hangs, or needs TTY, stop and report the blocker.
@@ -3280,7 +3292,7 @@ Delegates to `claude` with max effort for deep analysis.
 
 ## Anti-freeze rules
 - If `AI_ORCHESTRATION_ACTIVE=1`, do not run Claude. Return a short note saying nested agent delegation is blocked by the launcher.
-- Do not ask Claude to call Gemini, Codex, AGY, `ai`, or `ai-orchestrate`.
+- Do not ask Claude to call Gemini, Codex, AGY, Kimi, `ai`, or `ai-orchestrate`.
 - Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
 - If auth, permissions, TTY, or timeout blocks execution, stop and report the blocker.
 
@@ -3303,12 +3315,87 @@ Delegates to `codex exec`.
 
 ## Anti-freeze rules
 - If `AI_ORCHESTRATION_ACTIVE=1`, do not run Codex. Return a short note saying nested agent delegation is blocked by the launcher.
-- Do not ask Codex to call Gemini, Claude, AGY, `ai`, or `ai-orchestrate`.
+- Do not ask Codex to call Gemini, Claude, AGY, Kimi, `ai`, or `ai-orchestrate`.
 - Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
 - If auth, permissions, TTY, or timeout blocks execution, stop and report the blocker.
 
 ## Usage
 `ai timeout 900 -- codex exec --dangerously-bypass-approvals-and-sandbox "Act as a Senior Engineer. Review [TARGET]. Focus on logic and architecture. Do not call other AI CLIs. Finish with RISK: low|medium|high."`
+EOF
+
+    # Skill para Kimi chamar Claude com guardrails anti-trava
+    KIMI_SKILL_DIR="$HOME/.kimi/skills/claude-code-review"
+    mkdir -p "$KIMI_SKILL_DIR"
+    cat << 'EOF' > "${KIMI_SKILL_DIR}/SKILL.md"
+---
+name: claude-code-review
+description: Senior-level code review using Claude Code. High accuracy, architectural focus.
+---
+
+# Claude Code Review (Senior)
+
+Delegates code review to `claude`.
+
+## Anti-freeze rules
+- If `AI_ORCHESTRATION_ACTIVE=1`, do not run Claude. Return a short note saying nested agent delegation is blocked by the launcher.
+- Do not ask Claude to call Gemini, Codex, AGY, Kimi, `ai`, or `ai-orchestrate`.
+- Keep the target bounded: prefer the current diff or named files, not the whole home directory.
+- Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
+- If auth, permissions, TTY, or timeout blocks execution, stop and report the blocker.
+
+## Usage
+Execute via `run_shell_command`:
+`ai timeout 900 -- claude --dangerously-skip-permissions -p "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, security, and edge cases. Be concise but deep. Skip formatting. Do not call other AI CLIs. Finish with RISK: low|medium|high."`
+
+**Note:** For very large diffs, suggest reviewing file-by-file to avoid timeouts.
+EOF
+
+    # Skill para Kimi chamar Codex com guardrails anti-trava
+    KIMI_CODEX_SKILL_DIR="$HOME/.kimi/skills/codex-code-review"
+    mkdir -p "$KIMI_CODEX_SKILL_DIR"
+    cat << 'EOF' > "${KIMI_CODEX_SKILL_DIR}/SKILL.md"
+---
+name: codex-code-review
+description: Senior-level code review using Codex CLI.
+---
+
+# Codex Code Review (Senior)
+
+Delegates to `codex exec`.
+
+## Anti-freeze rules
+- If `AI_ORCHESTRATION_ACTIVE=1`, do not run Codex. Return a short note saying nested agent delegation is blocked by the launcher.
+- Do not ask Codex to call Gemini, Claude, AGY, Kimi, `ai`, or `ai-orchestrate`.
+- Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
+- If auth, permissions, TTY, or timeout blocks execution, stop and report the blocker.
+
+## Usage
+`ai timeout 900 -- codex exec --dangerously-bypass-approvals-and-sandbox "Act as a Senior Engineer. Review [TARGET]. Focus on logic and architecture. Do not call other AI CLIs. Finish with RISK: low|medium|high."`
+EOF
+
+    # Skill para Kimi chamar Gemini com guardrails anti-trava
+    KIMI_GEMINI_SKILL_DIR="$HOME/.kimi/skills/gemini-code-review"
+    mkdir -p "$KIMI_GEMINI_SKILL_DIR"
+    cat << 'EOF' > "${KIMI_GEMINI_SKILL_DIR}/SKILL.md"
+---
+name: gemini-code-review
+description: Senior-level code review using Gemini CLI with anti-freeze guardrails.
+---
+
+# Gemini Code Review (Senior, Bounded)
+
+Delegates code review to `gemini` only when explicitly requested.
+
+## Anti-freeze rules
+- If `AI_ORCHESTRATION_ACTIVE=1`, do not run Gemini. Return a short note saying nested agent delegation is blocked by the launcher.
+- Use non-interactive Gemini only: `gemini -p "..." -y --skip-trust`.
+- Do not ask Gemini to call Claude, Codex, AGY, Kimi, `ai`, or `ai-orchestrate`.
+- Keep scope bounded to a diff, staged diff, or named files.
+- Use `ai timeout 900 -- ...` for direct execution outside the launcher orchestration.
+- If Gemini asks for auth/trust/permissions, hangs, or needs TTY, stop and report the blocker.
+
+## Usage
+`ai timeout 900 -- gemini -p "Act as a Staff Engineer. Review [TARGET]. Focus on architecture, hidden bugs, security, and performance. Do not call other AI CLIs. Finish with RISK: low|medium|high." -y --skip-trust`
 EOF
 
     echo -e "${GREEN}✔ Skills sênior instaladas e otimizadas!${RESET}"
@@ -3492,7 +3579,7 @@ fi
 
 if [[ ! -t 0 ]]; then
     echo -e "${RED}Erro: menu interativo requer terminal.${RESET}"
-    echo "Use: ai c | ai x | ai g | ai --help"
+    echo "Use: ai c | ai x | ai g | ai k | ai --help"
     exit 1
 fi
 
@@ -3503,6 +3590,7 @@ sakana_status=$(provider_cli_status_icon sakana codex)
 codex_status=$(status_icon codex)
 gemini_status=$(status_icon gemini)
 agy_status=$(status_icon agy)
+kimi_status=$(status_icon kimi)
 orchestrate_status=$(status_icon "$ORCHESTRATE_CMD")
 
 claude_ver=$(get_version claude)
@@ -3511,6 +3599,7 @@ sakana_ver=$(get_version codex)
 codex_ver=$(get_version codex)
 gemini_ver=$(get_version gemini)
 agy_ver=$(get_version agy)
+kimi_ver=$(get_version kimi)
 
 echo -e "${BOLD}${CYAN}"
 echo "  ┌──────────────────────────────────────────────────┐"
@@ -3523,13 +3612,14 @@ printf "  ${BOLD}2)${RESET} GLM (Z.ai)   %-20s %b\n" "${glm_ver}" "${glm_status}
 printf "  ${BOLD}3)${RESET} Sakana Fugu  %-20s %b\n" "${sakana_ver}" "${sakana_status}"
 printf "  ${BOLD}4)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
 printf "  ${BOLD}5)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
-printf "  ${BOLD}6)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
-printf "  ${BOLD}7)${RESET} Orquestração %-20s %b\n" "multi-cli" "${orchestrate_status}"
+printf "  ${BOLD}6)${RESET} Kimi Code    %-20s %b\n" "${kimi_ver}" "${kimi_status}"
+printf "  ${BOLD}7)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
+printf "  ${BOLD}8)${RESET} Orquestração %-20s %b\n" "multi-cli" "${orchestrate_status}"
 echo ""
-echo -e "  ${BOLD}8)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}9)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}10)${RESET} 🛠️  Instalar Skills Sênior (Codex ↔ AGY ↔ Claude ↔ Gemini)"
-echo -e "  ${BOLD}11)${RESET} 👤 Contas (Claude / Codex)"
+echo -e "  ${BOLD}9)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}10)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}11)${RESET} 🛠️  Instalar Skills Sênior (Codex ↔ AGY ↔ Claude ↔ Gemini ↔ Kimi)"
+echo -e "  ${BOLD}12)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -3542,12 +3632,13 @@ echo -e "  ${DIM}Claude: ${CLAUDE_FLAGS[*]+"${CLAUDE_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Codex:  ${CODEX_FLAGS[*]+"${CODEX_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Gemini: ${GEMINI_FLAGS[*]+"${GEMINI_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Agy:    ${AGY_FLAGS[*]+"${AGY_FLAGS[*]}"}${RESET}"
+echo -e "  ${DIM}Kimi:   ${KIMI_FLAGS[*]+"${KIMI_FLAGS[*]}"}${RESET}"
 echo ""
 
 show_last_used
 echo ""
 
-read -rp "Escolha [1-11/0]: " choice
+read -rp "Escolha [1-12/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -3565,11 +3656,13 @@ case $choice in
     5) enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
     6) enter_repo_if_needed
+       launch "Kimi Code" kimi "$KIMI_PROMPT_FLAG" KIMI_FLAGS ;;
+    7) enter_repo_if_needed
        agy_add_workspace_flag
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-    7) orchestration_menu ;;
-    8) provider_list ;;
-    9) flags_menu
+    8) orchestration_menu ;;
+    9) provider_list ;;
+   10) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"

@@ -27,6 +27,7 @@ ai fugu         # Codex via Sakana Fugu
 ai glm review   # Senior review multi-CLI usando GLM na perna Claude
 ai fugu review  # Senior review multi-CLI usando Fugu na perna Codex
 ai g            # Gemini direto
+ai k            # Kimi Code direto
 ai o            # Orquestração Codex + AGY + Claude
 ai trio "prompt" # Alias curto para orquestração
 ai review       # Alias curto para code review senior
@@ -50,6 +51,7 @@ ai --help       # Ajuda
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra`, `ai fugu review` | Codex profile `fugu` |
 | Gemini | `ai g` | `--yolo` |
+| Kimi Code | `ai k` | `--yolo` |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Multi-CLI Orchestration | `ai o`, `ai trio`, `ai review` | `ai-orchestrate` |
 
@@ -114,7 +116,7 @@ ORCH_SKIP="gemini"               # pula agente problemático temporariamente
 ORCH_SYNTH=glm                   # troca o sintetizador (codex|glm|fugu|claude|none)
 ```
 
-Rode `ai install-skills` depois de atualizar o launcher para reinstalar as skills de review com guardrails anti-loop em Codex, Claude, AGY e Gemini.
+Rode `ai install-skills` depois de atualizar o launcher para reinstalar as skills de review com guardrails anti-loop em Codex, Claude, AGY, Gemini e Kimi.
 
 O AGY recebe o repo atual explicitamente com `--add-dir <repo-root>` no atalho `ai a`, na orquestração e na skill instalada. Isso evita o caso em que o AGY abre sem enxergar os arquivos do projeto.
 
@@ -210,6 +212,7 @@ Instale as CLIs que quiser usar:
 npm install -g @anthropic-ai/claude-code   # Claude
 npm install -g @openai/codex               # Codex
 npm install -g @google/gemini-cli           # Gemini
+curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash  # Kimi Code
 curl -fsSL https://antigravity.google/cli/install.sh | bash  # Antigravity
 ```
 
