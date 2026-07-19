@@ -30,6 +30,7 @@ GEMINI_FLAGS=(--yolo --model pro --skip-trust)
 AGY_FLAGS=(--dangerously-skip-permissions)
 KIMI_FLAGS=(--yolo)
 GROK_FLAGS=(--always-approve --permission-mode bypassPermissions)
+QODER_FLAGS=(--dangerously-skip-permissions)
 AI_ORCHESTRATION_HOME="${AI_ORCHESTRATION_HOME:-${HOME}/.ai-orchestration}"
 ORCHESTRATE_CMD="${ORCHESTRATE_CMD:-${HOME}/.local/bin/ai-orchestrate}"
 
@@ -42,6 +43,7 @@ GEMINI_PROMPT_FLAG="-p"
 AGY_PROMPT_FLAG="-p"
 KIMI_PROMPT_FLAG="-p"
 GROK_PROMPT_FLAG="-p"
+QODER_PROMPT_FLAG="-p"
 
 # Perfis do Claude (flags extras por modo)
 get_claude_profile_flags() {
@@ -2042,6 +2044,7 @@ launch() {
         AGY_FLAGS)    flags_ref=("${AGY_FLAGS[@]+"${AGY_FLAGS[@]}"}") ;;
         KIMI_FLAGS)   flags_ref=("${KIMI_FLAGS[@]+"${KIMI_FLAGS[@]}"}") ;;
         GROK_FLAGS)   flags_ref=("${GROK_FLAGS[@]+"${GROK_FLAGS[@]}"}") ;;
+        QODER_FLAGS)  flags_ref=("${QODER_FLAGS[@]+"${QODER_FLAGS[@]}"}") ;;
         *)
             echo -e "${RED}Erro interno: array de flags desconhecida (${flags_name}).${RESET}"
             exit 1
@@ -2057,6 +2060,7 @@ launch() {
             agy)    echo "  Instale: curl -fsSL https://antigravity.google/cli/install.sh | bash" ;;
             kimi)   echo "  Instale: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash" ;;
             grok)   echo "  Instale: curl -fsSL https://x.ai/cli/install.sh | bash" ;;
+            qodercli) echo "  Instale: npm install -g @qoder-ai/qodercli" ;;
         esac
         exit 1
     fi
@@ -2472,6 +2476,7 @@ CLIs de IA:
   gemini, g              Abre Gemini CLI
   kimi,     k              Abre Kimi Code CLI
   grok,    gr              Abre Grok CLI (xAI)
+  qoder,   q               Abre Qoder CLI (modo yolo)
   agy,     a              Abre Antigravity CLI
   orchestrate, o          Orquestra Codex + AGY + Claude por preset
   trio, 3                 Alias curto para orquestração
@@ -2547,6 +2552,8 @@ Exemplos:
   ai g                            Gemini
   ai k                            Kimi Code
   ai grok                         Grok (xAI)
+  ai q                            Qoder CLI (modo yolo)
+  ai qoder "prompt"               Qoder CLI com prompt direto
   ai a                            Antigravity
   ai o                            Lista perfil e presets do projeto atual
   ai trio "mapear pagamentos"     Alias curto para ai o
@@ -3114,6 +3121,12 @@ elif [[ ${1:-} == "grok" || ${1:-} == "gr" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     launch "Grok" grok "$GROK_PROMPT_FLAG" GROK_FLAGS "$@"
+elif [[ ${1:-} == "qoder" || ${1:-} == "q" || ${1:-} == "qodercli" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    enter_repo_if_needed
+    launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS "$@"
 elif [[ ${1:-} == "review" || ${1:-} == "revisar" || ${1:-} == "sr" || ${1:-} == "validar" ]]; then
     shift
     launch_orchestration review "$@"
@@ -3604,6 +3617,7 @@ gemini_status=$(status_icon gemini)
 agy_status=$(status_icon agy)
 kimi_status=$(status_icon kimi)
 grok_status=$(status_icon grok)
+qoder_status=$(status_icon qodercli)
 orchestrate_status=$(status_icon "$ORCHESTRATE_CMD")
 
 claude_ver=$(get_version claude)
@@ -3614,6 +3628,7 @@ gemini_ver=$(get_version gemini)
 agy_ver=$(get_version agy)
 kimi_ver=$(get_version kimi)
 grok_ver=$(get_version grok)
+qoder_ver=$(get_version qodercli)
 
 echo -e "${BOLD}${CYAN}"
 echo "  ┌──────────────────────────────────────────────────┐"
@@ -3629,12 +3644,13 @@ printf "  ${BOLD}5)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_s
 printf "  ${BOLD}6)${RESET} Kimi Code    %-20s %b\n" "${kimi_ver}" "${kimi_status}"
 printf "  ${BOLD}7)${RESET} Grok (xAI)   %-20s %b\n" "${grok_ver}" "${grok_status}"
 printf "  ${BOLD}8)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
-printf "  ${BOLD}9)${RESET} Orquestração %-20s %b\n" "multi-cli" "${orchestrate_status}"
+printf "  ${BOLD}9)${RESET} Qoder CLI    %-20s %b\n" "${qoder_ver}" "${qoder_status}"
+printf "  ${BOLD}10)${RESET} Orquestração %-20s %b\n" "multi-cli" "${orchestrate_status}"
 echo ""
-echo -e "  ${BOLD}10)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}11)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}12)${RESET} 🛠️  Instalar Skills Sênior (Codex ↔ AGY ↔ Claude ↔ Gemini ↔ Kimi)"
-echo -e "  ${BOLD}13)${RESET} 👤 Contas (Claude / Codex)"
+echo -e "  ${BOLD}11)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}12)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}13)${RESET} 🛠️  Instalar Skills Sênior (Codex ↔ AGY ↔ Claude ↔ Gemini ↔ Kimi)"
+echo -e "  ${BOLD}14)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -3649,12 +3665,13 @@ echo -e "  ${DIM}Gemini: ${GEMINI_FLAGS[*]+"${GEMINI_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Agy:    ${AGY_FLAGS[*]+"${AGY_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Kimi:   ${KIMI_FLAGS[*]+"${KIMI_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Grok:   ${GROK_FLAGS[*]+"${GROK_FLAGS[*]}"}${RESET}"
+echo -e "  ${DIM}Qoder:  ${QODER_FLAGS[*]+"${QODER_FLAGS[*]}"}${RESET}"
 echo ""
 
 show_last_used
 echo ""
 
-read -rp "Escolha [1-13/0]: " choice
+read -rp "Escolha [1-14/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -3678,9 +3695,11 @@ case $choice in
     8) enter_repo_if_needed
        agy_add_workspace_flag
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-    9) orchestration_menu ;;
-   10) provider_list ;;
-   11) flags_menu
+    9) enter_repo_if_needed
+       launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
+   10) orchestration_menu ;;
+   11) provider_list ;;
+   12) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -3700,8 +3719,8 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-    12) exec "$0" install-skills ;;
-    13) conta_menu ;;
+   13) exec "$0" install-skills ;;
+   14) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
