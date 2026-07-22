@@ -24,6 +24,8 @@ ai              # Menu interativo com status de cada CLI
 ai c            # Claude Code direto
 ai x            # Codex direto
 ai fugu         # Codex via Sakana Fugu
+ai fugu-ultra   # Codex via Sakana Fugu Ultra
+ai fugu-cyber   # Codex via Sakana Fugu Cyber
 ai glm review   # Senior review multi-CLI usando GLM na perna Claude
 ai fugu review  # Senior review multi-CLI usando Fugu na perna Codex
 ai g            # Gemini direto
@@ -49,7 +51,7 @@ ai --help       # Ajuda
 | Claude Code | `ai c` | `--dangerously-skip-permissions` |
 | GLM/Z.ai | `ai glm`, `ai glm review` | Claude Code via provider `glm` |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
-| Sakana Fugu | `ai fugu`, `ai fugu-ultra`, `ai fugu review` | Codex profile `fugu` |
+| Sakana Fugu | `ai fugu`, `ai fugu-ultra`, `ai fugu-cyber`, `ai fugu review` | Codex profile `fugu` |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--yolo` |
 | Antigravity | `ai a` | _(nenhuma)_ |
@@ -110,7 +112,7 @@ ORCH_SYNTH_TIMEOUT=600           # timeout da síntese final
 ORCH_RETRIES=1                   # retries por agente em falha transitória
 ORCH_CODEX_EFFORT=medium         # reasoning effort do codex (low|medium|high)
 ORCH_FUGU_EFFORT=high            # effort do fugu (Sakana só aceita high|xhigh|max)
-ORCH_FUGU_MODEL=fugu-ultra       # Fugu Ultra por padrão (mais poderoso)
+ORCH_FUGU_MODEL=fugu-ultra       # Fugu Ultra por padrão; use fugu-cyber para Cyber
 ORCH_CONTEXT_CHARS=12000         # limite de contexto (cadeia/relay)
 ORCH_SKIP="gemini"               # pula agente problemático temporariamente
 ORCH_SYNTH=glm                   # troca o sintetizador (codex|glm|fugu|claude|none)
@@ -127,8 +129,10 @@ existindo para *forçar* uma única perna a usar o provider (modo compat):
 ai glm review                 # força a perna Claude do council via GLM/Z.ai
 ai fugu review                # força a perna Codex do council via Sakana Fugu
 ai fugu-ultra review          # idem com Fugu Ultra
+ai fugu-cyber review          # idem com Fugu Cyber
 ai review --via glm
 ai review --via fugu
+ai review --via fugu-cyber
 ```
 
 > Gemini: o Google descontinuou o CLI free-tier individual (`IneligibleTierError`)
@@ -222,19 +226,25 @@ Depois, autentique cada ferramenta usando o fluxo nativo dela (`claude`, `codex`
 
 O launcher instala o perfil Fugu do Codex e usa a API compatível com Responses da Sakana.
 
+Fugu Cyber usa o identificador de API `fugu-cyber-v1.0` e exige acesso aprovado no pay-as-you-go billing da Sakana.
+
 ```bash
 ai p add sakana                 # salva a SAKANA_API_KEY e instala o perfil
 ai fugu                         # abre Codex com model fugu
 ai fugu-ultra "tarefa pesada"   # abre Codex com model fugu-ultra
+ai fugu-cyber "auditar auth"     # abre Codex com model fugu-cyber-v1.0
 ai x --via sakana               # equivalente via Codex
 ai x --via fugu-ultra           # Codex via Sakana Fugu Ultra
+ai x --via fugu-cyber           # Codex via Sakana Fugu Cyber
 codex-fugu                      # wrapper direto criado em ~/.local/bin
+codex-fugu-cyber                # wrapper direto para Fugu Cyber
 ```
 
 Arquivos criados pelo setup:
 
 - `${CODEX_HOME:-~/.codex}/fugu.json`
 - `${CODEX_HOME:-~/.codex}/fugu.config.toml`
+- `${HOME}/.local/bin/codex-fugu-cyber`
 - bloco `[model_providers.sakana]` em `${CODEX_HOME:-~/.codex}/config.toml`
 
 ## Personalização

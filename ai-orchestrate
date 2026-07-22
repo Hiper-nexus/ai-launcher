@@ -68,7 +68,7 @@ ORCH_RETRIES="${ORCH_RETRIES:-1}"
 ORCH_BACKOFF="${ORCH_BACKOFF:-6}"
 ORCH_CODEX_EFFORT="${ORCH_CODEX_EFFORT:-medium}"
 ORCH_FUGU_EFFORT="${ORCH_FUGU_EFFORT:-high}"   # Sakana só aceita high|xhigh|max
-ORCH_FUGU_MODEL="${ORCH_FUGU_MODEL:-fugu-ultra}"   # ultra = mais poderoso
+ORCH_FUGU_MODEL="${ORCH_FUGU_MODEL:-fugu-ultra}"   # use fugu-cyber-v1.0 para Fugu Cyber
 ORCH_CODEX_PROFILE="${ORCH_CODEX_PROFILE:-}"
 ORCH_CODEX_MODEL="${ORCH_CODEX_MODEL:-}"
 ORCH_GLM_BASE_URL="${ORCH_GLM_BASE_URL:-https://api.z.ai/api/anthropic}"
@@ -318,7 +318,7 @@ is_review_only() { case " $REVIEW_ONLY " in *" $1 "*) return 0;; *) return 1;; e
 skipped()        { case " $ORCH_SKIP "  in *" $1 "*) return 0;; *) return 1;; esac; }
 agent_label()    {
   case "$1" in
-    codex) echo "Codex";; fugu) echo "Fugu";; glm) echo "GLM";;
+    codex) echo "Codex";; fugu) [[ "$ORCH_FUGU_MODEL" == "fugu-cyber-v1.0" ]] && echo "Fugu Cyber" || echo "Fugu";; glm) echo "GLM";;
     agy) echo "Antigravity";; claude) echo "Claude";; gemini) echo "Gemini";; *) echo "$1";;
   esac
 }
@@ -549,7 +549,7 @@ build_prompt() {  # <agente> <task> <can_write> <repo> <prev_file> <kind:review|
   local agent="$1" task="$2" can_write="$3" root="$4" prev="$5" kind="${6:-work}" role mode
   case "$agent" in
     codex)  role="engenheiro sênior / implementer / finalizer" ;;
-    fugu)   role="revisor sênior independente (modelo Sakana Fugu)" ;;
+    fugu)   [[ "$ORCH_FUGU_MODEL" == "fugu-cyber-v1.0" ]] && role="revisor sênior independente (modelo Sakana Fugu Cyber)" || role="revisor sênior independente (modelo Sakana Fugu)" ;;
     glm)    role="revisor sênior independente (modelo GLM)" ;;
     claude) role="crítico de arquitetura, segurança e risco" ;;
     agy)    role="scout / decompositor / revisor de edge-cases" ;;
