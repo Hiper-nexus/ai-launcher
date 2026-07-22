@@ -1,7 +1,0 @@
-{
-  "_comment": "Mapeia nome-do-repo (basename) -> preset. Tem prioridade sobre a detecção heurística no modo adaptive.",
-  "repos": {
-    "vestegosaas": "backend-critical",
-    "saasbarbearia": "backend-critical"
-  }
-}
