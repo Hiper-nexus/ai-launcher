@@ -109,7 +109,8 @@ echo "  ai          Menu interativo"
 echo "  ai c        Claude Code"
 echo "  ai x        Codex"
 echo "  ai fugu     Sakana Fugu"
-echo "  ai fugu-cyber  Sakana Fugu Cyber"
+echo "  ai fugu-ultra  Sakana Fugu Ultra V1.1"
+echo "  ai fugu-cyber  Sakana Fugu Cyber V1.0"
 echo "  ai g        Gemini"
 echo "  ai k        Kimi Code"
 echo "  ai gr       Grok (xAI)"
@@ -121,6 +122,3 @@ echo "  npm install -g @openai/codex               # Codex"
 echo "  npm install -g @google/gemini-cli           # Gemini"
 echo "  curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash  # Kimi Code"
 echo "  curl -fsSL https://x.ai/cli/install.sh | bash                 # Grok (xAI)"
-
-
-

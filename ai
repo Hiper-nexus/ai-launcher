@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.13.0"
+AI_LAUNCHER_VERSION="1.14.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -169,7 +169,7 @@ provider_setup_env() {
     fi
 
     case "$provider" in
-        sakana|fugu|fugu-ultra|fugu-cyber|cyber)
+        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1|fugu-cyber|fugu-cyber-v1.0|cyber|sakana-cyber|sakana-cyber-v1.0)
             echo -e "${RED}Provider ${provider} usa Codex, não Claude Code.${RESET}"
             echo "  Use: ai fugu"
             echo "  Ou:  ai x --via sakana"
@@ -309,13 +309,13 @@ sakana_write_fugu_catalog() {
       "experimental_supported_tools": []
     },
     {
-      "slug": "fugu-cyber-v1.0",
-      "display_name": "Fugu Cyber",
+      "slug": "fugu-ultra-v1.0",
+      "display_name": "Fugu Ultra V1.0",
       "context_window": 1000000,
       "supported_reasoning_levels": [
         {
           "effort": "high",
-          "description": "Specialized cybersecurity reasoning for security analysis, vulnerability research, threat investigation, and defensive cyber workflows"
+          "description": "Deep reasoning for complex problems"
         }
       ],
       "shell_type": "shell_command",
@@ -335,10 +335,122 @@ sakana_write_fugu_catalog() {
       },
       "supports_parallel_tool_calls": true,
       "experimental_supported_tools": []
+    },
+    {
+      "slug": "fugu-ultra-v1.1",
+      "display_name": "Fugu Ultra V1.1",
+      "context_window": 1000000,
+      "supported_reasoning_levels": [
+        {
+          "effort": "high",
+          "description": "Deep reasoning for complex problems"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 3,
+      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and your ability to help until it is restarted, give the exact recovery steps, and let the user run it manually when they are ready. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
+      "supports_reasoning_summaries": true,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": ["text", "image"],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    },
+    {
+      "slug": "fugu-cyber",
+      "display_name": "Fugu Cyber",
+      "context_window": 1000000,
+      "supported_reasoning_levels": [
+        {
+          "effort": "high",
+          "description": "Specialized cybersecurity reasoning for security analysis, vulnerability research, threat investigation, and defensive cyber workflows"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 4,
+      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and your ability to help until it is restarted, give the exact recovery steps, and let the user run it manually when they are ready. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
+      "supports_reasoning_summaries": true,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": ["text", "image"],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    },
+    {
+      "slug": "fugu-cyber-v1.0",
+      "display_name": "Fugu Cyber V1.0",
+      "context_window": 1000000,
+      "supported_reasoning_levels": [
+        {
+          "effort": "high",
+          "description": "Specialized cybersecurity reasoning for security analysis, vulnerability research, threat investigation, and defensive cyber workflows"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 5,
+      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and your ability to help until it is restarted, give the exact recovery steps, and let the user run it manually when they are ready. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
+      "supports_reasoning_summaries": true,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": ["text", "image"],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
     }
   ]
 }
 JSON
+}
+
+# Resolve aliases accepted by the launcher to the documented versioned Sakana
+# model IDs. The dated Ultra V1.0 name remains a compatibility alias.
+sakana_resolve_fugu_model() {
+    case "${1:-fugu}" in
+        sakana|fugu)
+            printf '%s\n' "fugu"
+            ;;
+        fugu-ultra|sakana-ultra)
+            printf '%s\n' "fugu-ultra-v1.1"
+            ;;
+        fugu-ultra-v1.0|fugu-ultra-20260615|sakana-ultra-v1.0)
+            printf '%s\n' "fugu-ultra-v1.0"
+            ;;
+        fugu-ultra-v1.1|sakana-ultra-v1.1)
+            printf '%s\n' "fugu-ultra-v1.1"
+            ;;
+        fugu-cyber|cyber|sakana-cyber)
+            printf '%s\n' "fugu-cyber-v1.0"
+            ;;
+        fugu-cyber-v1.0|sakana-cyber-v1.0)
+            printf '%s\n' "fugu-cyber-v1.0"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 sakana_write_fugu_profile() {
@@ -468,7 +580,25 @@ sakana_install_codex_config() {
 
     mkdir -p "$codex_home" "$(dirname "$wrapper")"
 
-    if [[ "$force" == true || ! -f "$catalog" ]] || ! grep -q '"slug": "fugu-cyber-v1.0"' "$catalog" 2>/dev/null; then
+    local catalog_current=true
+    local required_model
+    if [[ ! -f "$catalog" ]]; then
+        catalog_current=false
+    else
+        for required_model in \
+            fugu \
+            fugu-ultra \
+            fugu-ultra-v1.0 \
+            fugu-ultra-v1.1 \
+            fugu-cyber \
+            fugu-cyber-v1.0; do
+            if ! grep -q "\"slug\": \"${required_model}\"" "$catalog" 2>/dev/null; then
+                catalog_current=false
+                break
+            fi
+        done
+    fi
+    if [[ "$force" == true || "$catalog_current" == false ]]; then
         sakana_write_fugu_catalog "$catalog"
         chmod 600 "$catalog"
         changed=true
@@ -519,7 +649,7 @@ sakana_install_codex_config() {
 codex_provider_setup_env() {
     local provider="$1"
     case "$provider" in
-        sakana|fugu|fugu-ultra|fugu-cyber|cyber)
+        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1|fugu-cyber|fugu-cyber-v1.0|cyber|sakana-cyber|sakana-cyber-v1.0)
             provider="sakana"
             ;;
         ""|codex|openai)
@@ -2272,17 +2402,13 @@ codex_add_model_flag() {
 }
 
 launch_sakana_fugu() {
-    local model="${1:-fugu}"
+    local requested_model="${1:-fugu}"
     shift || true
-    local api_model="$model"
-    local display_model="$model"
-
-    case "$model" in
-        fugu-cyber|cyber|sakana-cyber)
-            api_model="fugu-cyber-v1.0"
-            display_model="fugu-cyber"
-            ;;
-    esac
+    local api_model
+    api_model=$(sakana_resolve_fugu_model "$requested_model") || {
+        echo -e "${RED}Modelo Sakana desconhecido: ${requested_model}${RESET}"
+        return 1
+    }
 
     codex_provider_setup_env "sakana" || exit 1
     codex_add_profile_flag "fugu"
@@ -2291,7 +2417,7 @@ launch_sakana_fugu() {
     fi
 
     enter_repo_if_needed
-    launch "Sakana ${display_model}" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS "$@"
+    launch "Sakana ${api_model}" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS "$@"
 }
 
 # ── Versão ───────────────────────────────────────────────
@@ -2320,8 +2446,11 @@ CLIs de IA:
   glm, zai               Abre Claude Code usando GLM/Z.ai
   codex,  x              Abre Codex CLI
   sakana, fugu           Abre Codex com Sakana Fugu
-  fugu-ultra             Abre Codex com Sakana Fugu Ultra
-  fugu-cyber             Abre Codex com Sakana Fugu Cyber
+  fugu-ultra             Abre Fugu Ultra (alias atual: V1.1)
+  fugu-ultra-v1.0        Abre Fugu Ultra V1.0
+  fugu-ultra-v1.1        Abre Fugu Ultra V1.1
+  fugu-cyber             Abre Fugu Cyber (alias atual: V1.0)
+  fugu-cyber-v1.0        Abre Fugu Cyber V1.0
   gemini, g              Abre Gemini CLI
   kimi,     k              Abre Kimi Code CLI
   grok,    gr              Abre Grok CLI (xAI)
@@ -2384,8 +2513,11 @@ Exemplos:
   ai glm                          Claude via GLM/Z.ai
   ai x                            Codex
   ai fugu                         Codex via Sakana Fugu
-  ai fugu-ultra "tarefa pesada"   Codex via Sakana Fugu Ultra
-  ai fugu-cyber "auditar auth"     Codex via Sakana Fugu Cyber
+  ai fugu-ultra "tarefa pesada"   Fugu Ultra (alias de V1.1)
+  ai fugu-ultra-v1.0 "compat"     Fugu Ultra V1.0
+  ai fugu-ultra-v1.1 "pesada"     Fugu Ultra V1.1
+  ai fugu-cyber "auditar auth"    Fugu Cyber (alias de V1.0)
+  ai fugu-cyber-v1.0 "auditar"    Fugu Cyber V1.0
   ai x --via sakana               Codex via provider Sakana
   ai x --via fugu-cyber            Codex via Sakana Fugu Cyber
   ai p add sakana                 Salva SAKANA_API_KEY para o Fugu
@@ -2891,16 +3023,15 @@ elif [[ ${1:-} == "codex" || ${1:-} == "x" ]]; then
     if [[ -n "$_active_provider" ]]; then
         codex_provider_setup_env "$_active_provider" || exit 1
         case "$_active_provider" in
-            sakana|fugu)
+            sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1|fugu-cyber|fugu-cyber-v1.0|cyber|sakana-cyber|sakana-cyber-v1.0)
+                fugu_model=$(sakana_resolve_fugu_model "$_active_provider") || {
+                    echo -e "${RED}Modelo Sakana desconhecido: ${_active_provider}${RESET}"
+                    exit 1
+                }
                 codex_add_profile_flag "fugu"
-                ;;
-            fugu-ultra)
-                codex_add_profile_flag "fugu"
-                codex_add_model_flag "fugu-ultra"
-                ;;
-            fugu-cyber|cyber)
-                codex_add_profile_flag "fugu"
-                codex_add_model_flag "fugu-cyber-v1.0"
+                if [[ "$fugu_model" != "fugu" ]]; then
+                    codex_add_model_flag "$fugu_model"
+                fi
                 ;;
         esac
     else
@@ -2920,9 +3051,21 @@ elif [[ ${1:-} == "sakana" || ${1:-} == "fugu" ]]; then
 elif [[ ${1:-} == "fugu-ultra" || ${1:-} == "sakana-ultra" ]]; then
     shift
     launch_sakana_fugu "fugu-ultra" "$@"
+elif [[ ${1:-} == "fugu-ultra-v1.0" || ${1:-} == "fugu-ultra-20260615" || ${1:-} == "sakana-ultra-v1.0" ]]; then
+    requested_model="$1"
+    shift
+    launch_sakana_fugu "$requested_model" "$@"
+elif [[ ${1:-} == "fugu-ultra-v1.1" || ${1:-} == "sakana-ultra-v1.1" ]]; then
+    requested_model="$1"
+    shift
+    launch_sakana_fugu "$requested_model" "$@"
 elif [[ ${1:-} == "fugu-cyber" || ${1:-} == "cyber" || ${1:-} == "sakana-cyber" ]]; then
     shift
     launch_sakana_fugu "fugu-cyber" "$@"
+elif [[ ${1:-} == "fugu-cyber-v1.0" || ${1:-} == "sakana-cyber-v1.0" ]]; then
+    requested_model="$1"
+    shift
+    launch_sakana_fugu "$requested_model" "$@"
 elif [[ ${1:-} == "gemini" || ${1:-} == "g" ]]; then
     shift
     parse_global_flags "$@"
