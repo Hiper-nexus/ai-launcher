@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.14.0"
+AI_LAUNCHER_VERSION="1.15.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -31,6 +31,7 @@ AGY_FLAGS=(--dangerously-skip-permissions)
 KIMI_FLAGS=(--yolo)
 GROK_FLAGS=(--always-approve --permission-mode bypassPermissions)
 QODER_FLAGS=(--dangerously-skip-permissions)
+CURSOR_FLAGS=(--force)
 
 # Variáveis de ambiente para cada CLI
 
@@ -42,6 +43,7 @@ AGY_PROMPT_FLAG="-p"
 KIMI_PROMPT_FLAG="-p"
 GROK_PROMPT_FLAG="-p"
 QODER_PROMPT_FLAG="-p"
+CURSOR_PROMPT_FLAG="-p"
 
 # Perfis do Claude (flags extras por modo)
 get_claude_profile_flags() {
@@ -2233,6 +2235,7 @@ launch() {
         KIMI_FLAGS)   flags_ref=("${KIMI_FLAGS[@]+"${KIMI_FLAGS[@]}"}") ;;
         GROK_FLAGS)   flags_ref=("${GROK_FLAGS[@]+"${GROK_FLAGS[@]}"}") ;;
         QODER_FLAGS)  flags_ref=("${QODER_FLAGS[@]+"${QODER_FLAGS[@]}"}") ;;
+        CURSOR_FLAGS) flags_ref=("${CURSOR_FLAGS[@]+"${CURSOR_FLAGS[@]}"}") ;;
         *)
             echo -e "${RED}Erro interno: array de flags desconhecida (${flags_name}).${RESET}"
             exit 1
@@ -2249,6 +2252,13 @@ launch() {
             kimi)   echo "  Instale: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash" ;;
             grok)   echo "  Instale: curl -fsSL https://x.ai/cli/install.sh | bash" ;;
             qodercli) echo "  Instale: npm install -g @qoder-ai/qodercli" ;;
+            cursor-agent)
+                echo "  Instale: curl https://cursor.com/install -fsS | bash"
+                echo -e "  ${YELLOW}Aviso:${RESET} o instalador sobrescreve ~/.local/bin/agent"
+                echo "  (que aqui aponta para o Grok). O launcher usa o symlink"
+                echo "  cursor-agent, então basta restaurar 'agent' depois:"
+                echo "    ln -sf ~/.grok/bin/agent ~/.local/bin/agent"
+                ;;
         esac
         exit 1
     fi
@@ -2455,6 +2465,7 @@ CLIs de IA:
   kimi,     k              Abre Kimi Code CLI
   grok,    gr              Abre Grok CLI (xAI)
   qoder,   q               Abre Qoder CLI (modo yolo)
+  cursor,  cu              Abre Cursor Agent CLI (modo force)
   agy,     a              Abre Antigravity CLI
 
   --via <provider>       Usa provider alternativo (ex: glm no Claude, sakana no Codex)
@@ -2526,6 +2537,8 @@ Exemplos:
   ai grok                         Grok (xAI)
   ai q                            Qoder CLI (modo yolo)
   ai qoder "prompt"               Qoder CLI com prompt direto
+  ai cu                           Cursor Agent CLI (modo force)
+  ai cursor "prompt"              Cursor Agent com prompt direto
   ai a                            Antigravity
   ai p ls                         Lista providers configurados
   ai f                            Toggle de flags antes de lançar
@@ -3097,6 +3110,12 @@ elif [[ ${1:-} == "qoder" || ${1:-} == "q" || ${1:-} == "qodercli" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS "$@"
+elif [[ ${1:-} == "cursor" || ${1:-} == "cu" || ${1:-} == "cursor-agent" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    enter_repo_if_needed
+    launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS "$@"
 elif [[ ${1:-} == "provider" || ${1:-} == "p" ]]; then
     shift
     subcmd="${1:-}"
@@ -3290,6 +3309,7 @@ agy_status=$(status_icon agy)
 kimi_status=$(status_icon kimi)
 grok_status=$(status_icon grok)
 qoder_status=$(status_icon qodercli)
+cursor_status=$(status_icon cursor-agent)
 
 claude_ver=$(get_version claude)
 glm_ver="${claude_ver}" # GLM usa Claude Code
@@ -3300,6 +3320,7 @@ agy_ver=$(get_version agy)
 kimi_ver=$(get_version kimi)
 grok_ver=$(get_version grok)
 qoder_ver=$(get_version qodercli)
+cursor_ver=$(get_version cursor-agent)
 
 echo -e "${BOLD}${CYAN}"
 echo "  ┌──────────────────────────────────────────────────┐"
@@ -3317,10 +3338,11 @@ printf "  ${BOLD}7)${RESET} Kimi Code    %-20s %b\n" "${kimi_ver}" "${kimi_statu
 printf "  ${BOLD}8)${RESET} Grok (xAI)   %-20s %b\n" "${grok_ver}" "${grok_status}"
 printf "  ${BOLD}9)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
 printf "  ${BOLD}10)${RESET} Qoder CLI    %-20s %b\n" "${qoder_ver}" "${qoder_status}"
+printf "  ${BOLD}11)${RESET} Cursor Agent %-20s %b\n" "${cursor_ver}" "${cursor_status}"
 echo ""
-echo -e "  ${BOLD}11)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}12)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}13)${RESET} 👤 Contas (Claude / Codex)"
+echo -e "  ${BOLD}12)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}13)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}14)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -3336,12 +3358,13 @@ echo -e "  ${DIM}Agy:    ${AGY_FLAGS[*]+"${AGY_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Kimi:   ${KIMI_FLAGS[*]+"${KIMI_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Grok:   ${GROK_FLAGS[*]+"${GROK_FLAGS[*]}"}${RESET}"
 echo -e "  ${DIM}Qoder:  ${QODER_FLAGS[*]+"${QODER_FLAGS[*]}"}${RESET}"
+echo -e "  ${DIM}Cursor: ${CURSOR_FLAGS[*]+"${CURSOR_FLAGS[*]}"}${RESET}"
 echo ""
 
 show_last_used
 echo ""
 
-read -rp "Escolha [1-13/0]: " choice
+read -rp "Escolha [1-14/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -3368,8 +3391,10 @@ case $choice in
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
    10) enter_repo_if_needed
        launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
-   11) provider_list ;;
-   12) flags_menu
+   11) enter_repo_if_needed
+       launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
+   12) provider_list ;;
+   13) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -3389,7 +3414,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   13) conta_menu ;;
+   14) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

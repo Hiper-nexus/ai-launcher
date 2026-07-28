@@ -31,6 +31,7 @@ ai fugu-cyber   # Fugu Cyber (alias da versão atual: V1.0)
 ai fugu-cyber-v1.0  # Fugu Cyber V1.0
 ai g            # Gemini direto
 ai k            # Kimi Code direto
+ai cu           # Cursor Agent direto
 ai c "prompt"   # Claude com prompt
 ai conta        # Menu de contas Claude (troca sem logout, macOS)
 ai conta save trabalho   # Salva a conta logada atual como "trabalho"
@@ -50,7 +51,16 @@ ai --help       # Ajuda
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]`, `ai fugu-cyber[-v1.0]` | Codex profile `fugu` |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--yolo` |
+| Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
+| Qoder | `ai q` | `--dangerously-skip-permissions` |
+| Cursor Agent | `ai cu` | `--force` |
 | Antigravity | `ai a` | _(nenhuma)_ |
+
+> **Cursor Agent** — instale com `curl https://cursor.com/install -fsS | bash`. O instalador
+> cria dois symlinks: `~/.local/bin/agent` (primário) e `~/.local/bin/cursor-agent` (legado),
+> **sobrescrevendo** um `agent` pré-existente — o Grok Build usa esse mesmo nome. O launcher
+> invoca `cursor-agent` justamente para não depender do nome disputado; se você usa o Grok
+> por `agent`, restaure com `ln -sf ~/.grok/bin/agent ~/.local/bin/agent` após instalar.
 
 ## Contas Claude (multi-conta sem logout — macOS)
 
