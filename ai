@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.15.0"
+AI_LAUNCHER_VERSION="1.16.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -2374,6 +2374,68 @@ PY
     "$@"
 }
 
+# ── Codex Security ───────────────────────────────────────
+# Scanner de vulnerabilidades da OpenAI (npm @openai/codex-security).
+# Não é um agente interativo como as demais CLIs: tem subcomandos
+# (scan, login, patch, export, scans...), então não passa pelo launch().
+
+# O runtime do plugin exige Python 3.10+, mas o python3 do macOS costuma
+# ser 3.9. Devolve um interpretador compatível quando o do PATH não serve
+# (string vazia = o python3 do PATH já atende ou não há alternativa).
+codex_security_python() {
+    if command -v python3 &>/dev/null &&
+       python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+        return 0
+    fi
+    local candidate
+    for candidate in python3.14 python3.13 python3.12 python3.11 python3.10; do
+        if command -v "$candidate" &>/dev/null; then
+            command -v "$candidate"
+            return 0
+        fi
+    done
+    return 0
+}
+
+launch_codex_security() {
+    if ! check_installed codex-security; then
+        echo -e "${RED}Erro: codex-security não está instalado.${RESET}"
+        echo "  Instale: npm install -g @openai/codex-security"
+        echo "  Requer Node 22+ e Python 3.10+"
+        exit 1
+    fi
+
+    local -a args=("$@")
+    # Sem argumentos: escaneia o repo atual (comportamento do 'ai sec' puro).
+    if [[ ${#args[@]} -eq 0 ]]; then
+        args=(scan .)
+    fi
+
+    # Só os comandos de scan aceitam --python; injeta um interpretador
+    # 3.10+ quando o python3 do PATH é antigo e o usuário não passou o dele.
+    case "${args[0]}" in
+        scan|bulk-scan)
+            local has_python=false arg
+            for arg in "${args[@]}"; do
+                if [[ "$arg" == "--python" || "$arg" == --python=* ]]; then
+                    has_python=true
+                    break
+                fi
+            done
+            if [[ "$has_python" == false ]]; then
+                local py
+                py=$(codex_security_python)
+                [[ -n "$py" ]] && args+=(--python "$py")
+            fi
+            ;;
+    esac
+
+    save_history "Codex Security (${args[0]})"
+    echo -e "${GREEN}Iniciando Codex Security:${RESET} codex-security ${args[*]}"
+    echo ""
+    exec codex-security "${args[@]}"
+}
+
 agy_add_workspace_flag() {
     local root="${1:-}"
     if [[ -z "$root" ]]; then
@@ -2470,6 +2532,17 @@ CLIs de IA:
 
   --via <provider>       Usa provider alternativo (ex: glm no Claude, sakana no Codex)
 
+Segurança (Codex Security — scanner da OpenAI):
+  sec, security          Escaneia o repo atual (= codex-security scan .)
+  sec login              Autentica (ChatGPT ou OPENAI_API_KEY)
+  sec scan . --diff origin/main    Escaneia só o diff contra uma base
+  sec scan . --mode deep           Scan profundo
+  sec scans list         Lista scans salvos
+  sec patch              Aplica correção de findings
+  sec export --format sarif        Exporta findings (CSV/JSON/SARIF)
+  Qualquer argumento é repassado verbatim ao codex-security.
+  Python 3.10+ é injetado via --python quando o python3 do PATH é antigo.
+
 Providers:
   provider, p            Menu de providers
   p ls                   Lista providers e status das keys
@@ -2539,6 +2612,8 @@ Exemplos:
   ai qoder "prompt"               Qoder CLI com prompt direto
   ai cu                           Cursor Agent CLI (modo yolo)
   ai cursor "prompt"              Cursor Agent com prompt direto
+  ai sec                          Codex Security no repo atual
+  ai sec scan . --mode deep       Scan profundo de segurança
   ai a                            Antigravity
   ai p ls                         Lista providers configurados
   ai f                            Toggle de flags antes de lançar
@@ -3116,6 +3191,12 @@ elif [[ ${1:-} == "cursor" || ${1:-} == "cu" || ${1:-} == "cursor-agent" ]]; the
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS "$@"
+elif [[ ${1:-} == "sec" || ${1:-} == "security" || ${1:-} == "codex-security" ]]; then
+    shift
+    enter_repo_if_needed
+    # Argumentos passam verbatim: 'ai sec login', 'ai sec scan . --diff origin/main',
+    # 'ai sec scans list', 'ai sec export --format sarif'...
+    launch_codex_security "$@"
 elif [[ ${1:-} == "provider" || ${1:-} == "p" ]]; then
     shift
     subcmd="${1:-}"
@@ -3310,6 +3391,7 @@ kimi_status=$(status_icon kimi)
 grok_status=$(status_icon grok)
 qoder_status=$(status_icon qodercli)
 cursor_status=$(status_icon cursor-agent)
+secscan_status=$(status_icon codex-security)
 
 claude_ver=$(get_version claude)
 glm_ver="${claude_ver}" # GLM usa Claude Code
@@ -3321,6 +3403,7 @@ kimi_ver=$(get_version kimi)
 grok_ver=$(get_version grok)
 qoder_ver=$(get_version qodercli)
 cursor_ver=$(get_version cursor-agent)
+secscan_ver=$(get_version codex-security)
 
 echo -e "${BOLD}${CYAN}"
 echo "  ┌──────────────────────────────────────────────────┐"
@@ -3340,9 +3423,10 @@ printf "  ${BOLD}9)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}
 printf "  ${BOLD}10)${RESET} Qoder CLI    %-20s %b\n" "${qoder_ver}" "${qoder_status}"
 printf "  ${BOLD}11)${RESET} Cursor Agent %-20s %b\n" "${cursor_ver}" "${cursor_status}"
 echo ""
-echo -e "  ${BOLD}12)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}13)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}14)${RESET} 👤 Contas (Claude / Codex)"
+printf "  ${BOLD}12)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
+echo -e "  ${BOLD}13)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}14)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}15)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -3364,7 +3448,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-14/0]: " choice
+read -rp "Escolha [1-15/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -3393,8 +3477,10 @@ case $choice in
        launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
    11) enter_repo_if_needed
        launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
-   12) provider_list ;;
-   13) flags_menu
+   12) enter_repo_if_needed
+       launch_codex_security ;;
+   13) provider_list ;;
+   14) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -3414,7 +3500,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   14) conta_menu ;;
+   15) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

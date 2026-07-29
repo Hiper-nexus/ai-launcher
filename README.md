@@ -62,6 +62,29 @@ ai --help       # Ajuda
 > invoca `cursor-agent` justamente para não depender do nome disputado; se você usa o Grok
 > por `agent`, restaure com `ln -sf ~/.grok/bin/agent ~/.local/bin/agent` após instalar.
 
+## Codex Security (scanner da OpenAI)
+
+Não é um agente interativo como as CLIs acima — é um scanner de vulnerabilidades com
+subcomandos próprios, então tem um atalho separado que **repassa argumentos verbatim**:
+
+```bash
+ai sec                             # = codex-security scan .  (repo atual)
+ai sec login                       # autentica (ChatGPT ou OPENAI_API_KEY)
+ai sec scan . --diff origin/main   # escaneia só o diff contra uma base
+ai sec scan . --mode deep          # scan profundo
+ai sec scans list                  # lista scans salvos
+ai sec patch                       # aplica correção de findings
+ai sec export --format sarif       # exporta findings (CSV/JSON/SARIF)
+```
+
+Instalação: `npm install -g @openai/codex-security` (requer Node 22+ e Python 3.10+).
+
+O runtime do plugin exige **Python 3.10+**, mas o `python3` do macOS costuma ser 3.9. Nos
+comandos `scan`/`bulk-scan` o launcher detecta isso e injeta `--python` apontando para o
+primeiro interpretador compatível do PATH (`python3.14` → `python3.10`). Se você passar
+`--python` explicitamente, o seu vence — nada é duplicado. Outros subcomandos não recebem
+a flag, que só existe no scan.
+
 ## Contas Claude (multi-conta sem logout — macOS)
 
 Troque entre várias contas Claude (pessoal, trabalho, backup) sem o ciclo logout → browser → login. As credenciais OAuth de cada conta ficam salvas no **Keychain do macOS** (nunca em texto plano); metadados em `~/.local/share/ai-launcher/accounts/` com permissão `0600`.
