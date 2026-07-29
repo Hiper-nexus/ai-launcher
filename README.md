@@ -53,7 +53,7 @@ ai --help       # Ajuda
 | Kimi Code | `ai k` | `--yolo` |
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
 | Qoder | `ai q` | `--dangerously-skip-permissions` |
-| Cursor Agent | `ai cu` | `--force` |
+| Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
 | Antigravity | `ai a` | _(nenhuma)_ |
 
 > **Cursor Agent** — instale com `curl https://cursor.com/install -fsS | bash`. O instalador

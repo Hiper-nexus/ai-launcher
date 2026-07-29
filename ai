@@ -31,7 +31,7 @@ AGY_FLAGS=(--dangerously-skip-permissions)
 KIMI_FLAGS=(--yolo)
 GROK_FLAGS=(--always-approve --permission-mode bypassPermissions)
 QODER_FLAGS=(--dangerously-skip-permissions)
-CURSOR_FLAGS=(--force)
+CURSOR_FLAGS=(--yolo --sandbox disabled --approve-mcps --trust)
 
 # Variáveis de ambiente para cada CLI
 
@@ -2465,7 +2465,7 @@ CLIs de IA:
   kimi,     k              Abre Kimi Code CLI
   grok,    gr              Abre Grok CLI (xAI)
   qoder,   q               Abre Qoder CLI (modo yolo)
-  cursor,  cu              Abre Cursor Agent CLI (modo force)
+  cursor,  cu              Abre Cursor Agent CLI (modo yolo)
   agy,     a              Abre Antigravity CLI
 
   --via <provider>       Usa provider alternativo (ex: glm no Claude, sakana no Codex)
@@ -2537,7 +2537,7 @@ Exemplos:
   ai grok                         Grok (xAI)
   ai q                            Qoder CLI (modo yolo)
   ai qoder "prompt"               Qoder CLI com prompt direto
-  ai cu                           Cursor Agent CLI (modo force)
+  ai cu                           Cursor Agent CLI (modo yolo)
   ai cursor "prompt"              Cursor Agent com prompt direto
   ai a                            Antigravity
   ai p ls                         Lista providers configurados
