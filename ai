@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.16.0"
+AI_LAUNCHER_VERSION="1.17.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -2516,6 +2516,7 @@ CLIs de IA:
   c -n "nome"            Sessão nomeada
   c --bare               Modo mínimo (sem hooks/plugins)
   glm, zai               Abre Claude Code usando GLM/Z.ai
+  deepseek, ds           Abre Claude Code usando DeepSeek
   codex,  x              Abre Codex CLI
   sakana, fugu           Abre Codex com Sakana Fugu
   fugu-ultra             Abre Fugu Ultra (alias atual: V1.1)
@@ -2595,6 +2596,7 @@ Exemplos:
   ai c -c                         Continua sessão
   ai c --via openrouter           Claude via OpenRouter
   ai glm                          Claude via GLM/Z.ai
+  ai ds                           Claude via DeepSeek
   ai x                            Codex
   ai fugu                         Codex via Sakana Fugu
   ai fugu-ultra "tarefa pesada"   Fugu Ultra (alias de V1.1)
@@ -3039,6 +3041,13 @@ elif [[ ${1:-} == "glm" || ${1:-} == "zai" || ${1:-} == "z.ai" ]]; then
     provider_setup_env "glm" || exit 1
     enter_repo_if_needed
     launch "GLM (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+elif [[ ${1:-} == "deepseek" || ${1:-} == "ds" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    provider_setup_env "deepseek" || exit 1
+    enter_repo_if_needed
+    launch "DeepSeek" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "claude" || ${1:-} == "c" ]]; then
     shift
     # Verifica se o primeiro arg é um perfil
@@ -3383,6 +3392,7 @@ fi
 while true; do
 claude_status=$(status_icon claude)
 glm_status=$(provider_cli_status_icon glm claude)
+deepseek_status=$(provider_cli_status_icon deepseek claude)
 sakana_status=$(provider_cli_status_icon sakana codex)
 codex_status=$(status_icon codex)
 gemini_status=$(status_icon gemini)
@@ -3395,6 +3405,7 @@ secscan_status=$(status_icon codex-security)
 
 claude_ver=$(get_version claude)
 glm_ver="${claude_ver}" # GLM usa Claude Code
+deepseek_ver="${claude_ver}" # DeepSeek usa Claude Code
 sakana_ver=$(get_version codex)
 codex_ver=$(get_version codex)
 gemini_ver=$(get_version gemini)
@@ -3413,20 +3424,21 @@ echo -e "${RESET}"
 
 printf "  ${BOLD}1)${RESET} Claude Code  %-20s %b\n" "${claude_ver}" "${claude_status}"
 printf "  ${BOLD}2)${RESET} GLM (Z.ai)   %-20s %b\n" "${glm_ver}" "${glm_status}"
-printf "  ${BOLD}3)${RESET} Sakana Fugu  %-20s %b\n" "${sakana_ver}" "${sakana_status}"
-printf "  ${BOLD}4)${RESET} Fugu Cyber   %-20s %b\n" "${sakana_ver}" "${sakana_status}"
-printf "  ${BOLD}5)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
-printf "  ${BOLD}6)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
-printf "  ${BOLD}7)${RESET} Kimi Code    %-20s %b\n" "${kimi_ver}" "${kimi_status}"
-printf "  ${BOLD}8)${RESET} Grok (xAI)   %-20s %b\n" "${grok_ver}" "${grok_status}"
-printf "  ${BOLD}9)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
-printf "  ${BOLD}10)${RESET} Qoder CLI    %-20s %b\n" "${qoder_ver}" "${qoder_status}"
-printf "  ${BOLD}11)${RESET} Cursor Agent %-20s %b\n" "${cursor_ver}" "${cursor_status}"
+printf "  ${BOLD}3)${RESET} DeepSeek     %-20s %b\n" "${deepseek_ver}" "${deepseek_status}"
+printf "  ${BOLD}4)${RESET} Sakana Fugu  %-20s %b\n" "${sakana_ver}" "${sakana_status}"
+printf "  ${BOLD}5)${RESET} Fugu Cyber   %-20s %b\n" "${sakana_ver}" "${sakana_status}"
+printf "  ${BOLD}6)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
+printf "  ${BOLD}7)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
+printf "  ${BOLD}8)${RESET} Kimi Code    %-20s %b\n" "${kimi_ver}" "${kimi_status}"
+printf "  ${BOLD}9)${RESET} Grok (xAI)   %-20s %b\n" "${grok_ver}" "${grok_status}"
+printf "  ${BOLD}10)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
+printf "  ${BOLD}11)${RESET} Qoder CLI    %-20s %b\n" "${qoder_ver}" "${qoder_status}"
+printf "  ${BOLD}12)${RESET} Cursor Agent %-20s %b\n" "${cursor_ver}" "${cursor_status}"
 echo ""
-printf "  ${BOLD}12)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
-echo -e "  ${BOLD}13)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}14)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}15)${RESET} 👤 Contas (Claude / Codex)"
+printf "  ${BOLD}13)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
+echo -e "  ${BOLD}14)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}15)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}16)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -3448,7 +3460,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-15/0]: " choice
+read -rp "Escolha [1-16/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -3459,28 +3471,31 @@ case $choice in
     2) provider_setup_env "glm" || continue
        enter_repo_if_needed
        launch "GLM (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-    3) launch_sakana_fugu "fugu" ;;
-    4) launch_sakana_fugu "fugu-cyber" ;;
-    5) xconta_autoswitch_if_needed
+    3) provider_setup_env "deepseek" || continue
+       enter_repo_if_needed
+       launch "DeepSeek" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+    4) launch_sakana_fugu "fugu" ;;
+    5) launch_sakana_fugu "fugu-cyber" ;;
+    6) xconta_autoswitch_if_needed
        enter_repo_if_needed
        launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
-    6) enter_repo_if_needed
-       launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
     7) enter_repo_if_needed
-       launch "Kimi Code" kimi "$KIMI_PROMPT_FLAG" KIMI_FLAGS ;;
+       launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
     8) enter_repo_if_needed
-       launch "Grok" grok "$GROK_PROMPT_FLAG" GROK_FLAGS ;;
+       launch "Kimi Code" kimi "$KIMI_PROMPT_FLAG" KIMI_FLAGS ;;
     9) enter_repo_if_needed
+       launch "Grok" grok "$GROK_PROMPT_FLAG" GROK_FLAGS ;;
+   10) enter_repo_if_needed
        agy_add_workspace_flag
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-   10) enter_repo_if_needed
-       launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
    11) enter_repo_if_needed
-       launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
+       launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
    12) enter_repo_if_needed
+       launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
+   13) enter_repo_if_needed
        launch_codex_security ;;
-   13) provider_list ;;
-   14) flags_menu
+   14) provider_list ;;
+   15) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -3500,7 +3515,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   15) conta_menu ;;
+   16) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
