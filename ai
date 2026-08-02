@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.21.0"
+AI_LAUNCHER_VERSION="1.22.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -52,7 +52,7 @@ OLLAMA_LOCAL_MODEL="${AI_OLLAMA_LOCAL_MODEL:-}"
 #   ai hf endpoint https://SEU-ENDPOINT.aws.endpoints.huggingface.cloud
 # O nome do modelo é público (existe no Hub), então pode ficar como default.
 HF_ENDPOINT_URL="${AI_HF_ENDPOINT_URL:-}"
-HF_ENDPOINT_MODEL="${AI_HF_ENDPOINT_MODEL:-coolthor/Huihui-Qwen3.6-35B-A3B-abliterated-FP8-DYNAMIC}"
+HF_ENDPOINT_MODEL="${AI_HF_ENDPOINT_MODEL:-thisnick/Llama-3.3-70B-Instruct-abliterated-FP8-Dynamic}"
 
 # Variáveis de ambiente para cada CLI
 
@@ -2807,14 +2807,16 @@ hf_menu_panel() {
         esac
         return 0
     fi
-    echo -e "  ${BOLD}1)${RESET} Abrir no Codex    ${BOLD}2)${RESET} Chat    ${BOLD}3)${RESET} Status    ${BOLD}4)${RESET} Voltar"
+    echo -e "  ${BOLD}1)${RESET} Chat / RE    ${BOLD}2)${RESET} Status    ${BOLD}3)${RESET} Abrir no Codex    ${BOLD}4)${RESET} Voltar"
+    echo -e "  ${DIM}Codex exige modelo com contexto grande; o modelo atual (70B) só cabe${RESET}"
+    echo -e "  ${DIM}em 1 GPU (32K) — use o Chat pra RE. Ver 'ai hf' no --help.${RESET}"
     local opt
     read -rp "  Escolha [1-4] (default 1): " opt
     opt=$(normalize_choice "$opt")
     case "${opt:-1}" in
-        1) hf_launch_codex ;;
-        2) hf_endpoint_chat ;;
-        3) hf_endpoint_status ;;
+        1) hf_endpoint_chat ;;
+        2) hf_endpoint_status ;;
+        3) hf_launch_codex ;;
         *) return 0 ;;
     esac
 }
@@ -4013,7 +4015,7 @@ printf "  ${BOLD}11)${RESET} Cursor Agent %-20s %b\n" "${cursor_ver}" "${cursor_
 printf "  ${BOLD}12)${RESET} Ollama Cloud %-20s %b\n" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
 _hf_menu_label="${HF_ENDPOINT_MODEL##*/}"
 [[ ${#_hf_menu_label} -gt 20 ]] && _hf_menu_label="${_hf_menu_label:0:19}…"
-printf "  ${BOLD}13)${RESET} Codex + HF   %-20s %b\n" "${_hf_menu_label}" "${hf_status}"
+printf "  ${BOLD}13)${RESET} HF sem censura %-18s %b\n" "${_hf_menu_label}" "${hf_status}"
 echo ""
 printf "  ${BOLD}14)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
 echo -e "  ${BOLD}15)${RESET} 🔌 Providers"

@@ -91,7 +91,13 @@ ai hf status                 # estado do endpoint / réplicas
 ai hf menu                   # painel com o resumo de uso
 ```
 
-**Dentro do Codex:** `ai hf codex` lança o Codex usando o endpoint como `model_provider`. O provider é injetado por overrides efêmeros de linha de comando (`-c`), então a URL **nunca** é gravada no `~/.codex/config.toml`; o token vai por env. Usa `wire_api = "responses"` (o vLLM do endpoint expõe `/v1/responses`). Duas ressalvas: (1) via Codex o modelo fica verboso — o raciocínio vaza, porque o Codex monta o próprio body e não dá pra passar `enable_thinking=false`; (2) um 35B abliterated não rivaliza com GLM/Claude/GPT em tool-calling agêntico — vale para análise/RE sem censura dentro do fluxo, não como motor de código do dia a dia.
+**Modelo atual:** `thisnick/Llama-3.3-70B-Instruct-abliterated-FP8-Dynamic` — 70B sem censura, arquitetura Llama (100% suportada no vLLM), FP8, **não-thinking** (responde direto, sem despejar raciocínio). Bom em análise/engenharia reversa (identifica XOR, hashes, desofusca e reescreve código legível) e não recusa tarefas legítimas de RE que modelos alinhados recusariam.
+
+**Via principal — `ai hf` (chat/RE):** cole o código ofuscado ou o dump do binário e receba a reconstrução legível. Rápido (~4-5s), sem censura, contexto de 32K.
+
+**Limitações descobertas em produção (HF Inference Endpoints + vLLM):**
+- **Multi-GPU não funciona** — deploys com `tensor-parallel` (x2, x4) falham em `make_async_mp_client`. Só **single-GPU (x1, 96 GB)** sobe. Isso limita o modelo ao que cabe em 96 GB e o contexto a ~32K com um 70B.
+- **`ai hf codex` não funciona com o 70B** — o prompt de sistema do Codex (skills + tools + MCP) sozinho passa de 32K, estourando o contexto. O comando existe (`wire_api="responses"`, provider efêmero via `-c`, URL nunca gravada em disco), mas exigiria um modelo menor pra sobrar contexto — ao custo de inteligência. Para RE, **prefira o `ai hf` puro**.
 
 **Segurança:** este repositório é público, então a URL do endpoint **não** fica hardcoded no script — ela é infra privada. Configure-a por máquina com `ai hf endpoint <url>` (fica em `providers.conf`, `chmod 600`) ou via `export AI_HF_ENDPOINT_URL=<url>`. Só o nome do modelo (público no Hub) vem como default. Em **outro Mac**: `ai hf endpoint <url>` + `ai hf key`. Ordem de busca do token: env (`HF_TOKEN`) → `providers.conf` → `~/.cache/huggingface/token` (de um `huggingface-cli login` anterior). Ordem da URL: env (`AI_HF_ENDPOINT_URL`) → `providers.conf`.
 
