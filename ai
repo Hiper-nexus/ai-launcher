@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.20.0"
+AI_LAUNCHER_VERSION="1.21.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -2807,13 +2807,13 @@ hf_menu_panel() {
         esac
         return 0
     fi
-    echo -e "  ${BOLD}1)${RESET} Chat    ${BOLD}2)${RESET} Abrir no Codex    ${BOLD}3)${RESET} Status    ${BOLD}4)${RESET} Voltar"
+    echo -e "  ${BOLD}1)${RESET} Abrir no Codex    ${BOLD}2)${RESET} Chat    ${BOLD}3)${RESET} Status    ${BOLD}4)${RESET} Voltar"
     local opt
     read -rp "  Escolha [1-4] (default 1): " opt
     opt=$(normalize_choice "$opt")
     case "${opt:-1}" in
-        1) hf_endpoint_chat ;;
-        2) hf_launch_codex ;;
+        1) hf_launch_codex ;;
+        2) hf_endpoint_chat ;;
         3) hf_endpoint_status ;;
         *) return 0 ;;
     esac
@@ -4013,7 +4013,7 @@ printf "  ${BOLD}11)${RESET} Cursor Agent %-20s %b\n" "${cursor_ver}" "${cursor_
 printf "  ${BOLD}12)${RESET} Ollama Cloud %-20s %b\n" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
 _hf_menu_label="${HF_ENDPOINT_MODEL##*/}"
 [[ ${#_hf_menu_label} -gt 20 ]] && _hf_menu_label="${_hf_menu_label:0:19}…"
-printf "  ${BOLD}13)${RESET} HF (dedic.)  %-20s %b\n" "${_hf_menu_label}" "${hf_status}"
+printf "  ${BOLD}13)${RESET} Codex + HF   %-20s %b\n" "${_hf_menu_label}" "${hf_status}"
 echo ""
 printf "  ${BOLD}14)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
 echo -e "  ${BOLD}15)${RESET} 🔌 Providers"
