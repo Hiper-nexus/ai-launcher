@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.19.0"
+AI_LAUNCHER_VERSION="1.20.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -192,7 +192,7 @@ provider_setup_env() {
     fi
 
     case "$provider" in
-        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1|fugu-cyber|fugu-cyber-v1.0|cyber|sakana-cyber|sakana-cyber-v1.0)
+        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1)
             echo -e "${RED}Provider ${provider} usa Codex, não Claude Code.${RESET}"
             echo "  Use: ai fugu"
             echo "  Ou:  ai x --via sakana"
@@ -386,62 +386,6 @@ sakana_write_fugu_catalog() {
       },
       "supports_parallel_tool_calls": true,
       "experimental_supported_tools": []
-    },
-    {
-      "slug": "fugu-cyber",
-      "display_name": "Fugu Cyber",
-      "context_window": 1000000,
-      "supported_reasoning_levels": [
-        {
-          "effort": "high",
-          "description": "Specialized cybersecurity reasoning for security analysis, vulnerability research, threat investigation, and defensive cyber workflows"
-        }
-      ],
-      "shell_type": "shell_command",
-      "visibility": "list",
-      "supported_in_api": true,
-      "priority": 4,
-      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and your ability to help until it is restarted, give the exact recovery steps, and let the user run it manually when they are ready. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
-      "supports_reasoning_summaries": true,
-      "default_reasoning_summary": "none",
-      "support_verbosity": false,
-      "default_verbosity": null,
-      "apply_patch_tool_type": "freeform",
-      "input_modalities": ["text", "image"],
-      "truncation_policy": {
-        "mode": "tokens",
-        "limit": 10000
-      },
-      "supports_parallel_tool_calls": true,
-      "experimental_supported_tools": []
-    },
-    {
-      "slug": "fugu-cyber-v1.0",
-      "display_name": "Fugu Cyber V1.0",
-      "context_window": 1000000,
-      "supported_reasoning_levels": [
-        {
-          "effort": "high",
-          "description": "Specialized cybersecurity reasoning for security analysis, vulnerability research, threat investigation, and defensive cyber workflows"
-        }
-      ],
-      "shell_type": "shell_command",
-      "visibility": "list",
-      "supported_in_api": true,
-      "priority": 5,
-      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and your ability to help until it is restarted, give the exact recovery steps, and let the user run it manually when they are ready. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
-      "supports_reasoning_summaries": true,
-      "default_reasoning_summary": "none",
-      "support_verbosity": false,
-      "default_verbosity": null,
-      "apply_patch_tool_type": "freeform",
-      "input_modalities": ["text", "image"],
-      "truncation_policy": {
-        "mode": "tokens",
-        "limit": 10000
-      },
-      "supports_parallel_tool_calls": true,
-      "experimental_supported_tools": []
     }
   ]
 }
@@ -463,12 +407,6 @@ sakana_resolve_fugu_model() {
             ;;
         fugu-ultra-v1.1|sakana-ultra-v1.1)
             printf '%s\n' "fugu-ultra-v1.1"
-            ;;
-        fugu-cyber|cyber|sakana-cyber)
-            printf '%s\n' "fugu-cyber-v1.0"
-            ;;
-        fugu-cyber-v1.0|sakana-cyber-v1.0)
-            printf '%s\n' "fugu-cyber-v1.0"
             ;;
         *)
             return 1
@@ -559,30 +497,6 @@ SH
     chmod 755 "$wrapper"
 }
 
-sakana_write_codex_cyber_wrapper() {
-    local wrapper="$1"
-    cat > "$wrapper" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-
-providers_file="${HOME}/.local/share/ai-launcher/providers.conf"
-if [[ -z "${SAKANA_API_KEY:-}" && -f "$providers_file" ]]; then
-    key=$(grep -F "sakana=" "$providers_file" 2>/dev/null | grep "^sakana=" | tail -1 | cut -d= -f2- || true)
-    if [[ -n "$key" ]]; then
-        export SAKANA_API_KEY="$key"
-    fi
-fi
-
-if [[ -z "${SAKANA_API_KEY:-}" ]]; then
-    echo "Erro: SAKANA_API_KEY nao configurada."
-    echo "  Configure: ai p add sakana"
-    exit 1
-fi
-
-exec codex -p fugu -m fugu-cyber-v1.0 "$@"
-SH
-    chmod 755 "$wrapper"
-}
 
 sakana_install_codex_config() {
     local mode="${1:-}"
@@ -598,7 +512,6 @@ sakana_install_codex_config() {
     local profile="${codex_home}/fugu.config.toml"
     local config="${codex_home}/config.toml"
     local wrapper="${HOME}/.local/bin/codex-fugu"
-    local cyber_wrapper="${HOME}/.local/bin/codex-fugu-cyber"
     local changed=false
 
     mkdir -p "$codex_home" "$(dirname "$wrapper")"
@@ -612,9 +525,7 @@ sakana_install_codex_config() {
             fugu \
             fugu-ultra \
             fugu-ultra-v1.0 \
-            fugu-ultra-v1.1 \
-            fugu-cyber \
-            fugu-cyber-v1.0; do
+            fugu-ultra-v1.1; do
             if ! grep -q "\"slug\": \"${required_model}\"" "$catalog" 2>/dev/null; then
                 catalog_current=false
                 break
@@ -654,25 +565,19 @@ sakana_install_codex_config() {
         changed=true
     fi
 
-    if [[ "$force" == true || ! -x "$cyber_wrapper" ]]; then
-        sakana_write_codex_cyber_wrapper "$cyber_wrapper"
-        changed=true
-    fi
-
     if [[ "$quiet" != true || "$changed" == true ]]; then
         echo -e "${GREEN}✔ Sakana Fugu configurado no Codex${RESET}"
         echo -e "  ${DIM}${catalog}${RESET}"
         echo -e "  ${DIM}${profile}${RESET}"
         echo -e "  ${DIM}${config}${RESET}"
         echo -e "  ${DIM}${wrapper}${RESET}"
-        echo -e "  ${DIM}${cyber_wrapper}${RESET}"
     fi
 }
 
 codex_provider_setup_env() {
     local provider="$1"
     case "$provider" in
-        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1|fugu-cyber|fugu-cyber-v1.0|cyber|sakana-cyber|sakana-cyber-v1.0)
+        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1)
             provider="sakana"
             ;;
         ""|codex|openai)
@@ -3159,8 +3064,6 @@ CLIs de IA:
   fugu-ultra             Abre Fugu Ultra (alias atual: V1.1)
   fugu-ultra-v1.0        Abre Fugu Ultra V1.0
   fugu-ultra-v1.1        Abre Fugu Ultra V1.1
-  fugu-cyber             Abre Fugu Cyber (alias atual: V1.0)
-  fugu-cyber-v1.0        Abre Fugu Cyber V1.0
   gemini, g              Abre Gemini CLI
   kimi,     k              Abre Kimi Code CLI
   grok,    gr              Abre Grok CLI (xAI)
@@ -3265,10 +3168,7 @@ Exemplos:
   ai fugu-ultra "tarefa pesada"   Fugu Ultra (alias de V1.1)
   ai fugu-ultra-v1.0 "compat"     Fugu Ultra V1.0
   ai fugu-ultra-v1.1 "pesada"     Fugu Ultra V1.1
-  ai fugu-cyber "auditar auth"    Fugu Cyber (alias de V1.0)
-  ai fugu-cyber-v1.0 "auditar"    Fugu Cyber V1.0
   ai x --via sakana               Codex via provider Sakana
-  ai x --via fugu-cyber            Codex via Sakana Fugu Cyber
   ai p add sakana                 Salva SAKANA_API_KEY para o Fugu
   ai g                            Gemini
   ai k                            Kimi Code
@@ -3794,7 +3694,7 @@ elif [[ ${1:-} == "codex" || ${1:-} == "x" ]]; then
     if [[ -n "$_active_provider" ]]; then
         codex_provider_setup_env "$_active_provider" || exit 1
         case "$_active_provider" in
-            sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1|fugu-cyber|fugu-cyber-v1.0|cyber|sakana-cyber|sakana-cyber-v1.0)
+            sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1)
                 fugu_model=$(sakana_resolve_fugu_model "$_active_provider") || {
                     echo -e "${RED}Modelo Sakana desconhecido: ${_active_provider}${RESET}"
                     exit 1
@@ -3827,13 +3727,6 @@ elif [[ ${1:-} == "fugu-ultra-v1.0" || ${1:-} == "fugu-ultra-20260615" || ${1:-}
     shift
     launch_sakana_fugu "$requested_model" "$@"
 elif [[ ${1:-} == "fugu-ultra-v1.1" || ${1:-} == "sakana-ultra-v1.1" ]]; then
-    requested_model="$1"
-    shift
-    launch_sakana_fugu "$requested_model" "$@"
-elif [[ ${1:-} == "fugu-cyber" || ${1:-} == "cyber" || ${1:-} == "sakana-cyber" ]]; then
-    shift
-    launch_sakana_fugu "fugu-cyber" "$@"
-elif [[ ${1:-} == "fugu-cyber-v1.0" || ${1:-} == "sakana-cyber-v1.0" ]]; then
     requested_model="$1"
     shift
     launch_sakana_fugu "$requested_model" "$@"
@@ -4110,23 +4003,22 @@ printf "  ${BOLD}1)${RESET} Claude Code  %-20s %b\n" "${claude_ver}" "${claude_s
 printf "  ${BOLD}2)${RESET} GLM (Z.ai)   %-20s %b\n" "${glm_ver}" "${glm_status}"
 printf "  ${BOLD}3)${RESET} DeepSeek     %-20s %b\n" "${deepseek_ver}" "${deepseek_status}"
 printf "  ${BOLD}4)${RESET} Sakana Fugu  %-20s %b\n" "${sakana_ver}" "${sakana_status}"
-printf "  ${BOLD}5)${RESET} Fugu Cyber   %-20s %b\n" "${sakana_ver}" "${sakana_status}"
-printf "  ${BOLD}6)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
-printf "  ${BOLD}7)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
-printf "  ${BOLD}8)${RESET} Kimi Code    %-20s %b\n" "${kimi_ver}" "${kimi_status}"
-printf "  ${BOLD}9)${RESET} Grok (xAI)   %-20s %b\n" "${grok_ver}" "${grok_status}"
-printf "  ${BOLD}10)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
-printf "  ${BOLD}11)${RESET} Qoder CLI    %-20s %b\n" "${qoder_ver}" "${qoder_status}"
-printf "  ${BOLD}12)${RESET} Cursor Agent %-20s %b\n" "${cursor_ver}" "${cursor_status}"
-printf "  ${BOLD}13)${RESET} Ollama Cloud %-20s %b\n" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+printf "  ${BOLD}5)${RESET} Codex        %-20s %b\n" "${codex_ver}" "${codex_status}"
+printf "  ${BOLD}6)${RESET} Gemini       %-20s %b\n" "${gemini_ver}" "${gemini_status}"
+printf "  ${BOLD}7)${RESET} Kimi Code    %-20s %b\n" "${kimi_ver}" "${kimi_status}"
+printf "  ${BOLD}8)${RESET} Grok (xAI)   %-20s %b\n" "${grok_ver}" "${grok_status}"
+printf "  ${BOLD}9)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
+printf "  ${BOLD}10)${RESET} Qoder CLI    %-20s %b\n" "${qoder_ver}" "${qoder_status}"
+printf "  ${BOLD}11)${RESET} Cursor Agent %-20s %b\n" "${cursor_ver}" "${cursor_status}"
+printf "  ${BOLD}12)${RESET} Ollama Cloud %-20s %b\n" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
 _hf_menu_label="${HF_ENDPOINT_MODEL##*/}"
 [[ ${#_hf_menu_label} -gt 20 ]] && _hf_menu_label="${_hf_menu_label:0:19}…"
-printf "  ${BOLD}14)${RESET} HF (dedic.)  %-20s %b\n" "${_hf_menu_label}" "${hf_status}"
+printf "  ${BOLD}13)${RESET} HF (dedic.)  %-20s %b\n" "${_hf_menu_label}" "${hf_status}"
 echo ""
-printf "  ${BOLD}15)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
-echo -e "  ${BOLD}16)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}17)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}18)${RESET} 👤 Contas (Claude / Codex)"
+printf "  ${BOLD}14)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
+echo -e "  ${BOLD}15)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}16)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}17)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -4148,7 +4040,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-18/0]: " choice
+read -rp "Escolha [1-17/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -4163,29 +4055,28 @@ case $choice in
        enter_repo_if_needed
        launch "DeepSeek" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     4) launch_sakana_fugu "fugu" ;;
-    5) launch_sakana_fugu "fugu-cyber" ;;
-    6) xconta_autoswitch_if_needed
+    5) xconta_autoswitch_if_needed
        enter_repo_if_needed
        launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
-    7) enter_repo_if_needed
+    6) enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
-    8) enter_repo_if_needed
+    7) enter_repo_if_needed
        launch "Kimi Code" kimi "$KIMI_PROMPT_FLAG" KIMI_FLAGS ;;
-    9) enter_repo_if_needed
+    8) enter_repo_if_needed
        launch "Grok" grok "$GROK_PROMPT_FLAG" GROK_FLAGS ;;
-   10) enter_repo_if_needed
+    9) enter_repo_if_needed
        agy_add_workspace_flag
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-   11) enter_repo_if_needed
+   10) enter_repo_if_needed
        launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
-   12) enter_repo_if_needed
+   11) enter_repo_if_needed
        launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
-   13) ollama_dispatch || true ;;
-   14) hf_menu_panel || true ;;
-   15) enter_repo_if_needed
+   12) ollama_dispatch || true ;;
+   13) hf_menu_panel || true ;;
+   14) enter_repo_if_needed
        launch_codex_security ;;
-   16) provider_list ;;
-   17) flags_menu
+   15) provider_list ;;
+   16) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -4205,7 +4096,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   18) conta_menu ;;
+   17) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

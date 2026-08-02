@@ -27,8 +27,6 @@ ai fugu         # Codex via Sakana Fugu
 ai fugu-ultra   # Fugu Ultra (alias da versão atual: V1.1)
 ai fugu-ultra-v1.0  # Fugu Ultra V1.0
 ai fugu-ultra-v1.1  # Fugu Ultra V1.1
-ai fugu-cyber   # Fugu Cyber (alias da versão atual: V1.0)
-ai fugu-cyber-v1.0  # Fugu Cyber V1.0
 ai g            # Gemini direto
 ai k            # Kimi Code direto
 ai cu           # Cursor Agent direto
@@ -49,7 +47,7 @@ ai --help       # Ajuda
 | Claude Code | `ai c` | `--dangerously-skip-permissions` |
 | GLM/Z.ai | `ai glm` | Claude Code via provider `glm` |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
-| Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]`, `ai fugu-cyber[-v1.0]` | Codex profile `fugu` |
+| Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]` | Codex profile `fugu` |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--yolo` |
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
@@ -213,10 +211,6 @@ Modelos suportados:
 | `fugu-ultra` | Alias estável da versão atual do Fugu Ultra (`fugu-ultra-v1.1`). |
 | `fugu-ultra-v1.0` | Fugu Ultra V1.0, também conhecido como `fugu-ultra-20260615`. |
 | `fugu-ultra-v1.1` | Fugu Ultra V1.1. |
-| `fugu-cyber` | Alias estável do Fugu Cyber (`fugu-cyber-v1.0`). |
-| `fugu-cyber-v1.0` | Fugu Cyber V1.0. |
-
-Fugu Cyber exige acesso aprovado no pay-as-you-go billing da Sakana.
 
 ```bash
 ai p add sakana                 # salva a SAKANA_API_KEY e instala o perfil
@@ -225,14 +219,10 @@ ai fugu-ultra "tarefa pesada"   # alias -> fugu-ultra-v1.1
 ai fugu-ultra-v1.0 "compat"     # abre Fugu Ultra V1.0
 ai fugu-ultra-v1.1 "pesada"     # abre Fugu Ultra V1.1
 ai fugu-ultra-20260615 "compat" # alias histórico -> fugu-ultra-v1.0
-ai fugu-cyber "auditar auth"    # alias -> fugu-cyber-v1.0
-ai fugu-cyber-v1.0 "auditar"    # abre Fugu Cyber V1.0
 ai x --via sakana               # equivalente via Codex
 ai x --via fugu-ultra           # alias -> Fugu Ultra V1.1
 ai x --via fugu-ultra-v1.0      # Codex via Fugu Ultra V1.0
-ai x --via fugu-cyber           # alias -> Fugu Cyber V1.0
 codex-fugu                      # wrapper direto criado em ~/.local/bin
-codex-fugu-cyber                # wrapper direto para Fugu Cyber
 ```
 
 Arquivos criados pelo setup:
@@ -240,7 +230,6 @@ Arquivos criados pelo setup:
 - `${CODEX_HOME:-~/.codex}/fugu.json`
 - `${CODEX_HOME:-~/.codex}/fugu.config.toml`
 - `${HOME}/.local/bin/codex-fugu`
-- `${HOME}/.local/bin/codex-fugu-cyber`
 - bloco `[model_providers.sakana]` em `${CODEX_HOME:-~/.codex}/config.toml`
 
 ## Personalização
