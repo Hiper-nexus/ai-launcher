@@ -56,6 +56,7 @@ ai --help       # Ajuda
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
+| Featherless | `ai fl` | catálogo uncensored via API (21 mil+ modelos, plano pago) |
 
 ## Ollama
 
@@ -104,6 +105,22 @@ ai hf menu                   # painel com o resumo de uso
 O endpoint usa **scale-to-zero**: dorme quando ocioso e acorda na primeira chamada (cold start ~1-2 min, tratado automaticamente pelo cliente).
 
 **Respostas diretas:** o modelo é *thinking* e por padrão o cliente manda `enable_thinking: false` — resposta objetiva, sem despejar o raciocínio. Para religar o raciocínio (útil em problemas difíceis): `AI_HF_THINKING=1 ai hf`. Quando ligado, o raciocínio é exibido mas **não** entra no histórico do REPL (cada turno reenvia só a resposta final).
+
+## Featherless (catálogo uncensored via API)
+
+`ai fl` fala com o [Featherless](https://featherless.ai) — 21 mil+ modelos abliterated/uncensored do HuggingFace via API OpenAI-compatible, plano pago mensal, **não loga** nada. Contexto 32K.
+
+```bash
+ai fl key                    # salva a API key (1x por máquina)
+ai fl "desofusca esse código: <cola>"   # RE one-shot
+ai fl                        # chat contínuo
+ai fl -m zetasepic/Qwen2.5-72B-Instruct-abliterated   # troca de modelo
+ai fl ls coder               # lista modelos coder do plano
+```
+
+Modelo default: `huihui-ai/Qwen2.5-Coder-32B-Instruct-abliterated` (o melhor testado pra engenharia reversa — reconhece algoritmos de hash pelo nome, desofusca e reescreve legível, não recusa). Ajuste com `AI_FL_MODEL`. O cliente passa `User-Agent` de browser (o Featherless fica atrás de Cloudflare) e faz retry automático quando o modelo está lotado (`capacity_exhausted`, pois é compartilhado).
+
+**HF vs Featherless:** o HF (`ai hf`) é dedicado e pay-per-hour (mais barato para uso esporádico, contexto até 128K na H200); o Featherless é flat mensal, compartilhado, com muito mais variedade de modelos. Ambos 32K por padrão. Para RE pontual, qualquer um serve; escolha por custo de uso.
 
 > **Cursor Agent** — instale com `curl https://cursor.com/install -fsS | bash`. O instalador
 > cria dois symlinks: `~/.local/bin/agent` (primário) e `~/.local/bin/cursor-agent` (legado),
