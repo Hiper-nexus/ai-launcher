@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.18.0"
+AI_LAUNCHER_VERSION="1.19.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -40,6 +40,19 @@ CURSOR_FLAGS=(--yolo --sandbox disabled --approve-mcps --trust)
 OLLAMA_CLOUD_HOST="${AI_OLLAMA_HOST:-https://ollama.com}"
 OLLAMA_CLOUD_MODEL="${AI_OLLAMA_CLOUD_MODEL:-minimax-m3}"
 OLLAMA_LOCAL_MODEL="${AI_OLLAMA_LOCAL_MODEL:-}"
+
+# ── HF Endpoint (modelo dedicado, uncensored) ────────────
+# Inference Endpoint próprio na Hugging Face, servido por vLLM (API OpenAI).
+# Scale-to-zero: dorme ocioso e acorda na 1ª chamada (cold start ~1-2 min).
+#
+# A URL do endpoint NÃO fica hardcoded aqui de propósito: este repositório é
+# público e a URL é infra privada. Ela é resolvida em runtime por
+# hf_endpoint_url() a partir de: env AI_HF_ENDPOINT_URL → providers.conf
+# (slot 'hf-endpoint-url', chmod 600) → vazio. Configure-a por máquina com:
+#   ai hf endpoint https://SEU-ENDPOINT.aws.endpoints.huggingface.cloud
+# O nome do modelo é público (existe no Hub), então pode ficar como default.
+HF_ENDPOINT_URL="${AI_HF_ENDPOINT_URL:-}"
+HF_ENDPOINT_MODEL="${AI_HF_ENDPOINT_MODEL:-coolthor/Huihui-Qwen3.6-35B-A3B-abliterated-FP8-DYNAMIC}"
 
 # Variáveis de ambiente para cada CLI
 
@@ -2301,9 +2314,15 @@ launch() {
 # ║  OLLAMA — cloud (API key) e local (binário)          ║
 # ╚══════════════════════════════════════════════════════╝
 
-# Key: env var tem prioridade, senão lê o providers.conf (chmod 600)
+# Key: env var tem prioridade, senão lê o providers.conf (chmod 600).
+# Slot dedicado 'ollama-cloud' para não colidir com o provider 'ollama'
+# (que o Claude Code usa contra um ollama LOCAL). Lê o slot legado 'ollama'
+# como fallback para não quebrar quem salvou antes desta separação.
 ollama_api_key() {
     local k="${OLLAMA_API_KEY:-}"
+    if [[ -z "$k" ]]; then
+        k=$(provider_load_key ollama-cloud 2>/dev/null || true)
+    fi
     if [[ -z "$k" ]]; then
         k=$(provider_load_key ollama 2>/dev/null || true)
     fi
@@ -2322,9 +2341,10 @@ ollama_require_key() {
     printf '%s' "$k"
 }
 
-ollama_require_python() {
+# python3 é usado pelos clientes cloud (Ollama Cloud e HF Endpoint)
+require_python() {
     if ! command -v python3 &>/dev/null; then
-        echo -e "${RED}Erro: python3 é necessário para o modo cloud do Ollama.${RESET}" >&2
+        echo -e "${RED}Erro: python3 é necessário para este comando.${RESET}" >&2
         return 1
     fi
 }
@@ -2340,14 +2360,14 @@ ollama_save_key() {
         echo -e "${RED}Erro: key vazia.${RESET}" >&2
         return 1
     fi
-    provider_save_key ollama "$key" || return 1
+    provider_save_key ollama-cloud "$key" || return 1
     echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
 }
 
 # Lista os modelos que a Ollama realmente serve no cloud
 ollama_cloud_list() {
     local key; key=$(ollama_require_key) || return 1
-    ollama_require_python || return 1
+    require_python || return 1
     echo -e "${BOLD}Modelos disponíveis no Ollama Cloud:${RESET}"
     OLLAMA_KEY="$key" OLLAMA_HOSTV="$OLLAMA_CLOUD_HOST" python3 - <<'PY'
 import json, os, sys, urllib.request, urllib.error
@@ -2376,7 +2396,7 @@ PY
 ollama_cloud_chat() {
     local model="$1"; shift
     local key; key=$(ollama_require_key) || return 1
-    ollama_require_python || return 1
+    require_python || return 1
 
     save_history "Ollama Cloud [${model}]"
 
@@ -2571,6 +2591,294 @@ ollama_dispatch() {
     esac
 
     ollama_cloud_chat "$model" "$@"
+}
+
+# ╔══════════════════════════════════════════════════════╗
+# ║  HF ENDPOINT — modelo dedicado uncensored (vLLM)     ║
+# ╚══════════════════════════════════════════════════════╝
+
+# URL do endpoint: env → providers.conf (slot dedicado) → vazio.
+# Mantida fora do script porque o repo é público.
+hf_endpoint_url() {
+    local u="${HF_ENDPOINT_URL:-}"
+    if [[ -z "$u" ]]; then
+        u=$(provider_load_key hf-endpoint-url 2>/dev/null || true)
+    fi
+    printf '%s' "$u"
+}
+
+hf_save_endpoint_url() {
+    local url="${1:-}"
+    if [[ -z "$url" && -t 0 ]]; then
+        read -rp "$(echo -e "  ${BOLD}URL do HF Endpoint:${RESET} ")" url
+    fi
+    # Remove espaços/CR de colagem e barra final
+    url="${url//$'\r'/}"; url="${url//[[:space:]]/}"; url="${url%/}"
+    [[ -z "$url" ]] && { echo -e "${RED}Erro: URL vazia.${RESET}" >&2; return 1; }
+    if [[ ! "$url" =~ ^https:// ]]; then
+        echo -e "${RED}Erro: a URL precisa começar com https://${RESET}" >&2
+        return 1
+    fi
+    provider_save_key hf-endpoint-url "$url" || return 1
+    echo -e "${GREEN}✔ Endpoint salvo em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+}
+
+# Token: env vars primeiro, depois o cofre do launcher, por fim o do HF CLI
+hf_token() {
+    local t="${HF_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-${HUGGINGFACE_TOKEN:-}}}"
+    if [[ -z "$t" ]]; then
+        t=$(provider_load_key hf 2>/dev/null || true)
+    fi
+    if [[ -z "$t" && -r "$HOME/.cache/huggingface/token" ]]; then
+        t=$(tr -d '\r\n' < "$HOME/.cache/huggingface/token" 2>/dev/null || true)
+    fi
+    printf '%s' "$t"
+}
+
+hf_require_token() {
+    local t; t=$(hf_token)
+    if [[ -z "$t" ]]; then
+        echo -e "${RED}Erro: nenhum token da Hugging Face encontrado.${RESET}" >&2
+        echo "  Crie um em: https://huggingface.co/settings/tokens" >&2
+        echo "  Depois:     ai hf key" >&2
+        return 1
+    fi
+    printf '%s' "$t"
+}
+
+hf_save_key() {
+    local key="${1:-}"
+    if [[ -z "$key" && -t 0 ]]; then
+        read -rsp "$(echo -e "  ${BOLD}Token da Hugging Face:${RESET} ")" key
+        echo ""
+    fi
+    [[ -z "$key" ]] && { echo -e "${RED}Erro: token vazio.${RESET}" >&2; return 1; }
+    provider_save_key hf "$key" || return 1
+    echo -e "${GREEN}✔ Token salvo em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+}
+
+hf_status_icon() {
+    if [[ -z "$(hf_token)" ]]; then
+        echo -e "${YELLOW}✗ sem token${RESET}"
+    elif [[ -z "$(hf_endpoint_url)" ]]; then
+        echo -e "${YELLOW}✗ sem endpoint${RESET}"
+    else
+        echo -e "${GREEN}✔${RESET}"
+    fi
+}
+
+# Chat contra o Inference Endpoint (API OpenAI via vLLM).
+# Sem prompt = REPL; com prompt = one-shot. Lida com cold start do scale-to-zero.
+hf_endpoint_chat() {
+    local tok; tok=$(hf_require_token) || return 1
+    require_python || return 1
+    local url; url=$(hf_endpoint_url)
+    if [[ -z "$url" ]]; then
+        echo -e "${RED}Erro: nenhum HF Endpoint configurado.${RESET}" >&2
+        echo "  Configure: ai hf endpoint <url>" >&2
+        echo "  Ou:        export AI_HF_ENDPOINT_URL=<url>" >&2
+        return 1
+    fi
+
+    save_history "HF Endpoint [${HF_ENDPOINT_MODEL##*/}]"
+
+    if [[ $# -gt 0 ]]; then
+        echo -e "${GREEN}HF Endpoint:${RESET} ${HF_ENDPOINT_MODEL##*/} ${DIM}(one-shot)${RESET}"
+    else
+        echo -e "${GREEN}HF Endpoint:${RESET} ${HF_ENDPOINT_MODEL##*/} ${DIM}(/sair encerra, /limpar zera o contexto)${RESET}"
+    fi
+    echo -e "${DIM}scale-to-zero: a 1ª chamada pode levar ~1-2 min pra acordar a GPU${RESET}"
+    echo ""
+
+    local pyfile
+    pyfile=$(mktemp -t ai-hf.XXXXXX) || return 1
+    trap "rm -f '$pyfile'" RETURN
+    cat > "$pyfile" <<'PY'
+import json, os, re, sys, urllib.request, urllib.error, time
+
+URL = os.environ["HF_URL"].rstrip("/") + "/v1/chat/completions"
+TOK = os.environ["HF_TOK"]
+MODEL = os.environ["HF_MODEL"]
+DIM, RESET, RED = "\033[2m", "\033[0m", "\033[31m"
+
+# Modelos "thinking" servidos por vLLM fundem o raciocínio no content, muitas
+# vezes fechando com </think> (a tag de abertura vem implícita no template).
+# Guardamos no histórico só a resposta final: reenviar o raciocínio a cada
+# turno estoura o contexto e piora o modelo.
+def strip_thinking(text):
+    return re.sub(r"(?s)^\s*(?:<think>)?.*?</think>\s*", "", text, count=1)
+
+def stream(messages):
+    body = json.dumps({"model": MODEL, "messages": messages, "stream": True,
+                       "max_tokens": 4096}).encode()
+    req = urllib.request.Request(
+        URL, data=body,
+        headers={"Authorization": "Bearer " + TOK, "Content-Type": "application/json"},
+    )
+    # Cold start: a GPU pode estar dormindo (503/502). Tenta reconectar ~2 min.
+    deadline = None
+    while True:
+        try:
+            r = urllib.request.urlopen(req, timeout=600)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code in (502, 503) :
+                if deadline is None:
+                    deadline = 120
+                    sys.stdout.write(DIM + "acordando a GPU" + RESET)
+                    sys.stdout.flush()
+                if deadline <= 0:
+                    print(f"\n{RED}erro: endpoint não acordou a tempo{RESET}", file=sys.stderr)
+                    return None
+                sys.stdout.write("."); sys.stdout.flush()
+                time.sleep(6); deadline -= 6; continue
+            print(f"{RED}erro HTTP {e.code}: {e.read().decode('utf-8','replace')[:300]}{RESET}", file=sys.stderr)
+            return None
+        except Exception as e:
+            print(f"{RED}erro: {e}{RESET}", file=sys.stderr)
+            return None
+    if deadline is not None:
+        sys.stdout.write("\n")
+    parts = []
+    try:
+        for raw in r:
+            raw = raw.strip()
+            if not raw or not raw.startswith(b"data:"):
+                continue
+            payload = raw[5:].strip()
+            if payload == b"[DONE]":
+                break
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
+            c = delta.get("content")
+            if c:
+                sys.stdout.write(c); sys.stdout.flush(); parts.append(c)
+    except KeyboardInterrupt:
+        print(); return "".join(parts)
+    print()
+    return "".join(parts)
+
+if len(sys.argv) > 1:
+    out = stream([{"role": "user", "content": " ".join(sys.argv[1:])}])
+    sys.exit(0 if out is not None else 1)
+
+history = []
+while True:
+    try:
+        line = input("\033[1m› \033[0m").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nSaindo."); break
+    if not line:
+        continue
+    if line in ("/sair", "/exit", "/quit", "/q"):
+        print("Saindo."); break
+    if line in ("/limpar", "/clear", "/reset"):
+        history = []; print(f"{DIM}contexto zerado{RESET}"); continue
+    history.append({"role": "user", "content": line})
+    out = stream(history)
+    if out is None:
+        history.pop(); continue
+    history.append({"role": "assistant", "content": strip_thinking(out)})
+    print()
+PY
+
+    HF_URL="$url" HF_TOK="$tok" HF_MODEL="$HF_ENDPOINT_MODEL" \
+        python3 "$pyfile" "$@"
+}
+
+# Estado do endpoint via API de gerenciamento da HF
+hf_endpoint_status() {
+    local tok; tok=$(hf_require_token) || return 1
+    require_python || return 1
+    echo -e "${BOLD}HF Endpoint${RESET}"
+    echo -e "  modelo: ${HF_ENDPOINT_MODEL}"
+    echo -e "  url:    $(hf_endpoint_url)"
+    local user
+    user=$(HF_TOK="$tok" python3 - <<'PY' 2>/dev/null
+import json,os,urllib.request
+req=urllib.request.Request("https://huggingface.co/api/whoami-v2",
+    headers={"Authorization":"Bearer "+os.environ["HF_TOK"]})
+print(json.load(urllib.request.urlopen(req,timeout=30)).get("name",""))
+PY
+)
+    [[ -z "$user" ]] && return 0
+    HF_TOK="$tok" HF_USER="$user" python3 - <<'PY' 2>/dev/null
+import json,os,urllib.request,urllib.error
+tok=os.environ["HF_TOK"]; user=os.environ["HF_USER"]
+try:
+    req=urllib.request.Request(
+        f"https://api.endpoints.huggingface.cloud/v2/endpoint/{user}",
+        headers={"Authorization":"Bearer "+tok})
+    d=json.load(urllib.request.urlopen(req,timeout=30))
+except Exception:
+    raise SystemExit
+for e in d.get("items",[]):
+    s=e.get("status",{})
+    c=e.get("compute",{})
+    print(f"  status: {s.get('state')}  ({c.get('instanceType')} {c.get('instanceSize')})")
+    print(f"  réplicas: {s.get('readyReplica',0)}/{s.get('targetReplica',0)}")
+PY
+}
+
+# Painel de uso do modelo dedicado (mostrado no menu interativo)
+hf_menu_panel() {
+    local short="${HF_ENDPOINT_MODEL##*/}"
+    local url; url=$(hf_endpoint_url)
+    echo -e "${BOLD}${CYAN}"
+    echo "  ┌──────────────────────────────────────────────────┐"
+    echo "  │   🔒 Modelo dedicado (uncensored) — HF Endpoint  │"
+    echo "  └──────────────────────────────────────────────────┘"
+    echo -e "${RESET}"
+    echo -e "  ${BOLD}Modelo:${RESET}  ${short}"
+    echo -e "  ${BOLD}Servidor:${RESET} ${DIM}${url:-<não configurado>}${RESET}"
+    echo -e "  ${BOLD}Status:${RESET}  $(hf_status_icon)"
+    echo ""
+    echo -e "  ${BOLD}Como usar:${RESET}"
+    echo -e "    ${GREEN}ai hf${RESET}                    chat interativo (REPL)"
+    echo -e "    ${GREEN}ai hf${RESET} \"sua pergunta\"     resposta única (one-shot)"
+    echo -e "    ${GREEN}ai hf status${RESET}             estado do endpoint / réplicas"
+    echo -e "    ${GREEN}ai hf key${RESET}                salva o token (1x por Mac)"
+    echo -e "    ${GREEN}ai hf endpoint${RESET} <url>     salva a URL do endpoint (1x por Mac)"
+    echo ""
+    echo -e "  ${DIM}No REPL: /limpar zera o contexto · /sair encerra${RESET}"
+    echo -e "  ${DIM}scale-to-zero: dorme ocioso; a 1ª chamada acorda a GPU (~1-2 min)${RESET}"
+    echo -e "  ${DIM}Em outro Mac: rode 'ai hf endpoint <url>' e 'ai hf key'${RESET}"
+    echo ""
+    if [[ -z "$url" ]]; then
+        echo -e "  ${YELLOW}Endpoint ainda não configurado nesta máquina.${RESET}"
+        echo -e "  ${BOLD}1)${RESET} Configurar endpoint agora    ${BOLD}2)${RESET} Voltar"
+        local opt0
+        read -rp "  Escolha [1-2] (default 1): " opt0
+        opt0=$(normalize_choice "$opt0")
+        case "${opt0:-1}" in
+            1) hf_save_endpoint_url ;;
+            *) return 0 ;;
+        esac
+        return 0
+    fi
+    echo -e "  ${BOLD}1)${RESET} Abrir o chat agora    ${BOLD}2)${RESET} Ver status    ${BOLD}3)${RESET} Voltar"
+    local opt
+    read -rp "  Escolha [1-3] (default 1): " opt
+    opt=$(normalize_choice "$opt")
+    case "${opt:-1}" in
+        1) hf_endpoint_chat ;;
+        2) hf_endpoint_status ;;
+        *) return 0 ;;
+    esac
+}
+
+hf_dispatch() {
+    local sub="${1:-}"
+    case "$sub" in
+        key|token)          shift || true; hf_save_key "${1:-}"; return $? ;;
+        endpoint|url)       shift || true; hf_save_endpoint_url "${1:-}"; return $? ;;
+        status|st)          hf_endpoint_status; return $? ;;
+        help|-h|--help|menu) hf_menu_panel; return $? ;;
+        *)                  hf_endpoint_chat "$@"; return $? ;;
+    esac
 }
 
 run_with_timeout() {
@@ -2841,6 +3149,17 @@ Ollama (cloud por padrão — roda em ollama.com, não na sua máquina):
   Só modelos oficiais da library têm cloud; modelos de comunidade
   (namespace de usuário) são local-only.
 
+HF Endpoint (modelo dedicado uncensored, servido por vLLM na Hugging Face):
+  hf                     Chat interativo no seu endpoint dedicado
+  hf "prompt"            One-shot com prompt direto
+  hf key [token]         Salva o token HF (https://huggingface.co/settings/tokens)
+  hf endpoint <url>      Salva a URL do endpoint (fora do script; repo é público)
+  hf status              Estado do endpoint (running / scaled-to-zero / réplicas)
+  hf menu                Painel com resumo de uso
+  Modelo default: AI_HF_ENDPOINT_MODEL. URL: AI_HF_ENDPOINT_URL ou 'hf endpoint'.
+  Em outro Mac: rode 'ai hf endpoint <url>' e 'ai hf key' (token também é lido
+  de ~/.cache/huggingface/token, se houver). Scale-to-zero: 1ª chamada ~1-2 min.
+
 Providers:
   provider, p            Menu de providers
   p ls                   Lista providers e status das keys
@@ -2918,6 +3237,11 @@ Exemplos:
   ai ol -m glm-5.2                Ollama Cloud com outro modelo
   ai ol ls                        Lista modelos do Ollama Cloud
   ai ol local qwen3.5:9b          Ollama rodando na sua máquina
+  ai hf                           Chat no seu HF Endpoint dedicado
+  ai hf "auditar esse binário"    HF Endpoint one-shot
+  ai hf endpoint <url>            Salva a URL do endpoint (1x por máquina)
+  ai hf key                       Salva o token HF (1x por máquina)
+  ai hf status                    Estado do endpoint
   ai a                            Antigravity
   ai p ls                         Lista providers configurados
   ai f                            Toggle de flags antes de lançar
@@ -3512,6 +3836,10 @@ elif [[ ${1:-} == "ollama" || ${1:-} == "ol" ]]; then
     shift
     ollama_dispatch "$@"
     exit $?
+elif [[ ${1:-} == "hf" || ${1:-} == "endpoint" ]]; then
+    shift
+    hf_dispatch "$@"
+    exit $?
 elif [[ ${1:-} == "provider" || ${1:-} == "p" ]]; then
     shift
     subcmd="${1:-}"
@@ -3709,6 +4037,7 @@ qoder_status=$(status_icon qodercli)
 cursor_status=$(status_icon cursor-agent)
 secscan_status=$(status_icon codex-security)
 ollama_status=$(ollama_status_icon)
+hf_status=$(hf_status_icon)
 
 claude_ver=$(get_version claude)
 glm_ver="${claude_ver}" # GLM usa Claude Code
@@ -3742,11 +4071,14 @@ printf "  ${BOLD}10)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status
 printf "  ${BOLD}11)${RESET} Qoder CLI    %-20s %b\n" "${qoder_ver}" "${qoder_status}"
 printf "  ${BOLD}12)${RESET} Cursor Agent %-20s %b\n" "${cursor_ver}" "${cursor_status}"
 printf "  ${BOLD}13)${RESET} Ollama Cloud %-20s %b\n" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+_hf_menu_label="${HF_ENDPOINT_MODEL##*/}"
+[[ ${#_hf_menu_label} -gt 20 ]] && _hf_menu_label="${_hf_menu_label:0:19}…"
+printf "  ${BOLD}14)${RESET} HF (dedic.)  %-20s %b\n" "${_hf_menu_label}" "${hf_status}"
 echo ""
-printf "  ${BOLD}14)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
-echo -e "  ${BOLD}15)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}16)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}17)${RESET} 👤 Contas (Claude / Codex)"
+printf "  ${BOLD}15)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
+echo -e "  ${BOLD}16)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}17)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}18)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -3768,7 +4100,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-17/0]: " choice
+read -rp "Escolha [1-18/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -3801,10 +4133,11 @@ case $choice in
    12) enter_repo_if_needed
        launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
    13) ollama_dispatch || true ;;
-   14) enter_repo_if_needed
+   14) hf_menu_panel || true ;;
+   15) enter_repo_if_needed
        launch_codex_security ;;
-   15) provider_list ;;
-   16) flags_menu
+   16) provider_list ;;
+   17) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -3824,7 +4157,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   17) conta_menu ;;
+   18) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

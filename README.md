@@ -57,6 +57,7 @@ ai --help       # Ajuda
 | Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
+| HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
 
 ## Ollama
 
@@ -77,6 +78,23 @@ No REPL: `/limpar` zera o contexto, `/sair` encerra.
 Defaults por env var: `AI_OLLAMA_CLOUD_MODEL` (cloud) e `AI_OLLAMA_LOCAL_MODEL` (local). A key fica em `providers.conf` com `chmod 600`; `OLLAMA_API_KEY` no ambiente tem prioridade.
 
 **Cloud x local — o que roda onde:** o Ollama Cloud serve apenas os modelos oficiais da library marcados com a tag `cloud` (18 no momento: `minimax-m3`, `glm-5.2`, `kimi-k3`, `qwen3.5:397b`, `gpt-oss:120b`, `deepseek-v4-pro`…). Modelos de comunidade — os que ficam num namespace de usuário, como `AI-TAVS/Qwen3.6-27B-Uncensored` — são **apenas artefatos de download**: a Ollama não roda inferência deles, e pedi-los na API do cloud devolve `404 model not found`. Para esses, use `ai ol local` (ou hospede o GGUF você mesmo num serviço de GPU).
+
+## HF Endpoint (modelo dedicado uncensored)
+
+`ai hf` fala com um **Inference Endpoint dedicado** seu na Hugging Face, servido por vLLM (API compatível com OpenAI). Diferente do Ollama Cloud (catálogo fixo, tudo alinhado), aqui **você escolhe qualquer peso do Hub** — inclusive modelos abliterated/uncensored — e o endpoint é só seu, sem fila compartilhada.
+
+```bash
+ai hf endpoint <url>         # salva a URL do endpoint (1x por máquina)
+ai hf key                    # salva o token HF (1x por máquina)
+ai hf                        # chat interativo (REPL)
+ai hf "auditar esse binário" # one-shot
+ai hf status                 # estado do endpoint / réplicas
+ai hf menu                   # painel com o resumo de uso
+```
+
+**Segurança:** este repositório é público, então a URL do endpoint **não** fica hardcoded no script — ela é infra privada. Configure-a por máquina com `ai hf endpoint <url>` (fica em `providers.conf`, `chmod 600`) ou via `export AI_HF_ENDPOINT_URL=<url>`. Só o nome do modelo (público no Hub) vem como default. Em **outro Mac**: `ai hf endpoint <url>` + `ai hf key`. Ordem de busca do token: env (`HF_TOKEN`) → `providers.conf` → `~/.cache/huggingface/token` (de um `huggingface-cli login` anterior). Ordem da URL: env (`AI_HF_ENDPOINT_URL`) → `providers.conf`.
+
+O endpoint usa **scale-to-zero**: dorme quando ocioso e acorda na primeira chamada (cold start ~1-2 min, tratado automaticamente pelo cliente). Modelos *thinking* transmitem o raciocínio junto da resposta; ele é exibido, mas **não** entra no histórico do REPL — cada turno reenvia só a resposta final.
 
 > **Cursor Agent** — instale com `curl https://cursor.com/install -fsS | bash`. O instalador
 > cria dois symlinks: `~/.local/bin/agent` (primário) e `~/.local/bin/cursor-agent` (legado),
