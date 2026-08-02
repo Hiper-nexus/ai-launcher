@@ -88,9 +88,12 @@ ai hf endpoint <url>         # salva a URL do endpoint (1x por máquina)
 ai hf key                    # salva o token HF (1x por máquina)
 ai hf                        # chat interativo (REPL)
 ai hf "auditar esse binário" # one-shot
+ai hf codex                  # abre o Codex usando este modelo
 ai hf status                 # estado do endpoint / réplicas
 ai hf menu                   # painel com o resumo de uso
 ```
+
+**Dentro do Codex:** `ai hf codex` lança o Codex usando o endpoint como `model_provider`. O provider é injetado por overrides efêmeros de linha de comando (`-c`), então a URL **nunca** é gravada no `~/.codex/config.toml`; o token vai por env. Usa `wire_api = "responses"` (o vLLM do endpoint expõe `/v1/responses`). Duas ressalvas: (1) via Codex o modelo fica verboso — o raciocínio vaza, porque o Codex monta o próprio body e não dá pra passar `enable_thinking=false`; (2) um 35B abliterated não rivaliza com GLM/Claude/GPT em tool-calling agêntico — vale para análise/RE sem censura dentro do fluxo, não como motor de código do dia a dia.
 
 **Segurança:** este repositório é público, então a URL do endpoint **não** fica hardcoded no script — ela é infra privada. Configure-a por máquina com `ai hf endpoint <url>` (fica em `providers.conf`, `chmod 600`) ou via `export AI_HF_ENDPOINT_URL=<url>`. Só o nome do modelo (público no Hub) vem como default. Em **outro Mac**: `ai hf endpoint <url>` + `ai hf key`. Ordem de busca do token: env (`HF_TOKEN`) → `providers.conf` → `~/.cache/huggingface/token` (de um `huggingface-cli login` anterior). Ordem da URL: env (`AI_HF_ENDPOINT_URL`) → `providers.conf`.
 

@@ -2829,6 +2829,42 @@ for e in d.get("items",[]):
 PY
 }
 
+# Lança o Codex usando o endpoint HF como model_provider.
+# O provider é injetado via overrides -c (efêmeros): a URL NUNCA é gravada
+# no ~/.codex/config.toml. O token vai por env (HF_TOKEN), lido pelo Codex.
+hf_launch_codex() {
+    if ! check_installed codex; then
+        echo -e "${RED}Erro: codex não está instalado.${RESET}"
+        echo "  Instale: npm install -g @openai/codex"
+        return 1
+    fi
+    local tok; tok=$(hf_require_token) || return 1
+    local url; url=$(hf_endpoint_url)
+    if [[ -z "$url" ]]; then
+        echo -e "${RED}Erro: nenhum HF Endpoint configurado.${RESET}" >&2
+        echo "  Configure: ai hf endpoint <url>" >&2
+        return 1
+    fi
+
+    save_history "Codex + HF [${HF_ENDPOINT_MODEL##*/}]"
+    echo -e "${GREEN}Codex${RESET} usando ${BOLD}${HF_ENDPOINT_MODEL##*/}${RESET} ${DIM}(endpoint dedicado)${RESET}"
+    echo -e "${DIM}scale-to-zero: a 1ª chamada pode acordar a GPU (~1-2 min)${RESET}"
+    echo ""
+
+    # wire_api="responses": o Codex atual só fala a Responses API da OpenAI;
+    # o vLLM do endpoint expõe /v1/responses, então conversa direto.
+    export HF_TOKEN="$tok"
+    enter_repo_if_needed
+    exec codex "${CODEX_FLAGS[@]}" \
+        -c model_providers.hf.name='"HF Endpoint"' \
+        -c model_providers.hf.base_url="\"${url}/v1\"" \
+        -c model_providers.hf.env_key='"HF_TOKEN"' \
+        -c model_providers.hf.wire_api='"responses"' \
+        -c model_provider='"hf"' \
+        -c model="\"${HF_ENDPOINT_MODEL}\"" \
+        "$@"
+}
+
 # Painel de uso do modelo dedicado (mostrado no menu interativo)
 hf_menu_panel() {
     local short="${HF_ENDPOINT_MODEL##*/}"
@@ -2845,6 +2881,7 @@ hf_menu_panel() {
     echo -e "  ${BOLD}Como usar:${RESET}"
     echo -e "    ${GREEN}ai hf${RESET}                    chat interativo (REPL)"
     echo -e "    ${GREEN}ai hf${RESET} \"sua pergunta\"     resposta única (one-shot)"
+    echo -e "    ${GREEN}ai hf codex${RESET}              abre o Codex usando este modelo"
     echo -e "    ${GREEN}ai hf status${RESET}             estado do endpoint / réplicas"
     echo -e "    ${GREEN}ai hf key${RESET}                salva o token (1x por Mac)"
     echo -e "    ${GREEN}ai hf endpoint${RESET} <url>     salva a URL do endpoint (1x por Mac)"
@@ -2865,13 +2902,14 @@ hf_menu_panel() {
         esac
         return 0
     fi
-    echo -e "  ${BOLD}1)${RESET} Abrir o chat agora    ${BOLD}2)${RESET} Ver status    ${BOLD}3)${RESET} Voltar"
+    echo -e "  ${BOLD}1)${RESET} Chat    ${BOLD}2)${RESET} Abrir no Codex    ${BOLD}3)${RESET} Status    ${BOLD}4)${RESET} Voltar"
     local opt
-    read -rp "  Escolha [1-3] (default 1): " opt
+    read -rp "  Escolha [1-4] (default 1): " opt
     opt=$(normalize_choice "$opt")
     case "${opt:-1}" in
         1) hf_endpoint_chat ;;
-        2) hf_endpoint_status ;;
+        2) hf_launch_codex ;;
+        3) hf_endpoint_status ;;
         *) return 0 ;;
     esac
 }
@@ -2881,6 +2919,7 @@ hf_dispatch() {
     case "$sub" in
         key|token)          shift || true; hf_save_key "${1:-}"; return $? ;;
         endpoint|url)       shift || true; hf_save_endpoint_url "${1:-}"; return $? ;;
+        codex|x)            shift || true; hf_launch_codex "$@"; return $? ;;
         status|st)          hf_endpoint_status; return $? ;;
         help|-h|--help|menu) hf_menu_panel; return $? ;;
         *)                  hf_endpoint_chat "$@"; return $? ;;
@@ -3158,6 +3197,7 @@ Ollama (cloud por padrão — roda em ollama.com, não na sua máquina):
 HF Endpoint (modelo dedicado uncensored, servido por vLLM na Hugging Face):
   hf                     Chat interativo no seu endpoint dedicado
   hf "prompt"            One-shot com prompt direto
+  hf codex               Abre o Codex usando este modelo (provider efêmero)
   hf key [token]         Salva o token HF (https://huggingface.co/settings/tokens)
   hf endpoint <url>      Salva a URL do endpoint (fora do script; repo é público)
   hf status              Estado do endpoint (running / scaled-to-zero / réplicas)
@@ -3246,6 +3286,7 @@ Exemplos:
   ai ol local qwen3.5:9b          Ollama rodando na sua máquina
   ai hf                           Chat no seu HF Endpoint dedicado
   ai hf "auditar esse binário"    HF Endpoint one-shot
+  ai hf codex                     Codex usando o modelo dedicado
   ai hf endpoint <url>            Salva a URL do endpoint (1x por máquina)
   ai hf key                       Salva o token HF (1x por máquina)
   ai hf status                    Estado do endpoint
