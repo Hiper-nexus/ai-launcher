@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.17.0"
+AI_LAUNCHER_VERSION="1.18.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -32,6 +32,14 @@ KIMI_FLAGS=(--yolo)
 GROK_FLAGS=(--always-approve --permission-mode bypassPermissions)
 QODER_FLAGS=(--dangerously-skip-permissions)
 CURSOR_FLAGS=(--yolo --sandbox disabled --approve-mcps --trust)
+
+# ── Ollama ───────────────────────────────────────────────
+# Modo cloud (default): fala direto com ollama.com via API key.
+# Não usa GPU local, não precisa de daemon nem do binário ollama.
+# Modo local: usa o binário ollama e roda o modelo na sua máquina.
+OLLAMA_CLOUD_HOST="${AI_OLLAMA_HOST:-https://ollama.com}"
+OLLAMA_CLOUD_MODEL="${AI_OLLAMA_CLOUD_MODEL:-minimax-m3}"
+OLLAMA_LOCAL_MODEL="${AI_OLLAMA_LOCAL_MODEL:-}"
 
 # Variáveis de ambiente para cada CLI
 
@@ -2289,6 +2297,282 @@ launch() {
     fi
 }
 
+# ╔══════════════════════════════════════════════════════╗
+# ║  OLLAMA — cloud (API key) e local (binário)          ║
+# ╚══════════════════════════════════════════════════════╝
+
+# Key: env var tem prioridade, senão lê o providers.conf (chmod 600)
+ollama_api_key() {
+    local k="${OLLAMA_API_KEY:-}"
+    if [[ -z "$k" ]]; then
+        k=$(provider_load_key ollama 2>/dev/null || true)
+    fi
+    printf '%s' "$k"
+}
+
+ollama_require_key() {
+    local k
+    k=$(ollama_api_key)
+    if [[ -z "$k" ]]; then
+        echo -e "${RED}Erro: nenhuma API key da Ollama configurada.${RESET}" >&2
+        echo "  Crie uma em: https://ollama.com/settings/keys" >&2
+        echo "  Depois rode: ai ol key" >&2
+        return 1
+    fi
+    printf '%s' "$k"
+}
+
+ollama_require_python() {
+    if ! command -v python3 &>/dev/null; then
+        echo -e "${RED}Erro: python3 é necessário para o modo cloud do Ollama.${RESET}" >&2
+        return 1
+    fi
+}
+
+# Salva a key no providers.conf (mesmo cofre dos demais providers)
+ollama_save_key() {
+    local key="${1:-}"
+    if [[ -z "$key" && -t 0 ]]; then
+        read -rsp "$(echo -e "  ${BOLD}API key da Ollama:${RESET} ")" key
+        echo ""
+    fi
+    if [[ -z "$key" ]]; then
+        echo -e "${RED}Erro: key vazia.${RESET}" >&2
+        return 1
+    fi
+    provider_save_key ollama "$key" || return 1
+    echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+}
+
+# Lista os modelos que a Ollama realmente serve no cloud
+ollama_cloud_list() {
+    local key; key=$(ollama_require_key) || return 1
+    ollama_require_python || return 1
+    echo -e "${BOLD}Modelos disponíveis no Ollama Cloud:${RESET}"
+    OLLAMA_KEY="$key" OLLAMA_HOSTV="$OLLAMA_CLOUD_HOST" python3 - <<'PY'
+import json, os, sys, urllib.request, urllib.error
+host = os.environ["OLLAMA_HOSTV"].rstrip("/")
+req = urllib.request.Request(
+    host + "/api/tags",
+    headers={"Authorization": "Bearer " + os.environ["OLLAMA_KEY"]},
+)
+try:
+    with urllib.request.urlopen(req, timeout=30) as r:
+        data = json.load(r)
+except urllib.error.HTTPError as e:
+    print(f"  erro HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:200]}", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f"  erro: {e}", file=sys.stderr)
+    sys.exit(1)
+models = sorted(m.get("name", "?") for m in data.get("models", []))
+for m in models:
+    print("  " + m)
+print(f"\n  {len(models)} modelos")
+PY
+}
+
+# Chat contra ollama.com. Sem prompt = REPL interativo; com prompt = one-shot.
+ollama_cloud_chat() {
+    local model="$1"; shift
+    local key; key=$(ollama_require_key) || return 1
+    ollama_require_python || return 1
+
+    save_history "Ollama Cloud [${model}]"
+
+    if [[ $# -gt 0 ]]; then
+        echo -e "${GREEN}Ollama Cloud:${RESET} ${model} ${DIM}(one-shot)${RESET}"
+    else
+        echo -e "${GREEN}Ollama Cloud:${RESET} ${model} ${DIM}(/sair para encerrar, /limpar para zerar o contexto)${RESET}"
+    fi
+    echo ""
+
+    # O script vai para um arquivo temporário em vez de heredoc: com heredoc o
+    # stdin do python é o próprio código, e o REPL não conseguiria ler o teclado.
+    local pyfile
+    pyfile=$(mktemp -t ai-ollama.XXXXXX) || return 1
+    trap "rm -f '$pyfile'" RETURN
+
+    cat > "$pyfile" <<'PY'
+import json, os, sys, urllib.request, urllib.error
+
+HOST = os.environ["OLLAMA_HOSTV"].rstrip("/")
+KEY = os.environ["OLLAMA_KEY"]
+MODEL = os.environ["OLLAMA_MODELV"]
+DIM, RESET, RED = "\033[2m", "\033[0m", "\033[31m"
+
+def stream(messages):
+    body = json.dumps({"model": MODEL, "messages": messages, "stream": True}).encode()
+    req = urllib.request.Request(
+        HOST + "/api/chat",
+        data=body,
+        headers={"Authorization": "Bearer " + KEY, "Content-Type": "application/json"},
+    )
+    parts, thinking_open = [], False
+    try:
+        with urllib.request.urlopen(req, timeout=600) as r:
+            for raw in r:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    chunk = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if "error" in chunk:
+                    print(f"{RED}erro: {chunk['error']}{RESET}", file=sys.stderr)
+                    return None
+                msg = chunk.get("message") or {}
+                think = msg.get("thinking")
+                if think:
+                    if not thinking_open:
+                        sys.stdout.write(DIM)
+                        thinking_open = True
+                    sys.stdout.write(think)
+                    sys.stdout.flush()
+                content = msg.get("content")
+                if content:
+                    if thinking_open:
+                        sys.stdout.write(RESET + "\n")
+                        thinking_open = False
+                    sys.stdout.write(content)
+                    sys.stdout.flush()
+                    parts.append(content)
+                if chunk.get("done"):
+                    break
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:300]
+        print(f"{RED}erro HTTP {e.code}: {detail}{RESET}", file=sys.stderr)
+        return None
+    except KeyboardInterrupt:
+        print()
+        return "".join(parts)
+    except Exception as e:
+        print(f"{RED}erro: {e}{RESET}", file=sys.stderr)
+        return None
+    finally:
+        if thinking_open:
+            sys.stdout.write(RESET)
+    print()
+    return "".join(parts)
+
+# One-shot: prompt veio na linha de comando
+if len(sys.argv) > 1:
+    out = stream([{"role": "user", "content": " ".join(sys.argv[1:])}])
+    sys.exit(0 if out is not None else 1)
+
+# REPL
+history = []
+while True:
+    try:
+        line = input("\033[1m› \033[0m").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nSaindo.")
+        break
+    if not line:
+        continue
+    if line in ("/sair", "/exit", "/quit", "/q"):
+        print("Saindo.")
+        break
+    if line in ("/limpar", "/clear", "/reset"):
+        history = []
+        print(f"{DIM}contexto zerado{RESET}")
+        continue
+    history.append({"role": "user", "content": line})
+    out = stream(history)
+    if out is None:
+        history.pop()
+        continue
+    history.append({"role": "assistant", "content": out})
+    print()
+PY
+
+    # stdin fica livre para o REPL ler o teclado
+    OLLAMA_KEY="$key" OLLAMA_HOSTV="$OLLAMA_CLOUD_HOST" OLLAMA_MODELV="$model" \
+        python3 "$pyfile" "$@"
+}
+
+# Modo local: exige o binário e roda o modelo na máquina
+ollama_local_run() {
+    local model="${1:-}"; shift || true
+
+    if ! check_installed ollama; then
+        echo -e "${RED}Erro: ollama não está instalado (necessário para o modo local).${RESET}"
+        echo "  Instale: brew install ollama"
+        echo "  Ou:      curl -fsSL https://ollama.com/install.sh | sh"
+        return 1
+    fi
+
+    if [[ -z "$model" ]]; then
+        model="$OLLAMA_LOCAL_MODEL"
+    fi
+    if [[ -z "$model" ]]; then
+        echo -e "${RED}Erro: nenhum modelo local definido.${RESET}"
+        echo "  Use:  ai ol local <modelo>"
+        echo "  Ou defina o default: AI_OLLAMA_LOCAL_MODEL=<modelo>"
+        echo ""
+        echo -e "  ${DIM}Modelos já baixados:${RESET}"
+        ollama list 2>/dev/null | tail -n +2 | sed 's/^/    /' || true
+        return 1
+    fi
+
+    save_history "Ollama local [${model}]"
+    echo -e "${GREEN}Ollama local:${RESET} ${model}"
+    echo ""
+    exec ollama run "$model" ${1+"$@"}
+}
+
+ollama_status_icon() {
+    if [[ -n "$(ollama_api_key)" ]]; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${YELLOW}✗ sem key${RESET}"
+    fi
+}
+
+# Dispatcher de 'ai ollama ...'
+ollama_dispatch() {
+    local sub="${1:-}"
+    local model="$OLLAMA_CLOUD_MODEL"
+
+    case "$sub" in
+        ls|list|models)
+            ollama_cloud_list
+            return $?
+            ;;
+        key|login-key)
+            shift || true
+            ollama_save_key "${1:-}"
+            return $?
+            ;;
+        login|signin)
+            if ! check_installed ollama; then
+                echo -e "${RED}Erro: ollama não está instalado.${RESET}"
+                echo "  Instale: brew install ollama"
+                return 1
+            fi
+            echo -e "${DIM}Login por browser — habilita o REPL nativo 'ollama run' com modelos cloud.${RESET}"
+            exec ollama signin
+            ;;
+        local)
+            shift || true
+            ollama_local_run "$@"
+            return $?
+            ;;
+        -m|--model)
+            shift || true
+            model="${1:-}"
+            if [[ -z "$model" ]]; then
+                echo -e "${RED}Erro: ai ol -m <modelo>${RESET}"
+                return 1
+            fi
+            shift || true
+            ;;
+    esac
+
+    ollama_cloud_chat "$model" "$@"
+}
+
 run_with_timeout() {
     local seconds="${1:-}"
     shift || true
@@ -2544,6 +2828,19 @@ Segurança (Codex Security — scanner da OpenAI):
   Qualquer argumento é repassado verbatim ao codex-security.
   Python 3.10+ é injetado via --python quando o python3 do PATH é antigo.
 
+Ollama (cloud por padrão — roda em ollama.com, não na sua máquina):
+  ollama, ol             Chat interativo no modelo cloud padrão
+  ol "prompt"            One-shot com prompt direto
+  ol -m <modelo>         Escolhe o modelo cloud da sessão
+  ol ls                  Lista os modelos servidos pelo cloud
+  ol key [key]           Salva a API key (https://ollama.com/settings/keys)
+  ol login               Login por browser (habilita o REPL nativo 'ollama run')
+  ol local [modelo]      Modo local: roda na sua GPU (exige o binário ollama)
+  Modelo cloud padrão: AI_OLLAMA_CLOUD_MODEL (atual: minimax-m3)
+  Modelo local padrão: AI_OLLAMA_LOCAL_MODEL
+  Só modelos oficiais da library têm cloud; modelos de comunidade
+  (namespace de usuário) são local-only.
+
 Providers:
   provider, p            Menu de providers
   p ls                   Lista providers e status das keys
@@ -2616,6 +2913,11 @@ Exemplos:
   ai cursor "prompt"              Cursor Agent com prompt direto
   ai sec                          Codex Security no repo atual
   ai sec scan . --mode deep       Scan profundo de segurança
+  ai ol                           Chat no Ollama Cloud (minimax-m3)
+  ai ol "resume esse erro"        Ollama Cloud one-shot
+  ai ol -m glm-5.2                Ollama Cloud com outro modelo
+  ai ol ls                        Lista modelos do Ollama Cloud
+  ai ol local qwen3.5:9b          Ollama rodando na sua máquina
   ai a                            Antigravity
   ai p ls                         Lista providers configurados
   ai f                            Toggle de flags antes de lançar
@@ -3206,6 +3508,10 @@ elif [[ ${1:-} == "sec" || ${1:-} == "security" || ${1:-} == "codex-security" ]]
     # Argumentos passam verbatim: 'ai sec login', 'ai sec scan . --diff origin/main',
     # 'ai sec scans list', 'ai sec export --format sarif'...
     launch_codex_security "$@"
+elif [[ ${1:-} == "ollama" || ${1:-} == "ol" ]]; then
+    shift
+    ollama_dispatch "$@"
+    exit $?
 elif [[ ${1:-} == "provider" || ${1:-} == "p" ]]; then
     shift
     subcmd="${1:-}"
@@ -3402,6 +3708,7 @@ grok_status=$(status_icon grok)
 qoder_status=$(status_icon qodercli)
 cursor_status=$(status_icon cursor-agent)
 secscan_status=$(status_icon codex-security)
+ollama_status=$(ollama_status_icon)
 
 claude_ver=$(get_version claude)
 glm_ver="${claude_ver}" # GLM usa Claude Code
@@ -3434,11 +3741,12 @@ printf "  ${BOLD}9)${RESET} Grok (xAI)   %-20s %b\n" "${grok_ver}" "${grok_statu
 printf "  ${BOLD}10)${RESET} Antigravity  %-20s %b\n" "${agy_ver}" "${agy_status}"
 printf "  ${BOLD}11)${RESET} Qoder CLI    %-20s %b\n" "${qoder_ver}" "${qoder_status}"
 printf "  ${BOLD}12)${RESET} Cursor Agent %-20s %b\n" "${cursor_ver}" "${cursor_status}"
+printf "  ${BOLD}13)${RESET} Ollama Cloud %-20s %b\n" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
 echo ""
-printf "  ${BOLD}13)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
-echo -e "  ${BOLD}14)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}15)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}16)${RESET} 👤 Contas (Claude / Codex)"
+printf "  ${BOLD}14)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
+echo -e "  ${BOLD}15)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}16)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}17)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -3460,7 +3768,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-16/0]: " choice
+read -rp "Escolha [1-17/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -3492,10 +3800,11 @@ case $choice in
        launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
    12) enter_repo_if_needed
        launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
-   13) enter_repo_if_needed
+   13) ollama_dispatch || true ;;
+   14) enter_repo_if_needed
        launch_codex_security ;;
-   14) provider_list ;;
-   15) flags_menu
+   15) provider_list ;;
+   16) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -3515,7 +3824,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   16) conta_menu ;;
+   17) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

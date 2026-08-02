@@ -32,6 +32,7 @@ ai fugu-cyber-v1.0  # Fugu Cyber V1.0
 ai g            # Gemini direto
 ai k            # Kimi Code direto
 ai cu           # Cursor Agent direto
+ai ol           # Ollama Cloud (roda em ollama.com, não na sua máquina)
 ai c "prompt"   # Claude com prompt
 ai conta        # Menu de contas Claude (troca sem logout, macOS)
 ai conta save trabalho   # Salva a conta logada atual como "trabalho"
@@ -55,6 +56,27 @@ ai --help       # Ajuda
 | Qoder | `ai q` | `--dangerously-skip-permissions` |
 | Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
 | Antigravity | `ai a` | _(nenhuma)_ |
+| Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
+
+## Ollama
+
+Por padrão o `ai ol` usa o **Ollama Cloud**: a inferência acontece nos servidores da Ollama, não na sua máquina. Não precisa de GPU, de daemon local nem do binário `ollama` — só de uma API key e do `python3`.
+
+```bash
+ai ol key                    # salva a API key (https://ollama.com/settings/keys)
+ai ol                        # chat interativo no modelo padrão (minimax-m3)
+ai ol "resume esse stack trace"   # one-shot
+ai ol -m glm-5.2             # escolhe outro modelo cloud na hora
+ai ol ls                     # lista os modelos servidos pelo cloud
+ai ol local qwen3.5:9b       # roda na sua GPU (exige o binário ollama)
+ai ol login                  # login por browser, habilita o REPL nativo 'ollama run'
+```
+
+No REPL: `/limpar` zera o contexto, `/sair` encerra.
+
+Defaults por env var: `AI_OLLAMA_CLOUD_MODEL` (cloud) e `AI_OLLAMA_LOCAL_MODEL` (local). A key fica em `providers.conf` com `chmod 600`; `OLLAMA_API_KEY` no ambiente tem prioridade.
+
+**Cloud x local — o que roda onde:** o Ollama Cloud serve apenas os modelos oficiais da library marcados com a tag `cloud` (18 no momento: `minimax-m3`, `glm-5.2`, `kimi-k3`, `qwen3.5:397b`, `gpt-oss:120b`, `deepseek-v4-pro`…). Modelos de comunidade — os que ficam num namespace de usuário, como `AI-TAVS/Qwen3.6-27B-Uncensored` — são **apenas artefatos de download**: a Ollama não roda inferência deles, e pedi-los na API do cloud devolve `404 model not found`. Para esses, use `ai ol local` (ou hospede o GGUF você mesmo num serviço de GPU).
 
 > **Cursor Agent** — instale com `curl https://cursor.com/install -fsS | bash`. O instalador
 > cria dois symlinks: `~/.local/bin/agent` (primário) e `~/.local/bin/cursor-agent` (legado),
