@@ -94,7 +94,9 @@ ai hf menu                   # painel com o resumo de uso
 
 **Segurança:** este repositório é público, então a URL do endpoint **não** fica hardcoded no script — ela é infra privada. Configure-a por máquina com `ai hf endpoint <url>` (fica em `providers.conf`, `chmod 600`) ou via `export AI_HF_ENDPOINT_URL=<url>`. Só o nome do modelo (público no Hub) vem como default. Em **outro Mac**: `ai hf endpoint <url>` + `ai hf key`. Ordem de busca do token: env (`HF_TOKEN`) → `providers.conf` → `~/.cache/huggingface/token` (de um `huggingface-cli login` anterior). Ordem da URL: env (`AI_HF_ENDPOINT_URL`) → `providers.conf`.
 
-O endpoint usa **scale-to-zero**: dorme quando ocioso e acorda na primeira chamada (cold start ~1-2 min, tratado automaticamente pelo cliente). Modelos *thinking* transmitem o raciocínio junto da resposta; ele é exibido, mas **não** entra no histórico do REPL — cada turno reenvia só a resposta final.
+O endpoint usa **scale-to-zero**: dorme quando ocioso e acorda na primeira chamada (cold start ~1-2 min, tratado automaticamente pelo cliente).
+
+**Respostas diretas:** o modelo é *thinking* e por padrão o cliente manda `enable_thinking: false` — resposta objetiva, sem despejar o raciocínio. Para religar o raciocínio (útil em problemas difíceis): `AI_HF_THINKING=1 ai hf`. Quando ligado, o raciocínio é exibido mas **não** entra no histórico do REPL (cada turno reenvia só a resposta final).
 
 > **Cursor Agent** — instale com `curl https://cursor.com/install -fsS | bash`. O instalador
 > cria dois symlinks: `~/.local/bin/agent` (primário) e `~/.local/bin/cursor-agent` (legado),

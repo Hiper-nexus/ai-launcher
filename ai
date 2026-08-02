@@ -2708,9 +2708,15 @@ DIM, RESET, RED = "\033[2m", "\033[0m", "\033[31m"
 def strip_thinking(text):
     return re.sub(r"(?s)^\s*(?:<think>)?.*?</think>\s*", "", text, count=1)
 
+# Thinking DESLIGADO por padrão (respostas diretas); AI_HF_THINKING=1 religa.
+THINK = os.environ.get("HF_THINK", "0") == "1"
+
 def stream(messages):
-    body = json.dumps({"model": MODEL, "messages": messages, "stream": True,
-                       "max_tokens": 4096}).encode()
+    payload = {"model": MODEL, "messages": messages, "stream": True,
+               "max_tokens": 4096}
+    if not THINK:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(
         URL, data=body,
         headers={"Authorization": "Bearer " + TOK, "Content-Type": "application/json"},
@@ -2786,7 +2792,7 @@ while True:
 PY
 
     HF_URL="$url" HF_TOK="$tok" HF_MODEL="$HF_ENDPOINT_MODEL" \
-        python3 "$pyfile" "$@"
+        HF_THINK="${AI_HF_THINKING:-0}" python3 "$pyfile" "$@"
 }
 
 # Estado do endpoint via API de gerenciamento da HF
@@ -3159,6 +3165,7 @@ HF Endpoint (modelo dedicado uncensored, servido por vLLM na Hugging Face):
   Modelo default: AI_HF_ENDPOINT_MODEL. URL: AI_HF_ENDPOINT_URL ou 'hf endpoint'.
   Em outro Mac: rode 'ai hf endpoint <url>' e 'ai hf key' (token também é lido
   de ~/.cache/huggingface/token, se houver). Scale-to-zero: 1ª chamada ~1-2 min.
+  Respostas diretas por padrão; AI_HF_THINKING=1 liga o raciocínio (verboso).
 
 Providers:
   provider, p            Menu de providers
