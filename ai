@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.28.0"
+AI_LAUNCHER_VERSION="1.29.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -67,7 +67,10 @@ FL_MODEL="${AI_FL_MODEL:-huihui-ai/Qwen2.5-Coder-32B-Instruct-abliterated}"
 # Endpoint: Singapura (intl) por padrão; Pequim ou US via AI_QWEN_BASE_URL.
 # Modelo: qwen3-max-latest (alias que segue o Max mais novo). Fixe a versão
 # exata com AI_QWEN_MODEL=qwen3.8-max quando quiser travar.
-QWEN_BASE_URL="${AI_QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}"
+# Endpoint OpenAI: env → providers.conf (slot 'qwen-base-url', p/ o Token Plan
+# do usuário, que tem endpoint próprio) → default genérico. Resolvido em runtime
+# por qwen_base_url() — não hardcoda o endpoint do plano no repo público.
+QWEN_BASE_URL="${AI_QWEN_BASE_URL:-}"
 QWEN_MODEL="${AI_QWEN_MODEL:-qwen3.8-max}"
 
 # Variáveis de ambiente para cada CLI
@@ -3012,6 +3015,14 @@ qwen_api_key() {
     printf '%s' "$k"
 }
 
+# Endpoint OpenAI-compat: env → providers.conf → default genérico
+qwen_base_url() {
+    local u="${QWEN_BASE_URL:-}"
+    [[ -z "$u" ]] && u=$(provider_load_key qwen-base-url 2>/dev/null || true)
+    [[ -z "$u" ]] && u="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    printf '%s' "$u"
+}
+
 qwen_save_key() {
     local key="${1:-}"
     if [[ -z "$key" && -t 0 ]]; then
@@ -3047,10 +3058,11 @@ qwen_launch() {
         echo "  Depois:   ai qw key" >&2
         return 1
     fi
+    local base; base=$(qwen_base_url)
     save_history "Qwen Code [${QWEN_MODEL}]"
-    echo -e "${GREEN}Qwen Code:${RESET} ${QWEN_MODEL} ${DIM}(${QWEN_BASE_URL##*//})${RESET}"
+    echo -e "${GREEN}Qwen Code:${RESET} ${QWEN_MODEL} ${DIM}(${base##*//})${RESET}"
     echo ""
-    export OPENAI_API_KEY="$key" OPENAI_BASE_URL="$QWEN_BASE_URL" OPENAI_MODEL="$QWEN_MODEL"
+    export OPENAI_API_KEY="$key" OPENAI_BASE_URL="$base" OPENAI_MODEL="$QWEN_MODEL"
     enter_repo_if_needed
     exec qwen "$@"
 }
