@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.23.0"
+AI_LAUNCHER_VERSION="1.24.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -60,6 +60,15 @@ HF_ENDPOINT_MODEL="${AI_HF_ENDPOINT_MODEL:-thisnick/Llama-3.3-70B-Instruct-ablit
 # Modelo default: Qwen2.5-Coder-32B abliterated (o melhor testado p/ RE).
 FL_HOST="${AI_FL_HOST:-https://api.featherless.ai/v1}"
 FL_MODEL="${AI_FL_MODEL:-huihui-ai/Qwen2.5-Coder-32B-Instruct-abliterated}"
+
+# ── Qwen Code CLI (Alibaba Model Studio, direto — não é o Qoder) ──
+# CLI oficial do Qwen (fork do Gemini CLI). Fala com a API DashScope
+# (compatible-mode OpenAI) usando a key do seu plano Alibaba/Model Studio.
+# Endpoint: Singapura (intl) por padrão; Pequim ou US via AI_QWEN_BASE_URL.
+# Modelo: qwen3-max-latest (alias que segue o Max mais novo). Fixe a versão
+# exata com AI_QWEN_MODEL=qwen3.8-max quando quiser travar.
+QWEN_BASE_URL="${AI_QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}"
+QWEN_MODEL="${AI_QWEN_MODEL:-qwen3-max-latest}"
 
 # Variáveis de ambiente para cada CLI
 
@@ -2992,6 +3001,68 @@ fl_dispatch() {
     fl_chat "$model" "$@"
 }
 
+# ╔══════════════════════════════════════════════════════╗
+# ║  QWEN CODE — CLI oficial via Alibaba Model Studio    ║
+# ╚══════════════════════════════════════════════════════╝
+
+# Key do plano Alibaba/DashScope (slot 'dashscope' no providers.conf)
+qwen_api_key() {
+    local k="${DASHSCOPE_API_KEY:-${QWEN_API_KEY:-}}"
+    [[ -z "$k" ]] && k=$(provider_load_key dashscope 2>/dev/null || true)
+    printf '%s' "$k"
+}
+
+qwen_save_key() {
+    local key="${1:-}"
+    if [[ -z "$key" && -t 0 ]]; then
+        read -rsp "$(echo -e "  ${BOLD}API key da Alibaba/DashScope (sk-...):${RESET} ")" key; echo ""
+    fi
+    [[ -z "$key" ]] && { echo -e "${RED}Erro: key vazia.${RESET}" >&2; return 1; }
+    provider_save_key dashscope "$key" || return 1
+    echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+}
+
+qwen_status_icon() {
+    if ! check_installed qwen; then
+        echo -e "${RED}✗ não instalado${RESET}"
+    elif [[ -n "$(qwen_api_key)" ]]; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${YELLOW}✗ sem key${RESET}"
+    fi
+}
+
+# Lança o Qwen Code apontando pro Model Studio da Alibaba (compatible-mode).
+# O Qwen Code lê OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL do ambiente.
+qwen_launch() {
+    if ! check_installed qwen; then
+        echo -e "${RED}Erro: Qwen Code não está instalado.${RESET}"
+        echo "  Instale: npm install -g @qwen-code/qwen-code"
+        return 1
+    fi
+    local key; key=$(qwen_api_key)
+    if [[ -z "$key" ]]; then
+        echo -e "${RED}Erro: nenhuma API key da Alibaba/DashScope.${RESET}" >&2
+        echo "  Pegue em: https://modelstudio.console.alibabacloud.com (API Keys)" >&2
+        echo "  Depois:   ai qw key" >&2
+        return 1
+    fi
+    save_history "Qwen Code [${QWEN_MODEL}]"
+    echo -e "${GREEN}Qwen Code:${RESET} ${QWEN_MODEL} ${DIM}(${QWEN_BASE_URL##*//})${RESET}"
+    echo ""
+    export OPENAI_API_KEY="$key" OPENAI_BASE_URL="$QWEN_BASE_URL" OPENAI_MODEL="$QWEN_MODEL"
+    enter_repo_if_needed
+    exec qwen "$@"
+}
+
+qwen_dispatch() {
+    local sub="${1:-}"
+    case "$sub" in
+        key|token) shift || true; qwen_save_key "${1:-}"; return $? ;;
+        *)         qwen_launch "$@"; return $? ;;
+    esac
+}
+
 run_with_timeout() {
     local seconds="${1:-}"
     shift || true
@@ -3958,6 +4029,10 @@ elif [[ ${1:-} == "fl" || ${1:-} == "featherless" ]]; then
     shift
     fl_dispatch "$@"
     exit $?
+elif [[ ${1:-} == "qw" || ${1:-} == "qwen" ]]; then
+    shift
+    qwen_dispatch "$@"
+    exit $?
 elif [[ ${1:-} == "provider" || ${1:-} == "p" ]]; then
     shift
     subcmd="${1:-}"
@@ -4170,6 +4245,8 @@ grok_ver=$(get_version grok)
 qoder_ver=$(get_version qodercli)
 cursor_ver=$(get_version cursor-agent)
 secscan_ver=$(get_version codex-security)
+qwen_status=$(qwen_status_icon)
+qwen_ver=$(get_version qwen)
 
 echo -e "${BOLD}${CYAN}"
 echo "  ┌──────────────────────────────────────────────────┐"
@@ -4194,11 +4271,12 @@ _hf_menu_label="${HF_ENDPOINT_MODEL##*/}"
 printf "  ${BOLD}13)${RESET} HF sem censura %-18s %b\n" "${_hf_menu_label}" "${hf_status}"
 _fl_menu_label="${FL_MODEL##*/}"; [[ ${#_fl_menu_label} -gt 20 ]] && _fl_menu_label="${_fl_menu_label:0:19}…"
 printf "  ${BOLD}14)${RESET} Featherless  %-20s %b\n" "${_fl_menu_label}" "${fl_status}"
+printf "  ${BOLD}15)${RESET} Qwen Code    %-20s %b\n" "${QWEN_MODEL}" "${qwen_status}"
 echo ""
-printf "  ${BOLD}15)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
-echo -e "  ${BOLD}16)${RESET} 🔌 Providers"
-echo -e "  ${BOLD}17)${RESET} ⚙️  Toggle Flags"
-echo -e "  ${BOLD}18)${RESET} 👤 Contas (Claude / Codex)"
+printf "  ${BOLD}16)${RESET} 🛡️  Codex Security %-14s %b\n" "${secscan_ver}" "${secscan_status}"
+echo -e "  ${BOLD}17)${RESET} 🔌 Providers"
+echo -e "  ${BOLD}18)${RESET} ⚙️  Toggle Flags"
+echo -e "  ${BOLD}19)${RESET} 👤 Contas (Claude / Codex)"
 echo -e "  ${DIM}0) Sair${RESET}"
 echo ""
 
@@ -4220,7 +4298,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-18/0]: " choice
+read -rp "Escolha [1-19/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -4254,10 +4332,11 @@ case $choice in
    12) ollama_dispatch || true ;;
    13) hf_menu_panel || true ;;
    14) fl_dispatch || true ;;
-   15) enter_repo_if_needed
+   15) qwen_launch || true ;;
+   16) enter_repo_if_needed
        launch_codex_security ;;
-   16) provider_list ;;
-   17) flags_menu
+   17) provider_list ;;
+   18) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -4277,7 +4356,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   18) conta_menu ;;
+   19) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
