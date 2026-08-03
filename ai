@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.26.0"
+AI_LAUNCHER_VERSION="1.27.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -2912,10 +2912,10 @@ DIM, RESET, RED = "\033[2m", "\033[0m", "\033[31m"
 
 def stream(messages):
     body = json.dumps({"model": MODEL, "messages": messages, "stream": True, "max_tokens": 4096}).encode()
-    for attempt in range(6):  # retry p/ capacity_exhausted (modelo carregando/lotado)
+    for attempt in range(6):  # retry p/ capacity_exhausted (modelo compartilhado lotado)
         req = urllib.request.Request(URL, data=body, headers={
             "Authorization": "Bearer " + KEY, "Content-Type": "application/json", "User-Agent": UA})
-        parts = []
+        parts, capacity = [], False
         try:
             r = urllib.request.urlopen(req, timeout=600)
             for raw in r:
@@ -2927,27 +2927,27 @@ def stream(messages):
                 except json.JSONDecodeError: continue
                 if "error" in chunk:
                     msg = chunk["error"].get("message","") if isinstance(chunk["error"],dict) else str(chunk["error"])
-                    if "capacity" in msg.lower() and attempt < 5:
-                        sys.stdout.write(DIM+f"[modelo lotado, retry {attempt+1}/5...]"+RESET+"\n"); sys.stdout.flush()
-                        time.sleep(8); parts=[]; break
+                    # só retenta se lotou ANTES de qualquer token (evita duplicar saída)
+                    if "capacity" in msg.lower() and attempt < 5 and not parts:
+                        capacity = True; break
                     print(f"{RED}erro: {msg}{RESET}", file=sys.stderr); return None
                 delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
                 c = delta.get("content")
                 if c: sys.stdout.write(c); sys.stdout.flush(); parts.append(c)
-            else:
-                print(); return "".join(parts)
-            if parts == [] and attempt < 5: continue  # retry após capacity
-            print(); return "".join(parts)
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8","replace")[:300]
             if "capacity" in detail.lower() and attempt < 5:
-                sys.stdout.write(DIM+f"[lotado, retry {attempt+1}/5...]"+RESET+"\n"); sys.stdout.flush()
-                time.sleep(8); continue
-            print(f"{RED}erro HTTP {e.code}: {detail}{RESET}", file=sys.stderr); return None
+                capacity = True
+            else:
+                print(f"{RED}erro HTTP {e.code}: {detail}{RESET}", file=sys.stderr); return None
         except KeyboardInterrupt:
             print(); return "".join(parts)
         except Exception as e:
             print(f"{RED}erro: {e}{RESET}", file=sys.stderr); return None
+        if capacity:
+            sys.stdout.write(DIM+f"[modelo lotado, retry {attempt+1}/5…]"+RESET+"\n"); sys.stdout.flush()
+            time.sleep(8); continue
+        print(); return "".join(parts)  # resposta completa (mesmo se vazia) — não retenta à toa
     return None
 
 if len(sys.argv) > 1:
@@ -3112,11 +3112,35 @@ qwen_launch_claude() {
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="${AI_QWEN_HAIKU_MODEL:-qwen-flash}"
     export CLAUDE_CODE_SUBAGENT_MODEL="$model"
     export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-    save_history "Claude via Qwen [${model}]"
     echo -e "${GREEN}Claude Code${RESET} usando ${BOLD}${model}${RESET} ${DIM}(${url##*//})${RESET}"
     echo ""
     enter_repo_if_needed
+    # launch() já registra o histórico e faz o exec do claude
     launch "Claude via Qwen" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+}
+
+# Painel do Qwen no menu — mostra as DUAS opções (CLI própria e Claude+Qwen)
+qwen_menu_panel() {
+    echo -e "${BOLD}${CYAN}"
+    echo "  ┌──────────────────────────────────────────────────┐"
+    echo "  │   🐉 Qwen-Max (Alibaba Model Studio)             │"
+    echo "  └──────────────────────────────────────────────────┘"
+    echo -e "${RESET}"
+    echo -e "  ${BOLD}Modelo:${RESET} ${QWEN_MODEL}   ${BOLD}Key:${RESET} $(qwen_status_icon)"
+    echo ""
+    echo -e "  ${BOLD}1)${RESET} Qwen Code CLI          ${DIM}(a CLI própria do Qwen)${RESET}"
+    echo -e "  ${BOLD}2)${RESET} Claude Code + Qwen-Max ${DIM}(Qwen no Claude, via Anthropic)${RESET}"
+    echo -e "  ${BOLD}3)${RESET} Salvar key             ${BOLD}4)${RESET} Salvar URL Anthropic   ${BOLD}5)${RESET} Voltar"
+    local opt
+    read -rp "  Escolha [1-5] (default 1): " opt
+    opt=$(normalize_choice "$opt")
+    case "${opt:-1}" in
+        1) qwen_launch ;;
+        2) qwen_launch_claude ;;
+        3) qwen_save_key ;;
+        4) qwen_save_anthropic_url ;;
+        *) return 0 ;;
+    esac
 }
 
 run_with_timeout() {
@@ -4400,7 +4424,7 @@ case $choice in
    12) ollama_dispatch || true ;;
    13) hf_menu_panel || true ;;
    14) fl_dispatch || true ;;
-   15) qwen_launch || true ;;
+   15) qwen_menu_panel || true ;;
    16) enter_repo_if_needed
        launch_codex_security ;;
    17) provider_list ;;
