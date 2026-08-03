@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.25.0"
+AI_LAUNCHER_VERSION="1.26.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -68,7 +68,7 @@ FL_MODEL="${AI_FL_MODEL:-huihui-ai/Qwen2.5-Coder-32B-Instruct-abliterated}"
 # Modelo: qwen3-max-latest (alias que segue o Max mais novo). Fixe a versão
 # exata com AI_QWEN_MODEL=qwen3.8-max quando quiser travar.
 QWEN_BASE_URL="${AI_QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}"
-QWEN_MODEL="${AI_QWEN_MODEL:-qwen3-max-latest}"
+QWEN_MODEL="${AI_QWEN_MODEL:-qwen3.8-max}"
 
 # Variáveis de ambiente para cada CLI
 
@@ -3109,7 +3109,7 @@ qwen_launch_claude() {
     export ANTHROPIC_MODEL="$model"
     export ANTHROPIC_DEFAULT_SONNET_MODEL="$model"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="$model"
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${AI_QWEN_HAIKU_MODEL:-qwen3-flash}"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${AI_QWEN_HAIKU_MODEL:-qwen-flash}"
     export CLAUDE_CODE_SUBAGENT_MODEL="$model"
     export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
     save_history "Claude via Qwen [${model}]"
