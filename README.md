@@ -57,6 +57,7 @@ ai --help       # Ajuda
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
 | Featherless | `ai fl` | catálogo uncensored via API (21 mil+ modelos, plano pago) |
+| Qwen (Alibaba) | `ai qw` | Qwen-Max via Model Studio — CLI própria **ou** dentro do Claude Code |
 
 ## Ollama
 
@@ -121,6 +122,20 @@ ai fl ls coder               # lista modelos coder do plano
 Modelo default: `huihui-ai/Qwen2.5-Coder-32B-Instruct-abliterated` (o melhor testado pra engenharia reversa — reconhece algoritmos de hash pelo nome, desofusca e reescreve legível, não recusa). Ajuste com `AI_FL_MODEL`. O cliente passa `User-Agent` de browser (o Featherless fica atrás de Cloudflare) e faz retry automático quando o modelo está lotado (`capacity_exhausted`, pois é compartilhado).
 
 **HF vs Featherless:** o HF (`ai hf`) é dedicado e pay-per-hour (mais barato para uso esporádico, contexto até 128K na H200); o Featherless é flat mensal, compartilhado, com muito mais variedade de modelos. Ambos 32K por padrão. Para RE pontual, qualquer um serve; escolha por custo de uso.
+
+## Qwen (Alibaba Model Studio — duas opções)
+
+O Qwen-Max direto pela API da Alibaba (não é o Qoder). Requer uma key do [Model Studio](https://modelstudio.console.alibabacloud.com) — salve com `ai qw key`. Duas formas de usar o mesmo modelo:
+
+```bash
+ai qw            # Opção 1: Qwen Code CLI (a CLI própria do Qwen, fork do Gemini CLI)
+ai qw claude     # Opção 2: Claude Code usando o Qwen-Max como backend
+```
+
+- **Opção 1 (`ai qw`)** — usa o endpoint OpenAI-compatible (`compatible-mode/v1`). Config: `AI_QWEN_BASE_URL` (default Singapura intl), `AI_QWEN_MODEL` (default `qwen3-max-latest`; fixe `qwen3.8-max` pra travar a versão).
+- **Opção 2 (`ai qw claude`)** — usa o endpoint **Anthropic-compatible** (`/apps/anthropic`), o mesmo mecanismo do GLM. O Coding Plan tem URL fixa; o pay-as-you-go (Model Studio) inclui seu **WorkspaceId** na URL e serve o Max — configure com `ai qw claude-url <url>`.
+
+A key vai só pro `providers.conf` local (chmod 600, slot `dashscope`), nunca pro repo.
 
 > **Cursor Agent** — instale com `curl https://cursor.com/install -fsS | bash`. O instalador
 > cria dois symlinks: `~/.local/bin/agent` (primário) e `~/.local/bin/cursor-agent` (legado),

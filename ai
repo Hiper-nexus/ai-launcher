@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.24.0"
+AI_LAUNCHER_VERSION="1.25.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -3058,9 +3058,65 @@ qwen_launch() {
 qwen_dispatch() {
     local sub="${1:-}"
     case "$sub" in
-        key|token) shift || true; qwen_save_key "${1:-}"; return $? ;;
-        *)         qwen_launch "$@"; return $? ;;
+        key|token)      shift || true; qwen_save_key "${1:-}"; return $? ;;
+        claude|c)       shift || true; qwen_launch_claude "$@"; return $? ;;
+        claude-url|url) shift || true; qwen_save_anthropic_url "${1:-}"; return $? ;;
+        *)              qwen_launch "$@"; return $? ;;
     esac
+}
+
+# ── Qwen DENTRO do Claude Code (endpoint Anthropic-compatible) ──
+# Coding Plan: endpoint fixo (modelo qwen3-coder/plus). Pay-as-you-go
+# (Model Studio): endpoint inclui seu WorkspaceId e serve o Max — por isso
+# a URL é resolvida em runtime (env → providers.conf slot 'qwen-anthropic-url'
+# → default coding plan). Salve a sua com: ai qw claude-url <url>
+qwen_anthropic_url() {
+    local u="${AI_QWEN_ANTHROPIC_URL:-}"
+    [[ -z "$u" ]] && u=$(provider_load_key qwen-anthropic-url 2>/dev/null || true)
+    [[ -z "$u" ]] && u="https://coding.dashscope.aliyuncs.com/apps/anthropic"
+    printf '%s' "$u"
+}
+
+qwen_save_anthropic_url() {
+    local url="${1:-}"
+    if [[ -z "$url" && -t 0 ]]; then
+        echo -e "  ${DIM}Coding Plan:  https://coding.dashscope.aliyuncs.com/apps/anthropic${RESET}"
+        echo -e "  ${DIM}Pay-as-you-go: https://SEU_WORKSPACE.cn-beijing.maas.aliyuncs.com/apps/anthropic${RESET}"
+        read -rp "$(echo -e "  ${BOLD}URL Anthropic do Qwen:${RESET} ")" url
+    fi
+    url="${url//[[:space:]]/}"; url="${url%/}"
+    [[ -z "$url" ]] && { echo -e "${RED}Erro: URL vazia.${RESET}" >&2; return 1; }
+    [[ ! "$url" =~ ^https:// ]] && { echo -e "${RED}Erro: precisa começar com https://${RESET}" >&2; return 1; }
+    provider_save_key qwen-anthropic-url "$url" || return 1
+    echo -e "${GREEN}✔ Endpoint salvo em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+}
+
+# Lança o Claude Code usando o Qwen-Max como backend (via ANTHROPIC_* env).
+qwen_launch_claude() {
+    if ! check_installed claude; then
+        echo -e "${RED}Erro: claude não está instalado.${RESET}"; return 1
+    fi
+    local key; key=$(qwen_api_key)
+    if [[ -z "$key" ]]; then
+        echo -e "${RED}Erro: nenhuma API key da Alibaba/DashScope.${RESET}" >&2
+        echo "  Configure: ai qw key" >&2; return 1
+    fi
+    local url; url=$(qwen_anthropic_url)
+    local model="${AI_QWEN_CLAUDE_MODEL:-${QWEN_MODEL}}"
+    clear_anthropic_provider_env
+    export ANTHROPIC_BASE_URL="$url"
+    export ANTHROPIC_AUTH_TOKEN="$key"
+    export ANTHROPIC_MODEL="$model"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="$model"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$model"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${AI_QWEN_HAIKU_MODEL:-qwen3-flash}"
+    export CLAUDE_CODE_SUBAGENT_MODEL="$model"
+    export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+    save_history "Claude via Qwen [${model}]"
+    echo -e "${GREEN}Claude Code${RESET} usando ${BOLD}${model}${RESET} ${DIM}(${url##*//})${RESET}"
+    echo ""
+    enter_repo_if_needed
+    launch "Claude via Qwen" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 }
 
 run_with_timeout() {
@@ -3351,6 +3407,15 @@ Featherless (catálogo uncensored via API, plano pago — 21 mil+ modelos):
   Modelo default: AI_FL_MODEL. Contexto 32K. Não loga. Retry automático se
   o modelo estiver lotado (capacity). Passa User-Agent p/ o Cloudflare.
 
+Qwen (Alibaba Model Studio — Qwen-Max, DUAS opções, não é o Qoder):
+  qw / qwen              Opção 1: Qwen Code CLI (CLI própria da Qwen)
+  qw claude              Opção 2: Claude Code usando o Qwen-Max (Anthropic-compat)
+  qw key [key]           Salva a key da Alibaba/DashScope (slot 'dashscope')
+  qw claude-url <url>    Salva o endpoint Anthropic (pay-as-you-go tem WorkspaceId)
+  Modelo: AI_QWEN_MODEL (default qwen3-max-latest; fixe qwen3.8-max se quiser).
+  Endpoint OpenAI: AI_QWEN_BASE_URL. Endpoint Anthropic (Claude): AI_QWEN_ANTHROPIC_URL
+  ou 'qw claude-url'. Coding Plan tem URL fixa; Model Studio inclui o WorkspaceId.
+
 Providers:
   provider, p            Menu de providers
   p ls                   Lista providers e status das keys
@@ -3434,6 +3499,9 @@ Exemplos:
   ai fl                           Featherless (Qwen-Coder-32B, RE sem censura)
   ai fl "desofusca isso"          Featherless one-shot
   ai fl ls coder                  Lista modelos coder do plano
+  ai qw                           Qwen Code CLI (Qwen-Max via Alibaba)
+  ai qw claude                    Claude Code usando o Qwen-Max
+  ai qw key                       Salva a key da Alibaba/DashScope
   ai a                            Antigravity
   ai p ls                         Lista providers configurados
   ai f                            Toggle de flags antes de lançar
