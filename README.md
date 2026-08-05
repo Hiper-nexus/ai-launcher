@@ -46,6 +46,7 @@ ai --help       # Ajuda
 |-----|--------|-------------|
 | Claude Code | `ai c` | `--dangerously-skip-permissions` |
 | GLM/Z.ai | `ai glm` | Claude Code via provider `glm` |
+| Muse Spark (Meta AI) | `ai ms` | Claude Code via provider `muse-spark` |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]` | Codex profile `fugu` |
 | Gemini | `ai g` | `--yolo` |
@@ -219,7 +220,7 @@ Avisos:
 - Passagem de prompt direto via linha de comando
 - Flags configuráveis no topo do script
 - Contas Claude múltiplas com troca sem logout (Keychain, macOS)
-- Providers alternativos (GLM/Z.ai, Sakana Fugu, OpenRouter, DeepSeek, Ollama, LM Studio, LiteLLM)
+- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Ollama, LM Studio, LiteLLM)
 - Picker de repos conhecidos quando lançado fora de um repo git
 - Funciona em Linux e no macOS padrão
 

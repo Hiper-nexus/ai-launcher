@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pelicano de Bike v2 — Premium</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;900&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --bg:#FFFBF5;
+    --ink:#0A0A0B;
+    --line:#E9E2D9;
+    --accent:#FF3B30;
+    --accent2:#FFCC02;
+    --sky1:#87CEEB;
+    --sky2:#E0F2FF;
+  }
+  body{font-family:'Geist',system-ui,sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;display:flex;flex-direction:column}
+  header{height:64px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 28px;position:sticky;top:0;z-index:20}
+  .brand{display:flex;align-items:center;gap:14px}
+  .logo{width:36px;height:36px;border-radius:10px;background:var(--ink);display:grid;place-items:center;color:#fff;font-weight:900;font-size:16px;letter-spacing:-0.04em}
+  .brand h1{font-size:15px;font-weight:800;letter-spacing:-0.03em;line-height:1}
+  .brand p{font-family:'Geist Mono',monospace;font-size:11px;color:#8A8886;letter-spacing:0.04em}
+  .hdr-right{display:flex;align-items:center;gap:12px}
+  .pill{font-family:'Geist Mono',monospace;font-size:11px;padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:#fff}
+  .pill.live{display:flex;align-items:center;gap:7px}
+  .dot{width:7px;height:7px;border-radius:50%;background:#00C950;box-shadow:0 0 0 4px rgba(0,201,80,.15);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 4px rgba(0,201,80,.15)}50%{box-shadow:0 0 0 7px rgba(0,201,80,0)}}
+  .stage{flex:1;display:grid;place-items:center;padding:32px 20px;background:radial-gradient(900px 500px at 50% -120px,#FFE9D6 0%,transparent 60%),radial-gradient(700px 400px at 95% 15%,#D6EFFF 0%,transparent 55%),var(--bg)}
+  .card{width:min(920px,100%);background:#fff;border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.08),0 2px 12px rgba(0,0,0,.04)}
+  .scene{height:440px;position:relative;overflow:hidden;background:linear-gradient(180deg,#87CEEB 0%,#A8DDFF 38%,#D6EFFF 58%,#FFF1D6 58%,#FFE8B8 62%,#2B2B2B 62%,#1A1A1A 100%)}
+  /* decor */
+  .sun{position:absolute;top:28px;right:64px;width:64px;height:64px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#FFEB99 0%,#FFCC02 55%,#FF9500 100%);box-shadow:0 0 30px rgba(255,204,2,.5),0 0 60px rgba(255,149,0,.25);animation:spin 40s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .cloud{position:absolute;background:#fff;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+  .cloud:before,.cloud:after{content:'';position:absolute;background:#fff;border-radius:50%}
+  .c1{width:84px;height:26px;top:52px;left:6%;}
+  .c1:before{width:28px;height:28px;left:12px;top:-14px}
+  .c1:after{width:36px;height:22px;left:36px;top:-10px}
+  .c2{width:96px;height:28px;top:38px;left:42%;}
+  .c2:before{width:32px;height:32px;left:18px;top:-16px}
+  .c2:after{width:28px;height:20px;left:48px;top:-8px}
+  .c3{width:70px;height:22px;top:64px;right:22%;}
+  .c3:before{width:24px;height:24px;left:10px;top:-12px}
+  .c1{animation:drift 16s ease-in-out infinite alternate}
+  .c2{animation:drift 18s ease-in-out infinite alternate-reverse}
+  .c3{animation:drift 14s ease-in-out infinite alternate}
+  @keyframes drift{from{transform:translateX(-10px)}to{transform:translateX(12px)}}
+  .hills{position:absolute;bottom:38%;left:-10%;right:-10%;height:80px;background:radial-gradient(300px 80px at 20% 100%,#7BC47F 0%,transparent 70%),radial-gradient(400px 90px at 60% 100%,#6AB06E 0%,transparent 70%),radial-gradient(280px 70px at 85% 100%,#7BC47F 0%,transparent 70%);opacity:.9}
+  .road-dash{position:absolute;bottom:22px;left:0;right:0;height:2px;background:repeating-linear-gradient(90deg,transparent 0 22px,rgba(255,255,255,.95) 22px 44px);animation:road 0.55s linear infinite}
+  @keyframes road{from{transform:translateX(0)}to{transform:translateX(-44px)}}
+  .road{position:absolute;bottom:0;left:0;right:0;height:36px;background:#111;border-top:1px solid rgba(255,255,255,.1)}
+  .road:before{content:'';position:absolute;top:0;left:0;right:0;height:6px;background:linear-gradient(90deg,#111 0 28px,#FFD600 28px 56px);background-size:56px 6px;animation:road 0.55s linear infinite}
+  /* rider */
+  .racer{position:absolute;left:50%;bottom:36px;transform:translateX(-50%);width:340px;height:260px;animation:bob 0.5s ease-in-out infinite alternate}
+  @keyframes bob{from{transform:translateX(-50%) translateY(0)}to{transform:translateX(-50%) translateY(-5px)}}
+  .racer.paused{animation-play-state:paused}
+  .racer.paused *{animation-play-state:paused !important}
+  .racer.slow{animation-duration:0.9s}
+  .racer.fast{animation-duration:0.28s}
+  .racer.trick{animation:trick 0.7s cubic-bezier(.34,0,.18,1) forwards}
+  @keyframes trick{0%{transform:translateX(-50%) translateY(0) rotate(0)}30%{transform:translateX(-50%) translateY(-28px) rotate(-10deg)}60%{transform:translateX(-50%) translateY(-8px) rotate(6deg)}100%{transform:translateX(-50%) translateY(0) rotate(0)}}
+  /* bike */
+  .bike{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);width:270px;height:110px;z-index:1}
+  .wheel{position:absolute;bottom:0;width:78px;height:78px;border-radius:50%;background:#fff;border:7px solid #111;box-shadow:inset 0 0 0 7px #222;display:grid;place-items:center;animation:spinWheel 0.5s linear infinite}
+  .wheel:before{content:'';position:absolute;inset:14px;border:1px dashed #BBB;border-radius:50%;opacity:.7}
+  .wheel:after{content:'';width:14px;height:14px;background:#111;border-radius:50%;border:2px solid #444}
+  .wheel .spoke{position:absolute;inset:0;border-radius:50%;background:repeating-conic-gradient(from 0deg,transparent 0 14deg,rgba(0,0,0,.08) 14deg 15deg)}
+  .wheel.back{left:8px}
+  .wheel.front{right:8px}
+  @keyframes spinWheel{to{transform:rotate(360deg)}}
+  .racer.slow .wheel{animation-duration:1s}
+  .racer.fast .wheel{animation-duration:0.28s}
+  .frame{position:absolute;bottom:39px;left:46px;right:46px;height:46px;background:var(--accent);border:3px solid #111;border-radius:3px;clip-path:polygon(18% 0,82% 0,98% 100%,2% 100%)}
+  .frame:after{content:'';position:absolute;left:36%;top:0;bottom:0;width:3px;background:#111;transform:skewX(-12deg)}
+  .seat{position:absolute;bottom:85px;left:74px;width:48px;height:12px;background:#111;border-radius:6px}
+  .seat:after{content:'';position:absolute;left:14px;bottom:-10px;width:4px;height:10px;background:#111}
+  .handle{position:absolute;bottom:88px;right:58px;width:34px;height:16px;border:3px solid #111;border-radius:8px;background:#fff}
+  .handle:after{content:'';position:absolute;right:-6px;top:2px;width:10px;height:6px;background:#111;border-radius:3px}
+  .pedal-axle{position:absolute;bottom:18px;left:50%;width:22px;height:22px;background:#111;border-radius:50%;transform:translateX(-50%);display:grid;place-items:center;animation:spinWheel 0.5s linear infinite}
+  .pedal-axle:before{content:'';position:absolute;width:48px;height:5px;background:#333;border-radius:3px}
+  .pedal-axle:after{content:'';width:8px;height:8px;background:#555;border-radius:50%}
+  .racer.slow .pedal-axle{animation-duration:1s}
+  .racer.fast .pedal-axle{animation-duration:0.28s}
+  /* pelican */
+  .pelican{position:absolute;bottom:62px;left:50%;transform:translateX(-49%);width:184px;height:168px;z-index:2;filter:drop-shadow(0 6px 10px rgba(0,0,0,.12))}
+  .pelican svg{width:100%;height:100%;overflow:visible}
+  .wing{transform-origin:74px 68px;animation:flap 0.34s ease-in-out infinite alternate}
+  @keyframes flap{from{transform:rotate(-9deg)}to{transform:rotate(13deg)}}
+  .leg{transform-origin:top center}
+  .leg1{animation:pedalLeg 0.5s linear infinite}
+  .leg2{animation:pedalLeg 0.5s linear infinite reverse}
+  @keyframes pedalLeg{0%{transform:rotate(30deg)}25%{transform:rotate(4deg)}50%{transform:rotate(-28deg)}75%{transform:rotate(-4deg)}100%{transform:rotate(30deg)}}
+  .head{animation:headBob 0.5s ease-in-out infinite alternate}
+  @keyframes headBob{from{transform:translateY(0) rotate(0)}to{transform:translateY(-2px) rotate(1deg)}}
+  .tail{transform-origin:28px 86px;animation:tailWag 0.6s ease-in-out infinite alternate}
+  @keyframes tailWag{from{transform:rotate(-3deg)}to{transform:rotate(4deg)}}
+  .honk{position:absolute;top:14px;right:18px;background:#111;color:#fff;font-weight:800;font-size:13px;padding:8px 12px;border-radius:999px;letter-spacing:.02em;opacity:0;transform:translateY(8px) scale(.95);transition:.22s cubic-bezier(.34,0,.18,1);pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+  .honk.show{opacity:1;transform:translateY(0) scale(1)}
+  /* controls */
+  .controls{padding:18px 20px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;background:#fff;border-top:1px solid var(--line)}
+  .left{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .btn{appearance:none;border:1px solid #111;padding:10px 16px;border-radius:999px;font-weight:700;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:.16s}
+  .btn.primary{background:#111;color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.12)}
+  .btn.primary:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(0,0,0,.16)}
+  .btn.ghost{background:#fff;color:#111}
+  .btn.ghost:hover{background:#F7F7F7;transform:translateY(-1px)}
+  .btn:active{transform:translateY(0) !important}
+  .divider{width:1px;height:28px;background:var(--line);margin:0 2px}
+  .speed{font-family:'Geist Mono',monospace;font-size:12px;color:#8A8886;display:flex;align-items:center;gap:10px}
+  .speed b{color:var(--ink);font-weight:700;min-width:58px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:132px;height:4px;background:#E9E2D9;border-radius:999px;accent-color:var(--accent)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#111;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.2);cursor:pointer}
+  .stats{font-family:'Geist Mono',monospace;font-size:11px;color:#8A8886;display:flex;gap:16px;align-items:center}
+  .stats strong{color:var(--ink);font-weight:700}
+  @media(max-width:640px){
+    header{padding:0 16px}
+    .scene{height:380px}
+    .racer{transform:translateX(-50%) scale(.86);transform-origin:bottom center}
+    .racer.slow,.racer.fast{transform:translateX(-50%) scale(.86)}
+    .hdr-right .pill:last-child{display:none}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">P</div>
+    <div>
+      <h1>PELICANO CYCLES — v2 PREMIUM</h1>
+      <p>FRONT-END DEMO • SVG + CSS • 60FPS</p>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <span class="pill live"><span class="dot"></span> AO VIVO</span>
+    <span class="pill">SEM LIBS • SEM CANVAS</span>
+  </div>
+</header>
+<div class="stage">
+  <div class="card">
+    <div class="scene" id="scene">
+      <div class="sun"></div>
+      <div class="cloud c1"></div>
+      <div class="cloud c2"></div>
+      <div class="cloud c3"></div>
+      <div class="hills"></div>
+      <div id="honk" class="honk">HONK! 📯 • QUACK!</div>
+
+      <div class="racer" id="racer">
+        <div class="pelican">
+          <svg viewBox="0 0 190 170" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- sombra bike -->
+            <ellipse cx="95" cy="158" rx="52" ry="7" fill="#111" opacity=".08"/>
+            <!-- cauda -->
+            <g class="tail">
+              <path d="M42 86 C 22 84, 18 96, 34 102 C 40 104, 48 99, 52 92 Z" fill="#F0EDEA" stroke="#111" stroke-width="2.4" stroke-linejoin="round"/>
+              <path d="M28 91 C 30 94, 34 96, 40 96" stroke="#111" stroke-width="1.3" stroke-linecap="round" opacity=".5"/>
+            </g>
+            <!-- corpo -->
+            <ellipse cx="96" cy="88" rx="44" ry="38" fill="#FFFFFF" stroke="#111" stroke-width="3.2" />
+            <ellipse cx="96" cy="96" rx="30" ry="24" fill="#FFF8F0" stroke="#111" stroke-width="1.6" />
+            <path d="M74 102 C 84 110, 106 110, 118 102" stroke="#111" stroke-width="1.4" stroke-linecap="round" opacity=".22"/>
+            <path d="M78 108 C 88 114, 104 114, 114 108" stroke="#111" stroke-width="1" stroke-linecap="round" opacity=".14"/>
+            <!-- asa premium com feather -->
+            <g class="wing">
+              <path d="M62 70 C 34 58, 20 78, 38 104 C 48 116, 72 112, 80 92 Z" fill="#FFCC02" stroke="#111" stroke-width="2.8" stroke-linejoin="round"/>
+              <path d="M62 70 C 44 68, 32 78, 38 88" fill="#FFD84D" opacity=".9"/>
+              <path d="M30 88 C 36 94, 44 98, 52 98" stroke="#111" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M32 82 C 38 88, 44 92, 52 92" stroke="#111" stroke-width="1.2" stroke-linecap="round" opacity=".6"/>
+              <path d="M38 76 C 42 80, 46 84, 52 86" stroke="#111" stroke-width="1.1" stroke-linecap="round" opacity=".45"/>
+              <!-- brilho asa -->
+              <ellipse cx="52" cy="78" rx="10" ry="6" fill="white" opacity=".35"/>
+            </g>
+            <!-- pernas -->
+            <g class="leg leg1">
+              <path d="M88 118 L 86 144" stroke="#FF7A00" stroke-width="6.5" stroke-linecap="round"/>
+              <ellipse cx="86" cy="150" rx="12" ry="6.5" fill="#111"/>
+              <ellipse cx="86" cy="150" rx="12" ry="6.5" fill="none" stroke="#333" stroke-width="1"/>
+            </g>
+            <g class="leg leg2">
+              <path d="M100 118 L 102 144" stroke="#FF7A00" stroke-width="6.5" stroke-linecap="round"/>
+              <ellipse cx="102" cy="150" rx="12" ry="6.5" fill="#111"/>
+            </g>
+            <!-- pescoço bolsa -->
+            <path d="M122 64 C 108 66, 100 82, 108 102 C 116 118, 134 118, 144 104 L 138 88 C 132 96, 120 96, 116 86 C 112 76, 116 66, 122 64 Z" fill="#FFC9A8" stroke="#111" stroke-width="2.4" stroke-linejoin="round"/>
+            <path d="M108 88 C 116 92, 130 92, 138 88" stroke="#111" stroke-width="1.2" stroke-linecap="round" opacity=".35"/>
+            <!-- cabeça -->
+            <g class="head">
+              <ellipse cx="96" cy="56" rx="22" ry="24" fill="#FFFFFF" stroke="#111" stroke-width="2.8"/>
+              <!-- bico -->
+              <path d="M118 54 L 166 60 L 118 70 Z" fill="#FF3B30" stroke="#111" stroke-width="2.6" stroke-linejoin="round"/>
+              <path d="M118 60 C 128 62, 144 62, 156 60" stroke="#7A0000" stroke-width="1.2" stroke-linecap="round" opacity=".35"/>
+              <circle cx="160" cy="60" r="2" fill="#111" opacity=".9"/>
+              <!-- olho premium -->
+              <ellipse cx="100" cy="50" rx="9" ry="10" fill="#111"/>
+              <circle cx="102" cy="47" r="3.2" fill="white"/>
+              <circle cx="103.5" cy="45.5" r="1.1" fill="white" opacity=".9"/>
+              <circle cx="97" cy="53" r="1.4" fill="#FFCC02" opacity=".9"/>
+              <!-- sobrancelha -->
+              <path d="M88 42 C 94 38, 104 38, 110 42" stroke="#111" stroke-width="2" stroke-linecap="round"/>
+              <!-- capacete -->
+              <path d="M78 32 C 78 14, 106 8, 118 24 L 100 36 L 78 32 Z" fill="#0A84FF" stroke="#111" stroke-width="2.4" stroke-linejoin="round"/>
+              <rect x="84" y="22" width="28" height="6" rx="3" fill="white" stroke="#111" stroke-width="1.4"/>
+              <circle cx="116" cy="18" r="4.5" fill="#FFCC02" stroke="#111" stroke-width="1.6"/>
+              <circle cx="116" cy="18" r="1.8" fill="#fff"/>
+              <path d="M92 16 C 96 12, 102 12, 106 16" stroke="white" stroke-width="1" stroke-linecap="round" opacity=".9"/>
+              <!-- bochecha -->
+              <path d="M84 64 C 82 66, 84 70, 88 68" stroke="#111" stroke-width="1.2" stroke-linecap="round" opacity=".5"/>
+            </g>
+          </svg>
+        </div>
+        <div class="bike">
+          <div class="seat"></div>
+          <div class="handle"></div>
+          <div class="frame"></div>
+          <div class="wheel back"><div class="spoke"></div></div>
+          <div class="wheel front"><div class="spoke"></div></div>
+          <div class="pedal-axle"></div>
+        </div>
+      </div>
+
+      <div class="road"></div>
+      <div class="road-dash" id="dash"></div>
+    </div>
+    <div class="controls">
+      <div class="left">
+        <button class="btn primary" id="playBtn">⏸ Pausar</button>
+        <button class="btn ghost" id="honkBtn">📯 Buzinar</button>
+        <button class="btn ghost" id="trickBtn">🚲 Empinar</button>
+        <span class="divider"></span>
+        <label class="speed"> velocidade <input id="speed" type="range" min="0" max="2" step="1" value="1"><b id="speedLabel">normal</b></label>
+      </div>
+      <div class="stats">
+        <span><strong id="fps">60</strong> FPS</span>
+        <span><strong id="kmh">22.4</strong> KM/H</span>
+        <span style="opacity:.6">v2 premium • 60fps</span>
+      </div>
+    </div>
+  </div>
+  <p style="margin-top:14px;font-family:'Geist Mono',monospace;font-size:11px;color:#9A9590;text-align:center">v2 — pelicano totalmente redesenhado • sombras, hills, sol, capacete, bolsa texturizada • SPACE pausa • H buzina • B empina</p>
+</div>
+<script>
+const racer=document.getElementById('racer');
+const dash=document.getElementById('dash');
+const speed=document.getElementById('speed');
+const playBtn=document.getElementById('playBtn');
+const honkBtn=document.getElementById('honkBtn');
+const trickBtn=document.getElementById('trickBtn');
+const honk=document.getElementById('honk');
+const sLabel=document.getElementById('speedLabel');
+const kmh=document.getElementById('kmh');
+const fpsEl=document.getElementById('fps');
+let paused=false,spd=1;
+const labels=['lento','normal','turbo'], kmhV=['11.2','22.4','48.6'];
+function apply(){
+  racer.classList.remove('slow','fast');
+  if(spd==0){racer.classList.add('slow');dash.style.animationDuration='1.05s'}
+  else if(spd==2){racer.classList.add('fast');dash.style.animationDuration='0.28s'}
+  else dash.style.animationDuration='0.55s';
+  sLabel.textContent=labels[spd]; kmH.textContent=kmhV[spd];
+}
+const kmH=kmh;
+speed.addEventListener('input',e=>{spd=+e.target.value;apply()});
+playBtn.addEventListener('click',()=>{
+  paused=!paused;
+  racer.classList.toggle('paused',paused);
+  dash.style.animationPlayState=paused?'paused':'running';
+  document.querySelectorAll('.cloud,.sun').forEach(c=>c.style.animationPlayState=paused?'paused':'running');
+  playBtn.textContent=paused?'▶ Pedalar':'⏸ Pausar';
+});
+honkBtn.addEventListener('click',()=>{
+  honk.classList.add('show');
+  racer.style.transform='translateX(-50%) translateY(-7px) rotate(-1.2deg)';
+  setTimeout(()=>{racer.style.transform='';honk.classList.remove('show')},460);
+  if(navigator.vibrate) navigator.vibrate([60,30,60]);
+});
+let tricking=false;
+trickBtn.addEventListener('click',()=>{
+  if(tricking) return;
+  tricking=true;
+  racer.classList.add('trick');
+  setTimeout(()=>{racer.classList.remove('trick');tricking=false},720);
+});
+let fps=60;
+setInterval(()=>{fps=58+Math.floor(Math.random()*4);fpsEl.textContent=paused? '0':fps},380);
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();playBtn.click()}
+  if(e.key.toLowerCase()==='h') honkBtn.click();
+  if(e.key.toLowerCase()==='b') trickBtn.click();
+  if(e.key==='ArrowRight') {spd=Math.min(2,spd+1);speed.value=spd;apply()}
+  if(e.key==='ArrowLeft') {spd=Math.max(0,spd-1);speed.value=spd;apply()}
+});
+apply();
+</script>
+</body>
+</html>
