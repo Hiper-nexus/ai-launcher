@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.31.0"
+AI_LAUNCHER_VERSION="1.32.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -66,8 +66,8 @@ FL_MODEL="${AI_FL_MODEL:-huihui-ai/Qwen2.5-Coder-32B-Instruct-abliterated}"
 
 # ── Muse Spark (Meta AI) ─────────────────────────────────
 # API compatível com a Messages API da Anthropic (POST /v1/messages, SSE).
-# Dois caminhos: CLI própria (ai ms) falando direto com a API, e dentro do
-# Claude Code (ai ms claude / menu 3), que usa ANTHROPIC_BASE_URL.
+# Dois caminhos: CLI própria (ai ms / menu 18), falando direto com a API, e
+# dentro do Claude Code (ai ms claude / menu 3), via ANTHROPIC_BASE_URL.
 # É um modelo com raciocínio: parte dos tokens de saída vai para blocos
 # thinking/redacted_thinking, por isso o teto de tokens é alto por padrão —
 # com max_tokens baixo a resposta volta vazia (stop_reason=max_tokens).
@@ -4698,6 +4698,7 @@ while true; do
 claude_status=$(status_icon claude)
 glm_status=$(provider_cli_status_icon glm claude)
 muse_spark_status=$(provider_cli_status_icon muse-spark claude)
+muse_cli_status=$(muse_status_icon)   # CLI própria: só depende da key
 deepseek_status=$(provider_cli_status_icon deepseek claude)
 sakana_status=$(provider_cli_status_icon sakana codex)
 codex_status=$(status_icon codex)
@@ -4757,12 +4758,13 @@ menu_row 14 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
 menu_row 15 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
 menu_row 16 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
 menu_row 17 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 18 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 18 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 19 "$C_TOOL" "🔌 Providers"
-menu_tool 20 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 21 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 19 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 20 "$C_TOOL" "🔌 Providers"
+menu_tool 21 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 22 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -4781,7 +4783,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-21/0]: " choice
+read -rp "Escolha [1-22/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -4820,10 +4822,11 @@ case $choice in
    15) fl_dispatch || true ;;
    16) qwen_launch || true ;;
    17) qwen_launch_claude || true ;;
-   18) enter_repo_if_needed
+   18) muse_dispatch || true ;;
+   19) enter_repo_if_needed
        launch_codex_security ;;
-   19) provider_list ;;
-   20) flags_menu
+   20) provider_list ;;
+   21) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -4843,7 +4846,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   21) conta_menu ;;
+   22) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
