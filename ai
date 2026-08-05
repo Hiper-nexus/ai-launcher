@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.32.0"
+AI_LAUNCHER_VERSION="1.33.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -212,6 +212,20 @@ provider_url_legacy() {
         grep -F "${slot}=" "$PROVIDER_URLS_LEGACY_FILE" 2>/dev/null | grep "^${slot}=" | cut -d= -f2-
     fi
 }
+
+# ── Muse Spark: fonte única do modelo ────────────────────
+# O modelo era repetido em 7 lugares (MUSE_MODEL + PROVIDER_MODELS +
+# 5 vezes dentro de PROVIDER_EXTRA_ENV), então trocar de modelo exigia
+# mudar "no Claude e na CLI" separadamente. Agora os dois caminhos derivam
+# de MUSE_MODEL: env AI_MUSE_MODEL → providers.conf (slot 'muse-model')
+# → default. Trocar de modelo é `ai ms model <nome>`.
+[[ -z "${AI_MUSE_MODEL:-}" ]] && {
+    _muse_saved=$(provider_load_key muse-model 2>/dev/null || true)
+    [[ -n "$_muse_saved" ]] && MUSE_MODEL="$_muse_saved"
+    unset _muse_saved
+}
+PROVIDER_MODELS[muse-spark]="$MUSE_MODEL"
+PROVIDER_EXTRA_ENV[muse-spark]="API_TIMEOUT_MS=600000 ANTHROPIC_MODEL=${MUSE_MODEL} ANTHROPIC_DEFAULT_HAIKU_MODEL=${MUSE_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${MUSE_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${MUSE_MODEL} CLAUDE_CODE_SUBAGENT_MODEL=${MUSE_MODEL} ENABLE_TOOL_SEARCH=true"
 
 provider_save_key() {
     local provider="$1" key="$2"
@@ -3351,28 +3365,153 @@ for m in d.get("data", []):
 PY
 }
 
-# ai ms                → CLI própria (REPL)
-# ai ms "pergunta"     → one-shot
-# ai ms claude [args]  → Claude Code usando Muse Spark (yolo)
+# Reaponta o caminho do Claude Code para outro modelo. PROVIDER_EXTRA_ENV é
+# montado no boot a partir de MUSE_MODEL; com -m precisa ser remontado antes
+# do provider_setup_env, senão o Claude sobe no modelo antigo.
+muse_apply_model_env() {
+    local m="$1"
+    PROVIDER_MODELS[muse-spark]="$m"
+    PROVIDER_EXTRA_ENV[muse-spark]="API_TIMEOUT_MS=600000 ANTHROPIC_MODEL=${m} ANTHROPIC_DEFAULT_HAIKU_MODEL=${m} ANTHROPIC_DEFAULT_SONNET_MODEL=${m} ANTHROPIC_DEFAULT_OPUS_MODEL=${m} CLAUDE_CODE_SUBAGENT_MODEL=${m} ENABLE_TOOL_SEARCH=true"
+}
+
+# Confere se o modelo existe para esta key antes de gravar: a API responde
+# 404 "Model not found or access denied" para modelo inexistente ou fora do
+# seu tier, e gravar um modelo morto quebraria os dois caminhos de uma vez.
+muse_probe_model() {
+    local m="$1" key
+    key=$(muse_api_key); [[ -z "$key" ]] && return 2
+    require_python >/dev/null 2>&1 || return 2
+    MUSE_URLV="$MUSE_HOST" MUSE_KEY="$key" MUSE_MODELV="$m" python3 - <<'PY'
+import json, os, sys, urllib.request, urllib.error
+body = json.dumps({"model": os.environ["MUSE_MODELV"], "max_tokens": 16,
+                   "messages": [{"role": "user", "content": "ok"}]}).encode()
+req = urllib.request.Request(os.environ["MUSE_URLV"].rstrip("/") + "/v1/messages", data=body,
+    headers={"x-api-key": os.environ["MUSE_KEY"], "anthropic-version": "2023-06-01",
+             "content-type": "application/json"})
+try:
+    urllib.request.urlopen(req, timeout=60); sys.exit(0)
+except urllib.error.HTTPError as e:
+    print(e.read().decode("utf-8", "replace")[:200], file=sys.stderr); sys.exit(1)
+except Exception as e:
+    print(str(e)[:200], file=sys.stderr); sys.exit(2)
+PY
+}
+
+# Grava o modelo escolhido — vale para a CLI e para o Claude Code.
+muse_save_model() {
+    local m="${1:-}"
+    [[ -z "$m" ]] && { echo -e "${RED}Uso: ai ms model <nome>${RESET}" >&2; return 1; }
+    echo -en "  ${DIM}testando ${m}…${RESET}"
+    # set -e aborta a função na atribuição se a substituição falhar — o '||'
+    # transforma em condição e deixa o erro chegar até o usuário.
+    local out rc=0
+    out=$(muse_probe_model "$m" 2>&1) || rc=$?
+    echo -en "\r\033[K"
+    case "$rc" in
+        0) ;;
+        2) echo -e "  ${YELLOW}não deu para testar${RESET} ${DIM}(sem key ou sem python3)${RESET}" ;;
+        *)
+            echo -e "  ${RED}✗ ${m} não respondeu:${RESET} ${DIM}${out}${RESET}" >&2
+            echo -e "  ${DIM}Veja os disponíveis com: ai ms ls${RESET}" >&2
+            return 1
+            ;;
+    esac
+    provider_save_key muse-model "$m" || return 1
+    MUSE_MODEL="$m"
+    muse_apply_model_env "$m"
+    echo -e "  ${GREEN}✔ Muse Spark agora usa ${BOLD}${m}${RESET}${GREEN} na CLI e no Claude Code${RESET}"
+}
+
+# Seletor: catálogo da API + o que já estiver salvo + digitar um nome.
+muse_model_menu() {
+    local -a models=()
+    local line
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && models+=("$line")
+    done < <(muse_list 2>/dev/null | sed -n 's/^  \([^ ]*\)  .*/\1/p')
+
+    if (( ${#models[@]} == 0 )); then
+        echo -e "${YELLOW}Não consegui listar o catálogo.${RESET} ${DIM}Informe o nome direto.${RESET}"
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Modelo do Muse Spark${RESET} ${DIM}(vale para a CLI e para o Claude Code)${RESET}"
+    echo ""
+    local i n=0
+    for i in "${models[@]}"; do
+        n=$((n+1))
+        if [[ "$i" == "$MUSE_MODEL" ]]; then
+            printf "  ${BOLD}%2s)${RESET} %b%s${RESET}  ${GREEN}← atual${RESET}\n" "$n" "$C_MUSE" "$i"
+        else
+            printf "  ${BOLD}%2s)${RESET} %b%s${RESET}\n" "$n" "$C_MUSE" "$i"
+        fi
+    done
+    n=$((n+1))
+    printf "  ${BOLD}%2s)${RESET} ${DIM}outro (digitar o nome)${RESET}\n" "$n"
+    echo -e "  ${DIM} 0) cancelar${RESET}"
+    echo ""
+
+    local choice
+    read -rp "Escolha [1-${n}/0]: " choice
+    choice=$(normalize_choice "$choice")
+    [[ "$choice" == "0" || -z "$choice" ]] && { echo "Cancelado."; return 0; }
+
+    if [[ "$choice" == "$n" ]]; then
+        local custom
+        read -rp "  Nome do modelo: " custom
+        muse_save_model "$custom"
+        return $?
+    fi
+
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#models[@]} )); then
+        muse_save_model "${models[choice-1]}"
+        return $?
+    fi
+    echo -e "${RED}Opção inválida.${RESET}" >&2
+    return 1
+}
+
+# ai ms                  → CLI própria (REPL)
+# ai ms "pergunta"       → one-shot
+# ai ms claude [args]    → Claude Code usando Muse Spark (yolo)
+# ai ms model [nome]     → escolhe o modelo dos dois caminhos
+# -m <nome> vale para os dois e pode vir antes ou depois de 'claude'
 muse_dispatch() {
-    local sub="${1:-}"
-    local model="$MUSE_MODEL"
-    case "$sub" in
-        claude|cc|code)
+    local model="$MUSE_MODEL" mode="cli"
+
+    case "${1:-}" in
+        model|m)
             shift || true
-            parse_global_flags "$@"
-            set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
-            provider_setup_env "muse-spark" || return 1
-            enter_repo_if_needed
-            launch "Muse Spark (Meta AI)" claude "$CLAUDE_PROMPT_FLAG" MUSE_FLAGS "$@"
+            if [[ -n "${1:-}" ]]; then muse_save_model "$1"; else muse_model_menu; fi
             return $?
             ;;
-        key|token)  shift || true; muse_save_key "${1:-}"; return $? ;;
-        ls|list)    muse_list; return $? ;;
-        -m|--model) shift || true; model="${1:-}"
-                    [[ -z "$model" ]] && { echo -e "${RED}Uso: ai ms -m <modelo>${RESET}"; return 1; }
-                    shift || true ;;
+        key|token) shift || true; muse_save_key "${1:-}"; return $? ;;
+        ls|list)   muse_list; return $? ;;
     esac
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            claude|cc|code) mode="claude"; shift ;;
+            -m|--model)
+                shift || true
+                model="${1:-}"
+                [[ -z "$model" ]] && { echo -e "${RED}Uso: ai ms -m <modelo>${RESET}" >&2; return 1; }
+                shift || true
+                ;;
+            *) break ;;
+        esac
+    done
+
+    if [[ "$mode" == "claude" ]]; then
+        muse_apply_model_env "$model"
+        parse_global_flags "$@"
+        set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+        provider_setup_env "muse-spark" || return 1
+        enter_repo_if_needed
+        launch "Muse Spark (${model})" claude "$CLAUDE_PROMPT_FLAG" MUSE_FLAGS "$@"
+        return $?
+    fi
+
     muse_chat "$model" "$@"
 }
 
@@ -3774,6 +3913,7 @@ CLIs de IA:
   glm, zai               Abre Claude Code usando GLM/Z.ai
   ms, muse-spark         CLI própria do Muse Spark (Meta AI)
   ms claude              Abre Claude Code usando Muse Spark (yolo)
+  ms model [nome]        Escolhe o modelo — vale para os dois caminhos
   deepseek, ds           Abre Claude Code usando DeepSeek
   codex,  x              Abre Codex CLI
   sakana, fugu           Abre Codex com Sakana Fugu
@@ -3898,10 +4038,13 @@ Exemplos:
   ai glm                          Claude via GLM/Z.ai
   ai ms                           Muse Spark na CLI própria (REPL)
   ai ms "resuma este repo"        Muse Spark one-shot
-  ai ms -m muse-spark-1.1         Muse Spark em outro modelo
+  ai ms model                     Escolhe o modelo (CLI + Claude Code)
+  ai ms model muse-spark-1.1      Troca direto, sem menu
+  ai ms -m muse-spark-1.1         Só nesta execução
   ai ms ls                        Lista modelos do Muse Spark
   ai ms key                       Salva a key do Muse Spark
   ai ms claude                    Claude Code via Muse Spark (yolo)
+  ai ms -m muse-spark-1.1 claude  Claude Code em outro modelo
   ai ds                           Claude via DeepSeek
   ai x                            Codex
   ai fugu                         Codex via Sakana Fugu

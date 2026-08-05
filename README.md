@@ -46,7 +46,7 @@ ai --help       # Ajuda
 |-----|--------|-------------|
 | Claude Code | `ai c` | `--dangerously-skip-permissions` |
 | GLM/Z.ai | `ai glm` | Claude Code via provider `glm` |
-| Muse Spark (Meta AI) | `ai ms` | CLI própria (REPL/one-shot) via `api.meta.ai`; `ai ms claude` abre no Claude Code (yolo) |
+| Muse Spark (Meta AI) | `ai ms` | CLI própria (REPL/one-shot) via `api.meta.ai`; `ai ms claude` abre no Claude Code (yolo); `ai ms model` escolhe o modelo para os dois caminhos |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]` | Codex profile `fugu` |
 | Gemini | `ai g` | `--yolo` |
