@@ -202,6 +202,17 @@ provider_load_key() {
     fi
 }
 
+# Endpoints gravados por versões antigas em provider-urls.conf. Só leitura:
+# nada novo é escrito aqui, serve para não perder config de quem já tinha.
+PROVIDER_URLS_LEGACY_FILE="${HOME}/.local/share/ai-launcher/provider-urls.conf"
+provider_url_legacy() {
+    local slot="$1"
+    _validate_provider_name "$slot" || return 1
+    if [[ -f "$PROVIDER_URLS_LEGACY_FILE" ]]; then
+        grep -F "${slot}=" "$PROVIDER_URLS_LEGACY_FILE" 2>/dev/null | grep "^${slot}=" | cut -d= -f2-
+    fi
+}
+
 provider_save_key() {
     local provider="$1" key="$2"
     _validate_provider_name "$provider" || { echo -e "${RED}Nome de provider inválido.${RESET}"; return 1; }
@@ -3380,6 +3391,12 @@ qwen_api_key() {
 qwen_base_url() {
     local u="${QWEN_BASE_URL:-}"
     [[ -z "$u" ]] && u=$(provider_load_key qwen-base-url 2>/dev/null || true)
+    # Compat: versões antigas gravavam o endpoint em provider-urls.conf (slots
+    # 'qwen-openai'/'qwen'), arquivo que o launcher parou de ler. Sem este
+    # fallback a key do Token Plan cai no endpoint genérico e devolve 401 —
+    # com ✔ no menu, porque o status só checa se existe key.
+    [[ -z "$u" ]] && u=$(provider_url_legacy qwen-openai)
+    [[ -z "$u" ]] && u=$(provider_url_legacy qwen)
     [[ -z "$u" ]] && u="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     printf '%s' "$u"
 }
@@ -3447,6 +3464,17 @@ qwen_dispatch() {
 qwen_anthropic_url() {
     local u="${AI_QWEN_ANTHROPIC_URL:-}"
     [[ -z "$u" ]] && u=$(provider_load_key qwen-anthropic-url 2>/dev/null || true)
+    # Deriva do endpoint OpenAI quando ele tem host próprio: planos como o
+    # Token Plan servem o Anthropic em <host>/apps/anthropic, e o host
+    # genérico (coding.dashscope) devolve 401 para essas keys.
+    if [[ -z "$u" ]]; then
+        local base host
+        base=$(qwen_base_url)
+        host=$(printf '%s' "$base" | sed -E 's#^(https?://[^/]+).*#\1#')
+        if [[ -n "$host" && "$host" != *dashscope-intl.aliyuncs.com* ]]; then
+            u="${host}/apps/anthropic"
+        fi
+    fi
     [[ -z "$u" ]] && u="https://coding.dashscope.aliyuncs.com/apps/anthropic"
     printf '%s' "$u"
 }
