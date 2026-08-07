@@ -87,6 +87,41 @@ brew install can1357/tap/omp     # ou: curl -fsSL https://omp.sh/install | sh
 brew upgrade can1357/tap/omp     # atualizar
 ```
 
+### Máquina nova: `ai omp tune`
+
+```bash
+ai omp tune          # afinação + credenciais
+ai omp tune --dry    # mostra o que faria, sem gravar
+ai omp tune config   # só as settings
+ai omp tune env      # só as keys
+```
+
+Duas metades com destinos diferentes:
+
+- **Afinação** — vive neste repo (array `OMP_TUNE` no script). O `config.yml` do
+  omp só tem roles de modelo e flags de comportamento, nenhum segredo, então
+  versionar é seguro e a mesma afinação roda em qualquer máquina.
+- **Credenciais** — saem do `providers.conf` local (chmod 600) para
+  `~/.omp/agent/.env`, também 600. Nunca passam pelo git.
+
+É idempotente, preserva variáveis que você escreveu à mão no `.env`, e uma chave
+que não exista na versão instalada do omp é reportada e pulada em vez de abortar
+o resto. `ai omp setup` continua abrindo o wizard do próprio omp.
+
+O que a afinação liga, e por quê:
+
+| chave | por quê |
+|---|---|
+| `lsp.diagnosticsOnEdit` | por padrão o LSP só reporta em `write`; o agente **edita** muito mais do que cria arquivo |
+| `checkpoint.enabled` | expõe `checkpoint`/`rewind` — undo de turno |
+| `features.unexpectedStopDetection` | reprompta quando ele diz "vou continuar" e para |
+| `retry.fallbackChains` | com vários providers ligados, um 429 cai na cadeia em vez de parar |
+| `task.isolation.mode: auto` | subagents editam em paralelo em clone CoW, sem conflito |
+| `task.enableLsp` | subagent escrevia código sem diagnostics |
+| `bashInterceptor.enabled` | bloqueia `cat`/`sed -i` e força as ferramentas próprias |
+| `memory.backend: mnemopi` | pipeline no role `smol`; o backend `local` usa o `default` (caro) |
+| roles `smol`/`commit` em modelo barato | o `smol` roda N vezes por tarefa no fan-out |
+
 ### Providers por API key
 
 O omp lê `~/.omp/agent/.env` (chmod 600) antes de qualquer lookup de provider.
@@ -104,8 +139,13 @@ Precedência: env já exportado > `<cwd>/.env` > `~/.omp/agent/.env` > `~/.omp/.
 
 ### Providers por OAuth
 
-Assinaturas não usam key — entram com `/login <provider>` **dentro** da sessão
-do omp (abre o browser). Cada provider é independente:
+**Normalmente você não precisa fazer nada.** O omp lê as credenciais que as
+outras CLIs já gravaram no disco (`~/.codex`, `~/.cursor`, `~/.antigravity`,
+`~/.kimi`, `~/.grok`), então Codex, Cursor, Antigravity, Kimi e SuperGrok
+aparecem em `ai omp usage` sem um único login. Confira antes de logar de novo.
+
+Se algum não aparecer, entre com `/login <provider>` **dentro** da sessão do omp
+(abre o browser). Cada provider é independente:
 
 | CLI equivalente | Comando no omp |
 |-----------------|----------------|

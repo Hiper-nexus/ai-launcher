@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.34.0"
+AI_LAUNCHER_VERSION="1.35.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -179,6 +179,70 @@ declare -A PROVIDER_EXTRA_ENV=(
     [lmstudio]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
     [muse-spark]="API_TIMEOUT_MS=600000 ANTHROPIC_MODEL=muse-spark-1.2 ANTHROPIC_DEFAULT_HAIKU_MODEL=muse-spark-1.2 ANTHROPIC_DEFAULT_SONNET_MODEL=muse-spark-1.2 ANTHROPIC_DEFAULT_OPUS_MODEL=muse-spark-1.2 CLAUDE_CODE_SUBAGENT_MODEL=muse-spark-1.2 ENABLE_TOOL_SEARCH=true"
+)
+
+# ── omp (oh-my-pi): afinação padrão ──────────────────────
+# O config.yml do omp não guarda segredo nenhum — só roles de modelo e flags
+# de comportamento — então a afinação mora aqui no repo e roda igual em
+# qualquer máquina com 'ai omp tune'. As API keys NÃO vêm daqui: saem do
+# providers.conf local (chmod 600) para ~/.omp/agent/.env, que nunca é
+# versionado. Cada linha é 'chave=valor' aplicada com 'omp config set'.
+#
+# Chave que não existir na versão instalada do omp é reportada e pulada, não
+# aborta o resto — o catálogo de settings muda entre releases.
+OMP_TUNE=(
+    # Caro onde raciocínio paga, barato no fan-out. O 'smol' roda N vezes por
+    # tarefa: effort alto ali queima cota sem melhorar resultado.
+    'modelRoles={"default":"anthropic/claude-opus-5:high","slow":"anthropic/claude-opus-5:max","plan":"anthropic/claude-opus-5:xhigh","smol":"zai/glm-4.7-flash:low","commit":"zai/glm-4.7-flash:minimal","advisor":"zai/glm-4.7:medium"}'
+
+    # O agente pega o próprio erro. diagnosticsOnEdit é a que mais importa:
+    # por padrão o LSP só reporta em 'write', e o agente edita muito mais do
+    # que cria arquivo — o erro de tipo passava batido.
+    'lsp.diagnosticsOnEdit=true'
+    'lsp.formatOnWrite=true'
+    'checkpoint.enabled=true'
+    'features.unexpectedStopDetection=true'
+    'advisor.enabled=true'
+
+    # Não travar no meio: troca de provider antes de bater cota, e cai numa
+    # cadeia em vez de morrer no 429. O 'smol' cai para OUTRO provider de
+    # propósito — fallback dentro do mesmo provider morre junto com ele.
+    'retry.usageAwareFallback=true'
+    'retry.fallbackChains={"default":["zai/glm-5.2","alibaba-token-plan/qwen3.8-max"],"smol":["alibaba-token-plan/qwen3.6-flash","deepseek/deepseek-v4-flash"]}'
+
+    # Subagents: isolamento CoW (no macOS, clone APFS) para edição paralela
+    # sem conflito, LSP ligado e effort próprio por spawn.
+    'task.isolation.mode=auto'
+    'task.enableLsp=true'
+    'task.enableEffort=true'
+
+    # Ferramentas extras. bashInterceptor bloqueia cat/grep/sed -i e força as
+    # ferramentas próprias, que é onde os edits param de sair torto.
+    'github.enabled=true'
+    'astGrep.enabled=true'
+    'security.enabled=true'
+    'bashInterceptor.enabled=true'
+
+    # Memória: mnemopi e não o backend 'local' porque o pipeline do 'local'
+    # roda no role 'default' (aqui, Opus) enquanto o mnemopi roda no 'smol'.
+    # Também expõe recall/retain/reflect ao agente em vez de só injetar um
+    # resumo no começo da sessão.
+    'memory.backend=mnemopi'
+    'mnemopi.scoping=per-project-tagged'
+    'autolearn.enabled=true'
+    'autolearn.autoContinue=false'
+)
+
+# Slot do providers.conf -> variáveis de ambiente que o omp lê. Um slot pode
+# alimentar mais de uma variável. A ordem é fixa para o .env gerado não mudar
+# de conteúdo a cada execução.
+OMP_ENV_SLOTS=(glm sakana deepseek qwen muse-spark)
+declare -A OMP_ENV_MAP=(
+    [glm]="ZAI_API_KEY"
+    [sakana]="SAKANA_API_KEY"
+    [deepseek]="DEEPSEEK_API_KEY"
+    [qwen]="ALIBABA_TOKEN_PLAN_API_KEY BAILIAN_TOKEN_PLAN_API_KEY"
+    [muse-spark]="META_API_KEY"
 )
 
 clear_anthropic_provider_env() {
@@ -2348,6 +2412,123 @@ omp_install_hint() {
     echo "  Ou:      curl -fsSL https://omp.sh/install | sh"
 }
 
+# Aplica OMP_TUNE via 'omp config set'. Idempotente: rodar de novo não muda
+# nada. Chave recusada pelo omp é reportada e pulada — versões diferentes têm
+# catálogos de settings diferentes, e abortar no meio deixaria a máquina com
+# metade da afinação.
+omp_tune_apply() {
+    local dry=false
+    [[ "${1:-}" == "--dry" ]] && dry=true
+
+    local entry key val applied=0 skipped=0
+    if [[ "$dry" == true ]]; then
+        echo -e "${BOLD}Afinação do omp${RESET} ${DIM}(simulação — nada é gravado)${RESET}"
+    else
+        echo -e "${BOLD}Afinação do omp${RESET} ${DIM}(${#OMP_TUNE[@]} chaves)${RESET}"
+    fi
+
+    for entry in "${OMP_TUNE[@]}"; do
+        key="${entry%%=*}"
+        val="${entry#*=}"
+        if [[ "$dry" == true ]]; then
+            printf "  ${DIM}%-32s${RESET} %s\n" "$key" "${val:0:56}"
+            continue
+        fi
+        if omp config set "$key" "$val" >/dev/null 2>&1; then
+            printf "  ${GREEN}✔${RESET} %s\n" "$key"
+            applied=$((applied + 1))
+        else
+            printf "  ${YELLOW}–${RESET} %s ${DIM}(não existe nesta versão do omp)${RESET}\n" "$key"
+            skipped=$((skipped + 1))
+        fi
+    done
+
+    [[ "$dry" == true ]] && return 0
+    echo -e "  ${DIM}${applied} aplicadas, ${skipped} puladas${RESET}"
+    return 0
+}
+
+# Copia as keys do providers.conf para ~/.omp/agent/.env, que o omp lê antes
+# de qualquer lookup de provider. Variáveis que este comando não gerencia são
+# preservadas — quem editou o .env à mão não perde o que escreveu.
+omp_env_sync() {
+    local dest="${HOME}/.omp/agent/.env"
+    mkdir -p "${dest%/*}"
+
+    local slot var managed=""
+    for slot in "${OMP_ENV_SLOTS[@]}"; do
+        managed+=" ${OMP_ENV_MAP[$slot]}"
+    done
+
+    # mktemp cria com 0600, então a key nunca fica legível no caminho.
+    local tmp
+    tmp="$(mktemp)" || { echo -e "${RED}Erro: mktemp falhou.${RESET}"; return 1; }
+
+    local line k
+    if [[ -f "$dest" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ -z "$line" || "$line" == \#* ]] && continue
+            k="${line%%=*}"
+            [[ " $managed " == *" $k "* ]] && continue
+            printf '%s\n' "$line" >> "$tmp"
+        done < "$dest"
+    fi
+
+    {
+        echo "# omp — keys herdadas do ai-launcher. Gerado por 'ai omp tune'."
+        echo "# Fonte: ${PROVIDERS_FILE} · NÃO versionar."
+    } >> "$tmp"
+
+    local value found=0
+    for slot in "${OMP_ENV_SLOTS[@]}"; do
+        value="$(provider_load_key "$slot" 2>/dev/null || true)"
+        [[ -z "$value" ]] && continue
+        for var in ${OMP_ENV_MAP[$slot]}; do
+            printf '%s=%s\n' "$var" "$value" >> "$tmp"
+        done
+        found=$((found + 1))
+    done
+
+    mv "$tmp" "$dest"
+    chmod 600 "$dest"
+
+    echo -e "${BOLD}Credenciais do omp${RESET}"
+    if (( found == 0 )); then
+        echo -e "  ${YELLOW}Nenhuma key encontrada em ${PROVIDERS_FILE}${RESET}"
+        echo -e "  ${DIM}Salve uma com: ai p add glm <key>${RESET}"
+    else
+        # Só os NOMES das variáveis — o valor nunca vai para a tela.
+        for slot in "${OMP_ENV_SLOTS[@]}"; do
+            [[ -z "$(provider_load_key "$slot" 2>/dev/null || true)" ]] && continue
+            printf "  ${GREEN}✔${RESET} %-12s ${DIM}→ %s${RESET}\n" "$slot" "${OMP_ENV_MAP[$slot]}"
+        done
+    fi
+    echo -e "  ${DIM}${dest} (chmod 600)${RESET}"
+    return 0
+}
+
+omp_tune_dispatch() {
+    if ! check_installed omp; then
+        echo -e "${RED}Erro: omp não está instalado.${RESET}"
+        omp_install_hint
+        return 1
+    fi
+    case "${1:-}" in
+        ""|all)   omp_tune_apply && echo "" && omp_env_sync ;;
+        --dry|-n) omp_tune_apply --dry ;;
+        config)   omp_tune_apply ;;
+        env)      omp_env_sync ;;
+        *)
+            echo "Uso: ai omp tune [--dry|config|env]"
+            echo "  (vazio)   afinação + credenciais"
+            echo "  --dry     mostra o que seria aplicado, sem gravar"
+            echo "  config    só as settings do omp"
+            echo "  env       só as keys, do providers.conf para ~/.omp/agent/.env"
+            return 1
+            ;;
+    esac
+}
+
 status_icon() {
     local cmd="$1"
     if ! check_installed "$cmd"; then
@@ -4080,6 +4261,8 @@ Exemplos:
   ai omp --via glm "tarefa"       omp preso num provider (glm→zai, qwen→alibaba…)
   ai omp models                   Lista providers/modelos que o omp enxerga
   ai omp usage                    Uso e limites das contas autenticadas no omp
+  ai omp tune                     Afina o omp nesta máquina (roles + keys)
+  ai omp tune --dry               Mostra o que a afinação faria, sem gravar
   ai sec                          Codex Security no repo atual
   ai sec scan . --mode deep       Scan profundo de segurança
   ai ol                           Chat no Ollama Cloud (minimax-m3)
@@ -4686,6 +4869,13 @@ elif [[ ${1:-} == "omp" || ${1:-} == "o" || ${1:-} == "oh-my-pi" ]]; then
         echo -e "${RED}Erro: omp não está instalado.${RESET}"
         omp_install_hint
         exit 1
+    fi
+    # 'tune' é do launcher, não do omp — precisa vir antes do passthrough.
+    # ('ai omp setup' continua chegando no wizard do próprio omp.)
+    if [[ "${1:-}" == "tune" ]]; then
+        shift
+        omp_tune_dispatch "$@"
+        exit $?
     fi
     # Subcomandos e flags informativas do omp passam direto, sem yolo nem
     # prompt-flag (senão '--version' viraria o prompt da sessão).
