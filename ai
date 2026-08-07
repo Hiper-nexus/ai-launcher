@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.33.0"
+AI_LAUNCHER_VERSION="1.34.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -32,6 +32,7 @@ KIMI_FLAGS=(--yolo)
 GROK_FLAGS=(--always-approve --permission-mode bypassPermissions)
 QODER_FLAGS=(--dangerously-skip-permissions)
 CURSOR_FLAGS=(--yolo --sandbox disabled --approve-mcps --trust)
+OMP_FLAGS=(--yolo)
 # Muse Spark é yolo por definição: não entra no Toggle Flags, então continua
 # sem aprovação mesmo se o usuário desligar o yolo global do Claude Code.
 MUSE_FLAGS=(--dangerously-skip-permissions)
@@ -98,6 +99,8 @@ KIMI_PROMPT_FLAG="-p"
 GROK_PROMPT_FLAG="-p"
 QODER_PROMPT_FLAG="-p"
 CURSOR_PROMPT_FLAG="-p"
+# omp: -p é o modo print (one-shot headless), mesma convenção do Claude/Codex.
+OMP_PROMPT_FLAG="-p"
 
 # Perfis do Claude (flags extras por modo)
 get_claude_profile_flags() {
@@ -2197,6 +2200,7 @@ C_GROK=$(_fg    229 231 235 252 90)  # cinza claro xAI
 C_AGY=$(_fg      34 211 238  51 36)  # ciano Antigravity
 C_QODER=$(_fg   167 139 250 141 35)  # lavanda Qoder
 C_CURSOR=$(_fg  148 163 184 145 90)  # ardósia Cursor
+C_OMP=$(_fg     251 146  60 208 33)  # laranja omp (oh-my-pi)
 C_OLLAMA=$(_fg  245 245 245 255 37)  # branco Ollama
 C_HF=$(_fg      255 214  10 220 33)  # amarelo Hugging Face
 C_FL=$(_fg      132 204  22 148 32)  # lima Featherless
@@ -2336,6 +2340,14 @@ check_installed() {
     command -v "$1" &>/dev/null
 }
 
+# Dica de instalação do omp. Vive numa função porque o bloco 'ai omp' faz
+# exec direto nos subcomandos (pulando launch()), então o aviso precisa
+# existir nos dois caminhos sem duplicar a URL.
+omp_install_hint() {
+    echo "  Instale: brew install can1357/tap/omp"
+    echo "  Ou:      curl -fsSL https://omp.sh/install | sh"
+}
+
 status_icon() {
     local cmd="$1"
     if ! check_installed "$cmd"; then
@@ -2390,6 +2402,7 @@ launch() {
         GROK_FLAGS)   flags_ref=("${GROK_FLAGS[@]+"${GROK_FLAGS[@]}"}") ;;
         QODER_FLAGS)  flags_ref=("${QODER_FLAGS[@]+"${QODER_FLAGS[@]}"}") ;;
         CURSOR_FLAGS) flags_ref=("${CURSOR_FLAGS[@]+"${CURSOR_FLAGS[@]}"}") ;;
+        OMP_FLAGS)    flags_ref=("${OMP_FLAGS[@]+"${OMP_FLAGS[@]}"}") ;;
         *)
             echo -e "${RED}Erro interno: array de flags desconhecida (${flags_name}).${RESET}"
             exit 1
@@ -2406,6 +2419,7 @@ launch() {
             kimi)   echo "  Instale: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash" ;;
             grok)   echo "  Instale: curl -fsSL https://x.ai/cli/install.sh | bash" ;;
             qodercli) echo "  Instale: npm install -g @qoder-ai/qodercli" ;;
+            omp)    omp_install_hint ;;
             cursor-agent)
                 echo "  Instale: curl https://cursor.com/install -fsS | bash"
                 echo -e "  ${YELLOW}Aviso:${RESET} o instalador sobrescreve ~/.local/bin/agent"
@@ -4060,6 +4074,12 @@ Exemplos:
   ai qoder "prompt"               Qoder CLI com prompt direto
   ai cu                           Cursor Agent CLI (modo yolo)
   ai cursor "prompt"              Cursor Agent com prompt direto
+  ai omp / ai o                   omp (oh-my-pi) no modo yolo
+  ai omp "refatora isso"          omp one-shot (modo print)
+  ai omp -m glm-5.2 "tarefa"      omp em outro modelo (fuzzy match)
+  ai omp --via glm "tarefa"       omp preso num provider (glm→zai, qwen→alibaba…)
+  ai omp models                   Lista providers/modelos que o omp enxerga
+  ai omp usage                    Uso e limites das contas autenticadas no omp
   ai sec                          Codex Security no repo atual
   ai sec scan . --mode deep       Scan profundo de segurança
   ai ol                           Chat no Ollama Cloud (minimax-m3)
@@ -4660,6 +4680,66 @@ elif [[ ${1:-} == "cursor" || ${1:-} == "cu" || ${1:-} == "cursor-agent" ]]; the
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS "$@"
+elif [[ ${1:-} == "omp" || ${1:-} == "o" || ${1:-} == "oh-my-pi" ]]; then
+    shift
+    if ! check_installed omp; then
+        echo -e "${RED}Erro: omp não está instalado.${RESET}"
+        omp_install_hint
+        exit 1
+    fi
+    # Subcomandos e flags informativas do omp passam direto, sem yolo nem
+    # prompt-flag (senão '--version' viraria o prompt da sessão).
+    case "${1:-}" in
+        models|usage|setup|update|config|auth-broker|auth-gateway|stats|commit|\
+        plugin|install|agents|completions|gc|search|read|token|bench|worktree|shell|\
+        --help|-h|--version|-v)
+            exec omp "$@"
+            ;;
+    esac
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    _omp_has_model=false
+    # Flags conhecidas do omp: repassadas; o resto vira prompt (convenção do launcher)
+    while [[ $# -gt 0 && ${1:-} == -* ]]; do
+        case "$1" in
+            -m|--model)    shift
+                           [[ $# -gt 0 ]] && OMP_FLAGS+=("--model" "$1") &&
+                               _omp_has_model=true && shift ;;
+            -c|--continue) OMP_FLAGS+=("--continue"); _is_continuing=true; shift ;;
+            -r|--resume)   OMP_FLAGS+=("--resume"); _is_continuing=true; shift
+                           [[ $# -gt 0 && "${1:0:1}" != "-" ]] && OMP_FLAGS+=("$1") && shift ;;
+            --thinking|--smol|--slow|--plan|--profile|--max-time|--tools|--skills)
+                           _omp_flag="$1"; shift
+                           [[ $# -gt 0 ]] && OMP_FLAGS+=("$_omp_flag" "$1") && shift ;;
+            --advisor|--no-lsp|--no-tools|--no-pty|--no-skills|--no-rules|\
+            --no-session|--no-extensions|--plan-yolo|--prewalk|--no-prewalk)
+                           OMP_FLAGS+=("$1"); shift ;;
+            --*=*)         OMP_FLAGS+=("$1"); shift ;;
+            *)             break ;;
+        esac
+    done
+    # --via <slot> usa os mesmos nomes do resto do launcher, traduzidos para o
+    # id de provider do omp (que tem catálogo próprio). Vem depois do loop
+    # porque, como nas outras CLIs, o --model do provider só entra quando o
+    # usuário não passou -m — senão o omp receberia dois --model.
+    if [[ -n "$_active_provider" ]]; then
+        _omp_model=""
+        case "$_active_provider" in
+            glm|zai|z.ai)       _omp_provider="zai";                _omp_model="glm-5.2" ;;
+            deepseek|ds)        _omp_provider="deepseek";           _omp_model="${PROVIDER_MODELS[deepseek]}" ;;
+            sakana|fugu)        _omp_provider="sakana";             _omp_model="${PROVIDER_MODELS[sakana]}" ;;
+            muse-spark|ms|meta) _omp_provider="meta";               _omp_model="${MUSE_MODEL}" ;;
+            qwen|qw|dashscope)  _omp_provider="alibaba-token-plan"; _omp_model="${QWEN_MODEL}" ;;
+            lmstudio)           _omp_provider="lm-studio" ;;
+            *)                  _omp_provider="$_active_provider" ;;
+        esac
+        OMP_FLAGS+=("--provider" "$_omp_provider")
+        if [[ "$_omp_has_model" == false && -n "$_omp_model" ]]; then
+            OMP_FLAGS+=("--model" "$_omp_model")
+        fi
+    fi
+    enter_repo_if_needed
+    launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS "$@"
 elif [[ ${1:-} == "sec" || ${1:-} == "security" || ${1:-} == "codex-security" ]]; then
     shift
     enter_repo_if_needed
@@ -4879,6 +4959,7 @@ kimi_status=$(status_icon kimi)
 grok_status=$(status_icon grok)
 qoder_status=$(status_icon qodercli)
 cursor_status=$(status_icon cursor-agent)
+omp_status=$(status_icon omp)
 secscan_status=$(status_icon codex-security)
 ollama_status=$(ollama_status_icon)
 hf_status=$(hf_status_icon)
@@ -4896,6 +4977,7 @@ kimi_ver=$(get_version kimi)
 grok_ver=$(get_version grok)
 qoder_ver=$(get_version qodercli)
 cursor_ver=$(get_version cursor-agent)
+omp_ver=$(get_version omp)
 secscan_ver=$(get_version codex-security)
 qwen_status=$(qwen_status_icon)
 qwen_ver=$(get_version qwen)
@@ -4922,20 +5004,21 @@ menu_row  9 "$C_GROK"     "Grok (xAI)"   "${grok_ver}"          "${grok_status}"
 menu_row 10 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
 menu_row 11 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
 menu_row 12 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
+menu_row 13 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 13 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 14 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 15 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 16 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 17 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 18 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 14 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 15 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 16 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 17 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 18 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 19 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 19 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 20 "$C_TOOL" "🔌 Providers"
-menu_tool 21 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 22 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 20 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 21 "$C_TOOL" "🔌 Providers"
+menu_tool 22 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 23 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -4949,12 +5032,13 @@ flag_row "$C_KIMI"   "Kimi"   "${KIMI_FLAGS[*]+"${KIMI_FLAGS[*]}"}"
 flag_row "$C_GROK"   "Grok"   "${GROK_FLAGS[*]+"${GROK_FLAGS[*]}"}"
 flag_row "$C_QODER"  "Qoder"  "${QODER_FLAGS[*]+"${QODER_FLAGS[*]}"}"
 flag_row "$C_CURSOR" "Cursor" "${CURSOR_FLAGS[*]+"${CURSOR_FLAGS[*]}"}"
+flag_row "$C_OMP"    "omp"    "${OMP_FLAGS[*]+"${OMP_FLAGS[*]}"}"
 echo ""
 
 show_last_used
 echo ""
 
-read -rp "Escolha [1-22/0]: " choice
+read -rp "Escolha [1-23/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -4988,16 +5072,18 @@ case $choice in
        launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
    12) enter_repo_if_needed
        launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
-   13) ollama_dispatch || true ;;
-   14) hf_menu_panel || true ;;
-   15) fl_dispatch || true ;;
-   16) qwen_launch || true ;;
-   17) qwen_launch_claude || true ;;
-   18) muse_dispatch || true ;;
-   19) enter_repo_if_needed
+   13) enter_repo_if_needed
+       launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS ;;
+   14) ollama_dispatch || true ;;
+   15) hf_menu_panel || true ;;
+   16) fl_dispatch || true ;;
+   17) qwen_launch || true ;;
+   18) qwen_launch_claude || true ;;
+   19) muse_dispatch || true ;;
+   20) enter_repo_if_needed
        launch_codex_security ;;
-   20) provider_list ;;
-   21) flags_menu
+   21) provider_list ;;
+   22) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -5017,7 +5103,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   22) conta_menu ;;
+   23) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

@@ -30,6 +30,8 @@ ai fugu-ultra-v1.1  # Fugu Ultra V1.1
 ai g            # Gemini direto
 ai k            # Kimi Code direto
 ai cu           # Cursor Agent direto
+ai omp          # omp (oh-my-pi) direto — 60+ providers num só agente
+ai omp models   # Providers/modelos que o omp enxerga hoje
 ai ol           # Ollama Cloud (roda em ollama.com, não na sua máquina)
 ai c "prompt"   # Claude com prompt
 ai conta        # Menu de contas Claude (troca sem logout, macOS)
@@ -54,11 +56,71 @@ ai --help       # Ajuda
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
 | Qoder | `ai q` | `--dangerously-skip-permissions` |
 | Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
+| omp (oh-my-pi) | `ai omp`, `ai o` | `--yolo` — agente único com 60+ providers; `-m` troca de modelo |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
 | Featherless | `ai fl` | catálogo uncensored via API (21 mil+ modelos, plano pago) |
 | Qwen (Alibaba) | `ai qw` | Qwen-Max via Model Studio — CLI própria **ou** dentro do Claude Code |
+
+## omp (oh-my-pi)
+
+Agente de terminal com harness próprio (LSP, DAP, subagents, plan mode, hashline
+edits) e **60+ providers num binário só** — em vez de uma CLI por provider, você
+troca de modelo com `/model` dentro da sessão ou com `-m` na linha de comando.
+
+```bash
+ai omp                       # REPL no modo yolo
+ai o                         # atalho curto
+ai omp "refatora esse hook"  # one-shot (modo print)
+ai omp -m glm-5.2 "tarefa"   # outro modelo (fuzzy: "opus", "glm-5.2", "zai/glm-5.2")
+ai omp --via glm "tarefa"    # prende num provider (glm→zai, qwen→alibaba-token-plan…)
+ai omp -c                    # continua a última sessão
+ai omp models                # providers/modelos disponíveis agora
+ai omp usage                 # uso e limites de cada conta autenticada
+```
+
+Instalação (uma vez por máquina):
+
+```bash
+brew install can1357/tap/omp     # ou: curl -fsSL https://omp.sh/install | sh
+brew upgrade can1357/tap/omp     # atualizar
+```
+
+### Providers por API key
+
+O omp lê `~/.omp/agent/.env` (chmod 600) antes de qualquer lookup de provider.
+As keys que o launcher já guarda em `providers.conf` mapeiam assim:
+
+| Slot no launcher | Variável no `.env` do omp | Provider no omp |
+|------------------|---------------------------|-----------------|
+| `glm` | `ZAI_API_KEY` | `zai` (GLM Coding Plan) |
+| `sakana` | `SAKANA_API_KEY` | `sakana` (Fugu) |
+| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek` |
+| `qwen` | `ALIBABA_TOKEN_PLAN_API_KEY` | `alibaba-token-plan` |
+| `muse-spark` | `META_API_KEY` | `meta` (Muse Spark) |
+
+Precedência: env já exportado > `<cwd>/.env` > `~/.omp/agent/.env` > `~/.omp/.env` > `~/.env`.
+
+### Providers por OAuth
+
+Assinaturas não usam key — entram com `/login <provider>` **dentro** da sessão
+do omp (abre o browser). Cada provider é independente:
+
+| CLI equivalente | Comando no omp |
+|-----------------|----------------|
+| Claude Code | `/login anthropic` |
+| Codex (ChatGPT) | `/login openai-codex` |
+| Gemini | `/login google-gemini-cli` |
+| Antigravity | `/login google-antigravity` |
+| Kimi Code | `/login kimi-code` |
+| Grok / SuperGrok | `/login xai-oauth` |
+| Cursor | `/login cursor` |
+| GitHub Copilot | `/login github-copilot` |
+| Qwen Portal | `/login qwen-portal` |
+
+Anthropic aceita **várias contas**: rode `/login anthropic` uma vez por conta e o
+omp faz rodízio com backoff por credencial (`ai omp usage` mostra o saldo de cada uma).
 
 ## Ollama
 
