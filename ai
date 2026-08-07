@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.36.0"
+AI_LAUNCHER_VERSION="1.36.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -221,7 +221,20 @@ OMP_TUNE=(
     # perguntar. Uma regra 'deny' é absoluta em qualquer modo e não pergunta
     # nada — bloqueia e o agente segue. Prompt quebraria o piloto automático;
     # deny não. O casamento é por segmento, então 'cd x && sudo y' também cai.
-    'bash.patterns=[{"match":"sudo *","approval":"deny"},{"match":"rm -rf /","approval":"deny"},{"match":"rm -rf /*","approval":"deny"},{"match":"rm -rf ~","approval":"deny"},{"match":"rm -rf ~/*","approval":"deny"},{"match":"rm -rf $HOME*","approval":"deny"},{"match":"mkfs*","approval":"deny"},{"match":"dd if=* of=/dev/*","approval":"deny"},{"match":"shutdown*","approval":"deny"},{"match":"reboot*","approval":"deny"},{"match":"sh","approval":"deny"},{"match":"bash","approval":"deny"},{"match":"git push --force*","approval":"deny"},{"match":"git push -f *","approval":"deny"}]'
+    #
+    # Duas lições que custaram teste para aprender:
+    #
+    # 1. 'rm -rf /*' como padrão casa QUALQUER caminho absoluto — bloqueava
+    #    'rm -rf /tmp/build'. Por isso as regras miram raízes nomeadas (/, ~,
+    #    $HOME, /usr, /etc...) em vez de um curinga na barra.
+    # 2. 'rm -rf' literal não pega 'rm -fr', 'rm -Rf' nem 'rm -r -f'. O glob
+    #    'rm -*r*' cobre todas as ordens de flag (verificado no matcher real).
+    #
+    # Isto é um redutor de velocidade, não um muro: denylist por texto sempre
+    # tem contorno (/usr/bin/sudo, variável indireta). O que realmente segura o
+    # estrago é checkpoint/rewind + git; estas regras pegam o acidente, que é o
+    # que de fato acontece com agente em piloto automático.
+    'bash.patterns=[{"match":"sudo *","approval":"deny"},{"match":"rm -*r* /","approval":"deny"},{"match":"rm -*r* ~","approval":"deny"},{"match":"rm -*r* ~/","approval":"deny"},{"match":"rm -*r* $HOME","approval":"deny"},{"match":"rm -*r* $HOME/","approval":"deny"},{"match":"rm -*r* /Users","approval":"deny"},{"match":"rm -*r* /Users/","approval":"deny"},{"match":"rm -*r* /System*","approval":"deny"},{"match":"rm -*r* /Library*","approval":"deny"},{"match":"rm -*r* /Applications*","approval":"deny"},{"match":"rm -*r* /etc*","approval":"deny"},{"match":"rm -*r* /usr*","approval":"deny"},{"match":"rm -*r* /bin*","approval":"deny"},{"match":"rm -*r* /sbin*","approval":"deny"},{"match":"rm -*r* /var*","approval":"deny"},{"match":"rm -*r* /Volumes*","approval":"deny"},{"match":"mkfs*","approval":"deny"},{"match":"dd if=* of=/dev/*","approval":"deny"},{"match":"shutdown*","approval":"deny"},{"match":"reboot*","approval":"deny"},{"match":"sh","approval":"deny"},{"match":"bash","approval":"deny"},{"match":"git push --force*","approval":"deny"},{"match":"git push -f *","approval":"deny"}]'
 
     # Subagents: isolamento CoW (no macOS, clone APFS) para edição paralela
     # sem conflito, LSP ligado e effort próprio por spawn.
@@ -2429,11 +2442,37 @@ omp_install_hint() {
 # nada. Chave recusada pelo omp é reportada e pulada — versões diferentes têm
 # catálogos de settings diferentes, e abortar no meio deixaria a máquina com
 # metade da afinação.
-omp_tune_apply() {
-    local dry=false
-    [[ "${1:-}" == "--dry" ]] && dry=true
+# Conta regras 'deny' num valor de bash.patterns. Usado só para comparar
+# grandezas, não para validar JSON.
+omp_count_denies() {
+    grep -o '"approval" *: *"deny"' <<< "${1:-}" | wc -l | tr -d ' '
+}
 
-    local entry key val applied=0 skipped=0
+# bash.patterns é a única coisa que intercepta comando destrutivo no modo yolo.
+# Se a máquina já tem uma política MAIOR que a do repo — endurecida à mão, ou
+# por uma versão mais nova do launcher — reaplicar cegamente a enfraqueceria em
+# silêncio, reportando '✔' como se estivesse tudo bem. Aqui a redução exige
+# --force explícito.
+omp_tune_would_weaken() {
+    local key="$1" val="$2"
+    [[ "$key" == "bash.patterns" ]] || return 1
+    local current
+    current="$(omp config get "$key" 2>/dev/null || true)"
+    [[ -z "$current" ]] && return 1
+    local now new
+    now="$(omp_count_denies "$current")"
+    new="$(omp_count_denies "$val")"
+    (( now > new ))
+}
+
+omp_tune_apply() {
+    local dry=false force=false arg
+    for arg in "$@"; do
+        [[ "$arg" == "--dry" ]]   && dry=true
+        [[ "$arg" == "--force" ]] && force=true
+    done
+
+    local entry key val err applied=0 skipped=0 failed=0 held=0
     if [[ "$dry" == true ]]; then
         echo -e "${BOLD}Afinação do omp${RESET} ${DIM}(simulação — nada é gravado)${RESET}"
     else
@@ -2447,17 +2486,36 @@ omp_tune_apply() {
             printf "  ${DIM}%-32s${RESET} %s\n" "$key" "${val:0:56}"
             continue
         fi
-        if omp config set "$key" "$val" >/dev/null 2>&1; then
+        if [[ "$force" == false ]] && omp_tune_would_weaken "$key" "$val"; then
+            printf "  ${YELLOW}!${RESET} %s ${DIM}(a máquina já tem política maior — mantida)${RESET}\n" "$key"
+            held=$((held + 1))
+            continue
+        fi
+        # stderr capturado: 'chave não existe' e 'valor rejeitado pelo schema'
+        # são problemas diferentes e não podem virar a mesma mensagem.
+        if err="$(omp config set "$key" "$val" 2>&1 >/dev/null)"; then
             printf "  ${GREEN}✔${RESET} %s\n" "$key"
             applied=$((applied + 1))
-        else
+        elif [[ "$err" == *"Unknown setting"* ]]; then
             printf "  ${YELLOW}–${RESET} %s ${DIM}(não existe nesta versão do omp)${RESET}\n" "$key"
             skipped=$((skipped + 1))
+        else
+            printf "  ${RED}✗${RESET} %s ${DIM}%s${RESET}\n" "$key" "$(head -1 <<< "$err")"
+            failed=$((failed + 1))
         fi
     done
 
     [[ "$dry" == true ]] && return 0
-    echo -e "  ${DIM}${applied} aplicadas, ${skipped} puladas${RESET}"
+
+    local resumo="${applied} aplicadas, ${skipped} puladas"
+    (( held > 0 ))   && resumo+=", ${held} mantidas (use --force para reduzir)"
+    (( failed > 0 )) && resumo+=", ${failed} com erro"
+    echo -e "  ${DIM}${resumo}${RESET}"
+
+    # Exit code utilizável por script de provisionamento: erro real, ou nada
+    # aplicado (omp incompatível), não podem passar por sucesso.
+    (( failed > 0 )) && return 1
+    (( applied == 0 && held == 0 )) && return 1
     return 0
 }
 
@@ -2473,9 +2531,17 @@ omp_env_sync() {
         managed+=" ${OMP_ENV_MAP[$slot]}"
     done
 
-    # mktemp cria com 0600, então a key nunca fica legível no caminho.
+    # O temp precisa nascer NO MESMO diretório do destino: mktemp sem argumento
+    # cai em $TMPDIR, que pode ser outro filesystem — aí o mv vira copy+unlink,
+    # que abre o .env real com truncate. Interrupção no meio disso perderia as
+    # keys E as variáveis que a função promete preservar. Com o temp ao lado, o
+    # mv é rename() atômico. Mesmo padrão de _xconta_write_active().
     local tmp
-    tmp="$(mktemp)" || { echo -e "${RED}Erro: mktemp falhou.${RESET}"; return 1; }
+    tmp="$(mktemp "${dest}.tmp.XXXXXX")" || {
+        echo -e "${RED}Erro: não consegui criar arquivo temporário em ${dest%/*}.${RESET}"
+        return 1
+    }
+    chmod 600 "$tmp"
 
     local line k
     if [[ -f "$dest" ]]; then
@@ -2502,7 +2568,11 @@ omp_env_sync() {
         found=$((found + 1))
     done
 
-    mv "$tmp" "$dest"
+    if ! mv "$tmp" "$dest"; then
+        rm -f "$tmp"
+        echo -e "${RED}Erro: falha ao gravar ${dest} — o arquivo anterior foi mantido.${RESET}"
+        return 1
+    fi
     chmod 600 "$dest"
 
     echo -e "${BOLD}Credenciais do omp${RESET}"
@@ -2526,17 +2596,20 @@ omp_tune_dispatch() {
         omp_install_hint
         return 1
     fi
+    local force=""
+    [[ "${2:-}" == "--force" || "${1:-}" == "--force" ]] && force="--force"
     case "${1:-}" in
-        ""|all)   omp_tune_apply && echo "" && omp_env_sync ;;
-        --dry|-n) omp_tune_apply --dry ;;
-        config)   omp_tune_apply ;;
-        env)      omp_env_sync ;;
+        ""|all|--force) omp_tune_apply $force && echo "" && omp_env_sync ;;
+        --dry|-n)       omp_tune_apply --dry ;;
+        config)         omp_tune_apply $force ;;
+        env)            omp_env_sync ;;
         *)
-            echo "Uso: ai omp tune [--dry|config|env]"
+            echo "Uso: ai omp tune [--dry|config|env] [--force]"
             echo "  (vazio)   afinação + credenciais"
             echo "  --dry     mostra o que seria aplicado, sem gravar"
             echo "  config    só as settings do omp"
             echo "  env       só as keys, do providers.conf para ~/.omp/agent/.env"
+            echo "  --force   aceita reduzir uma política de segurança já maior"
             return 1
             ;;
     esac
