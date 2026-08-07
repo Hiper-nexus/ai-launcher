@@ -120,7 +120,30 @@ O que a afinação liga, e por quê:
 | `task.enableLsp` | subagent escrevia código sem diagnostics |
 | `bashInterceptor.enabled` | bloqueia `cat`/`sed -i` e força as ferramentas próprias |
 | `memory.backend: mnemopi` | pipeline no role `smol`; o backend `local` usa o `default` (caro) |
-| roles `smol`/`commit` em modelo barato | o `smol` roda N vezes por tarefa no fan-out |
+| `bash.patterns` | 14 regras `deny` — o modo yolo do omp ignora o aviso de comando crítico |
+
+### Roteamento de modelo por folga de cota
+
+`modelRoles` é a tabela de roteamento: o omp troca de modelo **sozinho, no meio da
+missão**, conforme a função. Cada role tem uma frequência de chamada diferente, e é
+isso — não só capacidade bruta — que decide onde cada modelo entra:
+
+| role | quando dispara | frequência | critério |
+|---|---|---|---|
+| `default` | turno normal | alta | o mais forte, na assinatura mais folgada |
+| `slow` | raciocínio profundo | baixa | o mais forte, sem teto de effort |
+| `plan` | plan mode | 1x por missão | cabe um modelo forte de cota escassa |
+| `smol` | fan-out de subagent, memória, títulos | **muito alta** | cota ociosa; effort baixo |
+| `advisor` | revisão de cada turno | alta | bom revisor, conta pouco usada |
+| `commit` | mensagem de commit | baixa | o mais barato que existir |
+| `vision` | imagens | baixa | precisa aceitar imagem |
+
+Rode `ai omp usage` antes de decidir: ele mostra o percentual consumido de cada conta.
+Um role de frequência alta apontado para a assinatura mais gasta é o erro clássico —
+e o inverso (cota diária ociosa absorvendo o fan-out) é dinheiro achado no chão.
+
+`retry.fallbackChains` cobre o resto: quando o primário bate limite, o turno **termina**
+no próximo da cadeia em vez de morrer no 429.
 
 ### Providers por API key
 

@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.35.0"
+AI_LAUNCHER_VERSION="1.36.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -191,9 +191,15 @@ declare -A PROVIDER_EXTRA_ENV=(
 # Chave que não existir na versão instalada do omp é reportada e pulada, não
 # aborta o resto — o catálogo de settings muda entre releases.
 OMP_TUNE=(
-    # Caro onde raciocínio paga, barato no fan-out. O 'smol' roda N vezes por
-    # tarefa: effort alto ali queima cota sem melhorar resultado.
-    'modelRoles={"default":"anthropic/claude-opus-5:high","slow":"anthropic/claude-opus-5:max","plan":"anthropic/claude-opus-5:xhigh","smol":"zai/glm-4.7-flash:low","commit":"zai/glm-4.7-flash:minimal","advisor":"zai/glm-4.7:medium"}'
+    # Roteamento por FOLGA DE COTA, não só por capacidade: cada role tem uma
+    # frequência de chamada diferente, então o modelo forte vai onde é chamado
+    # pouco e a cota ociosa absorve o que roda o tempo todo.
+    #   default/slow  Anthropic  — assinatura mais folgada, e o mais forte
+    #   plan          Codex      — roda 1x por missão; cabe na cota mais escassa
+    #   smol/commit   Antigravity— cota diária que estava 100% ociosa
+    #   advisor       Kimi       — roda todo turno; conta pouco usada
+    # Ajuste com 'ai omp usage' na mão: o certo aqui muda com o seu consumo.
+    'modelRoles={"default":"anthropic/claude-opus-5:high","slow":"anthropic/claude-opus-5:max","plan":"openai-codex/gpt-5.6-luna:max","smol":"google-antigravity/gemini-3-flash:low","advisor":"kimi-code/kimi-k2.5:medium","commit":"google-antigravity/gemini-2.5-flash-lite:minimal","vision":"google-antigravity/gemini-3-pro:low"}'
 
     # O agente pega o próprio erro. diagnosticsOnEdit é a que mais importa:
     # por padrão o LSP só reporta em 'write', e o agente edita muito mais do
@@ -208,7 +214,14 @@ OMP_TUNE=(
     # cadeia em vez de morrer no 429. O 'smol' cai para OUTRO provider de
     # propósito — fallback dentro do mesmo provider morre junto com ele.
     'retry.usageAwareFallback=true'
-    'retry.fallbackChains={"default":["zai/glm-5.2","alibaba-token-plan/qwen3.8-max"],"smol":["alibaba-token-plan/qwen3.6-flash","deepseek/deepseek-v4-flash"]}'
+    'retry.fallbackChains={"default":["xai-oauth/grok-4.5","zai/glm-5.2","alibaba-token-plan/qwen3.8-max"],"smol":["zai/glm-4.7-flash","alibaba-token-plan/qwen3.6-flash"],"advisor":["zai/glm-4.7","xai-oauth/grok-composer-2.5-fast"]}'
+
+    # Piloto automático com chão. O modo yolo do omp (que já é o default dele)
+    # ignora o aviso de comando crítico do bash, então 'rm -rf /' rodaria sem
+    # perguntar. Uma regra 'deny' é absoluta em qualquer modo e não pergunta
+    # nada — bloqueia e o agente segue. Prompt quebraria o piloto automático;
+    # deny não. O casamento é por segmento, então 'cd x && sudo y' também cai.
+    'bash.patterns=[{"match":"sudo *","approval":"deny"},{"match":"rm -rf /","approval":"deny"},{"match":"rm -rf /*","approval":"deny"},{"match":"rm -rf ~","approval":"deny"},{"match":"rm -rf ~/*","approval":"deny"},{"match":"rm -rf $HOME*","approval":"deny"},{"match":"mkfs*","approval":"deny"},{"match":"dd if=* of=/dev/*","approval":"deny"},{"match":"shutdown*","approval":"deny"},{"match":"reboot*","approval":"deny"},{"match":"sh","approval":"deny"},{"match":"bash","approval":"deny"},{"match":"git push --force*","approval":"deny"},{"match":"git push -f *","approval":"deny"}]'
 
     # Subagents: isolamento CoW (no macOS, clone APFS) para edição paralela
     # sem conflito, LSP ligado e effort próprio por spawn.
