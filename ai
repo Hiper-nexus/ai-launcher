@@ -2424,12 +2424,83 @@ clean_version() {
 }
 
 get_version() {
-    local cmd="$1"
-    if command -v "$cmd" &>/dev/null; then
-        clean_version "$("$cmd" --version 2>/dev/null | head -1)"
-    else
-        echo "-"
+    local cmd="$1" cached
+    # Cache quente → não re-roda `--version` (caro: gemini ~4s, kimi ~3s).
+    if [[ -f "$AI_VERSION_CACHE" ]] && \
+       [[ -n "$(find "$AI_VERSION_CACHE" -mmin "-$AI_VERSION_TTL_MIN" 2>/dev/null)" ]]; then
+        cached=$(grep -E "^${cmd}=" "$AI_VERSION_CACHE" 2>/dev/null | head -1)
+        if [[ -n "$cached" ]]; then
+            printf '%s' "${cached#*=}"
+            return
+        fi
     fi
+    # Cache ausente/em preenchimento → "-" sem bloquear (o preload em
+    # background escreve o cache e o próximo redraw mostra a versão).
+    echo "-"
+}
+
+# Versão crua (só o número), sem cache. Usada pelo preload paralelo e como
+# fallback do get_version() quando o cache está ausente/expirado.
+get_version_raw() {
+    local cmd="$1" out
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "-"
+        return
+    fi
+    # A maioria imprime no stdout; prime-agent imprime só no stderr.
+    out="$("$cmd" --version 2>/dev/null | head -1)"
+    if [[ -z "$out" ]]; then
+        out="$("$cmd" --version 2>&1 1>/dev/null | head -1)"
+    fi
+    clean_version "$out"
+}
+
+# Cache de versões: o menu re-renderiza a cada escolha e recalculava os
+# `--version` de todas as CLIs SEQUENCIALMENTE a cada volta (~10s no total).
+# preload_versions() roda tudo em PARALELO na primeira vez dentro do TTL e
+# grava num cache em disco; as chamadas seguintes (incluindo cada volta do
+# loop) leem o cache e abrem na hora.
+AI_CACHE_DIR="${TMPDIR:-/tmp}/ai-launcher-cache"
+AI_VERSION_CACHE="$AI_CACHE_DIR/versions.cache"
+AI_VERSION_TTL_MIN=5
+
+preload_versions() {
+    local cmds=(claude codex gemini agy kimi grok qodercli cursor-agent \
+                omp prime-agent codex-security qwen)
+    # Cache ainda válido → nada a fazer.
+    if [[ -f "$AI_VERSION_CACHE" ]] && \
+       [[ -n "$(find "$AI_VERSION_CACHE" -mmin "-$AI_VERSION_TTL_MIN" 2>/dev/null)" ]]; then
+        return 0
+    fi
+    # Já há um preload em andamento (lock) → não duplicar trabalho.
+    if [[ -f "$AI_VERSION_CACHE.lock" ]] && \
+       [[ -n "$(find "$AI_VERSION_CACHE.lock" -mmin -1 2>/dev/null)" ]]; then
+        return 0
+    fi
+    mkdir -p "$AI_CACHE_DIR" 2>/dev/null || return 0
+    touch "$AI_VERSION_CACHE.lock"
+    # Limpa tmp órfãos de um preload interrompido (ex.: saiu do menu no meio).
+    # O glob [0-9]* casa versions.cache.<pid>... mas nunca o lock (.lock).
+    rm -f "$AI_VERSION_CACHE".[0-9]* 2>/dev/null
+    local tmp="$AI_VERSION_CACHE.$$"
+    : > "$tmp"
+    local c
+    for c in "${cmds[@]}"; do
+        if command -v "$c" &>/dev/null; then
+            ( get_version_raw "$c" ) > "$tmp.$c" 2>/dev/null &
+        else
+            printf '%s\n' "$c=-" >> "$tmp"
+        fi
+    done
+    # wait || true: um job que falhe não pode abortar o script (set -e).
+    wait 2>/dev/null || true
+    for c in "${cmds[@]}"; do
+        [[ -f "$tmp.$c" ]] || continue
+        printf '%s\n' "$c=$(cat "$tmp.$c")" >> "$tmp"
+        rm -f "$tmp.$c"
+    done
+    mv "$tmp" "$AI_VERSION_CACHE" 2>/dev/null || true
+    rm -f "$AI_VERSION_CACHE.lock"
 }
 
 check_installed() {
@@ -5258,6 +5329,10 @@ if [[ ! -t 0 ]]; then
 fi
 
 while true; do
+preload_versions & disown 2>/dev/null || true   # background: 1ª renderização
+                                                # instantânea; disown evita SIGHUP
+                                                # ao sair do menu (preload completa
+                                                # e grava o cache); lock evita duplicar
 claude_status=$(status_icon claude)
 glm_status=$(provider_cli_status_icon glm claude)
 muse_spark_status=$(provider_cli_status_icon muse-spark claude)
