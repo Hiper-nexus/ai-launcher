@@ -62,6 +62,7 @@ ai --help       # Ajuda
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
 | Featherless | `ai fl` | catálogo uncensored via API (21 mil+ modelos, plano pago) |
 | Qwen (Alibaba) | `ai qw` | Qwen-Max via Model Studio — CLI própria **ou** dentro do Claude Code |
+| Prime Agent | `ai prime`, `ai pa` | sessão persistente (sem one-shot); subcomandos e `--resume` passam direto |
 
 ## omp (oh-my-pi)
 
@@ -269,6 +270,36 @@ A key vai só pro `providers.conf` local (chmod 600, slot `dashscope`), nunca pr
 > invoca `cursor-agent` justamente para não depender do nome disputado; se você usa o Grok
 > por `agent`, restaure com `ln -sf ~/.grok/bin/agent ~/.local/bin/agent` após instalar.
 
+## Prime Agent (sessão persistente)
+
+`ai prime` (ou `ai pa`) abre o **Prime Agent** — agente de terminal com **sessão
+persistente**: o contexto continua rodando em segundo plano e você anexa ou retoma
+quando quiser. Não aceita prompt one-shot; login e prompts acontecem **dentro** da TUI.
+
+```bash
+ai prime                      # abre a TUI de sessão persistente
+ai prime agents               # lista sessões e agentes
+ai prime attach <agent>       # anexa numa sessão em andamento
+ai prime --resume <path|id>   # retoma uma sessão salva
+ai prime status               # estado do serviço/agentes
+ai prime doctor --fix         # diagnostica e repara o serviço
+ai prime update               # atualiza o Prime Agent
+ai prime shutdown             # encerra o serviço
+ai prime schedule             # agenda tarefas recorrentes
+```
+
+Login e configuração acontecem **dentro** da TUI com `/login` (abre o browser).
+
+Instalação (uma vez por máquina):
+
+```bash
+curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh
+```
+
+> Subcomandos (`agents`, `attach`, `status`, `doctor`, `update`, `shutdown`,
+> `schedule`) e flags informativas (`--resume`, `--version`, `--help`) passam
+> **diretos** para o CLI. Sem subcomando, o launcher abre a TUI.
+
 ## Codex Security (scanner da OpenAI)
 
 Não é um agente interativo como as CLIs acima — é um scanner de vulnerabilidades com
@@ -359,6 +390,7 @@ npm install -g @openai/codex               # Codex
 npm install -g @google/gemini-cli           # Gemini
 curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash  # Kimi Code
 curl -fsSL https://antigravity.google/cli/install.sh | bash  # Antigravity
+curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh  # Prime Agent
 ```
 
 Depois, autentique cada ferramenta usando o fluxo nativo dela (`claude`, `codex` e `gemini`). O launcher não valida nem exige variáveis como `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` ou `GEMINI_API_KEY`.

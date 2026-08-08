@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.36.1"
+AI_LAUNCHER_VERSION="1.37.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -36,6 +36,9 @@ OMP_FLAGS=(--yolo)
 # Muse Spark é yolo por definição: não entra no Toggle Flags, então continua
 # sem aprovação mesmo se o usuário desligar o yolo global do Claude Code.
 MUSE_FLAGS=(--dangerously-skip-permissions)
+# prime-agent é TUI de sessão persistente (sem prompt one-shot): sem flags
+# padrão; subcomandos (agents/status/doctor/update…) passam direto no dispatch.
+PRIME_FLAGS=()
 
 # ── Ollama ───────────────────────────────────────────────
 # Modo cloud (default): fala direto com ollama.com via API key.
@@ -101,6 +104,8 @@ QODER_PROMPT_FLAG="-p"
 CURSOR_PROMPT_FLAG="-p"
 # omp: -p é o modo print (one-shot headless), mesma convenção do Claude/Codex.
 OMP_PROMPT_FLAG="-p"
+# prime-agent: TUI interativa, não aceita prompt one-shot → prompt-flag vazio.
+PRIME_PROMPT_FLAG=""
 
 # Perfis do Claude (flags extras por modo)
 get_claude_profile_flags() {
@@ -2291,6 +2296,7 @@ C_AGY=$(_fg      34 211 238  51 36)  # ciano Antigravity
 C_QODER=$(_fg   167 139 250 141 35)  # lavanda Qoder
 C_CURSOR=$(_fg  148 163 184 145 90)  # ardósia Cursor
 C_OMP=$(_fg     251 146  60 208 33)  # laranja omp (oh-my-pi)
+C_PRIME=$(_fg   217  70 239 207 35)  # fúcsia Prime Agent
 C_OLLAMA=$(_fg  245 245 245 255 37)  # branco Ollama
 C_HF=$(_fg      255 214  10 220 33)  # amarelo Hugging Face
 C_FL=$(_fg      132 204  22 148 32)  # lima Featherless
@@ -2670,6 +2676,7 @@ launch() {
         QODER_FLAGS)  flags_ref=("${QODER_FLAGS[@]+"${QODER_FLAGS[@]}"}") ;;
         CURSOR_FLAGS) flags_ref=("${CURSOR_FLAGS[@]+"${CURSOR_FLAGS[@]}"}") ;;
         OMP_FLAGS)    flags_ref=("${OMP_FLAGS[@]+"${OMP_FLAGS[@]}"}") ;;
+        PRIME_FLAGS)  flags_ref=("${PRIME_FLAGS[@]+"${PRIME_FLAGS[@]}"}") ;;
         *)
             echo -e "${RED}Erro interno: array de flags desconhecida (${flags_name}).${RESET}"
             exit 1
@@ -2687,6 +2694,9 @@ launch() {
             grok)   echo "  Instale: curl -fsSL https://x.ai/cli/install.sh | bash" ;;
             qodercli) echo "  Instale: npm install -g @qoder-ai/qodercli" ;;
             omp)    omp_install_hint ;;
+            prime-agent)
+                echo "  Instale: curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh"
+                ;;
             cursor-agent)
                 echo "  Instale: curl https://cursor.com/install -fsS | bash"
                 echo -e "  ${YELLOW}Aviso:${RESET} o instalador sobrescreve ~/.local/bin/agent"
@@ -4349,6 +4359,13 @@ Exemplos:
   ai omp usage                    Uso e limites das contas autenticadas no omp
   ai omp tune                     Afina o omp nesta máquina (roles + keys)
   ai omp tune --dry               Mostra o que a afinação faria, sem gravar
+  ai prime / ai pa                Prime Agent (TUI de sessão persistente)
+  ai prime status                 Estado do serviço/agentes
+  ai prime agents                 Lista sessões e agentes
+  ai prime doctor                 Diagnostica e repara o serviço
+  ai prime update                 Atualiza o Prime Agent
+  ai prime --resume <path|id>     Retoma uma sessão salva
+  (login e prompts acontecem DENTRO da TUI, via /login)
   ai sec                          Codex Security no repo atual
   ai sec scan . --mode deep       Scan profundo de segurança
   ai ol                           Chat no Ollama Cloud (minimax-m3)
@@ -5016,6 +5033,25 @@ elif [[ ${1:-} == "omp" || ${1:-} == "o" || ${1:-} == "oh-my-pi" ]]; then
     fi
     enter_repo_if_needed
     launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS "$@"
+elif [[ ${1:-} == "prime" || ${1:-} == "pa" || ${1:-} == "prime-agent" ]]; then
+    shift
+    if ! check_installed prime-agent; then
+        echo -e "${RED}Erro: prime-agent não está instalado.${RESET}"
+        echo "  Instale: curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh"
+        exit 1
+    fi
+    # TUI de sessão persistente, sem prompt one-shot: subcomandos e flags
+    # informativas passam direto (senão '--version' viraria o prompt da sessão).
+    case "${1:-}" in
+        agents|attach|status|doctor|update|shutdown|schedule|login|\
+        --resume|-r|--help|-h|--version|-v)
+            exec prime-agent "$@"
+            ;;
+    esac
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    enter_repo_if_needed
+    launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS "$@"
 elif [[ ${1:-} == "sec" || ${1:-} == "security" || ${1:-} == "codex-security" ]]; then
     shift
     enter_repo_if_needed
@@ -5236,6 +5272,7 @@ grok_status=$(status_icon grok)
 qoder_status=$(status_icon qodercli)
 cursor_status=$(status_icon cursor-agent)
 omp_status=$(status_icon omp)
+prime_status=$(status_icon prime-agent)
 secscan_status=$(status_icon codex-security)
 ollama_status=$(ollama_status_icon)
 hf_status=$(hf_status_icon)
@@ -5254,6 +5291,7 @@ grok_ver=$(get_version grok)
 qoder_ver=$(get_version qodercli)
 cursor_ver=$(get_version cursor-agent)
 omp_ver=$(get_version omp)
+prime_ver=$(get_version prime-agent)
 secscan_ver=$(get_version codex-security)
 qwen_status=$(qwen_status_icon)
 qwen_ver=$(get_version qwen)
@@ -5281,20 +5319,21 @@ menu_row 10 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
 menu_row 11 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
 menu_row 12 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
 menu_row 13 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
+menu_row 14 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 14 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 15 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 16 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 17 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 18 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 19 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 15 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 16 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 17 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 18 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 19 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 20 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 20 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 21 "$C_TOOL" "🔌 Providers"
-menu_tool 22 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 23 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 21 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 22 "$C_TOOL" "🔌 Providers"
+menu_tool 23 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 24 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -5314,7 +5353,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-23/0]: " choice
+read -rp "Escolha [1-24/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -5350,16 +5389,18 @@ case $choice in
        launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
    13) enter_repo_if_needed
        launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS ;;
-   14) ollama_dispatch || true ;;
-   15) hf_menu_panel || true ;;
-   16) fl_dispatch || true ;;
-   17) qwen_launch || true ;;
-   18) qwen_launch_claude || true ;;
-   19) muse_dispatch || true ;;
-   20) enter_repo_if_needed
+   14) enter_repo_if_needed
+       launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
+   15) ollama_dispatch || true ;;
+   16) hf_menu_panel || true ;;
+   17) fl_dispatch || true ;;
+   18) qwen_launch || true ;;
+   19) qwen_launch_claude || true ;;
+   20) muse_dispatch || true ;;
+   21) enter_repo_if_needed
        launch_codex_security ;;
-   21) provider_list ;;
-   22) flags_menu
+   22) provider_list ;;
+   23) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -5379,7 +5420,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   23) conta_menu ;;
+   24) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
