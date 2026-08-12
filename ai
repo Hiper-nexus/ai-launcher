@@ -5413,12 +5413,13 @@ menu_row 17 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
 menu_row 18 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
 menu_row 19 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
 menu_row 20 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 21 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 21 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 22 "$C_TOOL" "🔌 Providers"
-menu_tool 23 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 24 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 22 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 23 "$C_TOOL" "🔌 Providers"
+menu_tool 24 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 25 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -5438,7 +5439,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-24/0]: " choice
+read -rp "Escolha [1-25/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -5482,10 +5483,14 @@ case $choice in
    18) qwen_launch || true ;;
    19) qwen_launch_claude || true ;;
    20) muse_dispatch || true ;;
-   21) enter_repo_if_needed
+   21) provider_setup_env "deepseek" || continue
+       export ANTHROPIC_MODEL="deepseek-v4-pro"
+       enter_repo_if_needed
+       launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+   22) enter_repo_if_needed
        launch_codex_security ;;
-   22) provider_list ;;
-   23) flags_menu
+   23) provider_list ;;
+   24) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -5505,7 +5510,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   24) conta_menu ;;
+   25) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
