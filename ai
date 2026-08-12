@@ -4276,7 +4276,8 @@ CLIs de IA:
   ms, muse-spark         CLI própria do Muse Spark (Meta AI)
   ms claude              Abre Claude Code usando Muse Spark (yolo)
   ms model [nome]        Escolhe o modelo — vale para os dois caminhos
-  deepseek, ds           Abre Claude Code usando DeepSeek
+  deepseek, ds           Abre Claude Code usando DeepSeek (V4-Flash)
+  deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
   codex,  x              Abre Codex CLI
   sakana, fugu           Abre Codex com Sakana Fugu
   fugu-ultra             Abre Fugu Ultra (alias atual: V1.1)
@@ -4407,7 +4408,8 @@ Exemplos:
   ai ms key                       Salva a key do Muse Spark
   ai ms claude                    Claude Code via Muse Spark (yolo)
   ai ms -m muse-spark-1.1 claude  Claude Code em outro modelo
-  ai ds                           Claude via DeepSeek
+  ai ds                           Claude via DeepSeek V4-Flash
+  ai ds-pro                       Claude via DeepSeek V4-Pro
   ai x                            Codex
   ai fugu                         Codex via Sakana Fugu
   ai fugu-ultra "tarefa pesada"   Fugu Ultra (alias de V1.1)
@@ -4885,6 +4887,14 @@ elif [[ ${1:-} == "muse-spark" || ${1:-} == "ms" || ${1:-} == "meta" ]]; then
     shift
     muse_dispatch "$@"
     exit $?
+elif [[ ${1:-} == "deepseek-pro" || ${1:-} == "dsp" || ${1:-} == "ds-pro" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    provider_setup_env "deepseek" || exit 1
+    export ANTHROPIC_MODEL="deepseek-v4-pro"
+    enter_repo_if_needed
+    launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "deepseek" || ${1:-} == "ds" ]]; then
     shift
     parse_global_flags "$@"

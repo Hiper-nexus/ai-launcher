@@ -22,6 +22,8 @@ chmod +x ~/.local/bin/ai
 ```bash
 ai              # Menu interativo com status de cada CLI
 ai c            # Claude Code direto
+ai ds           # DeepSeek V4-Flash via Claude Code
+ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai x            # Codex direto
 ai fugu         # Codex via Sakana Fugu
 ai fugu-ultra   # Fugu Ultra (alias da versão atual: V1.1)
