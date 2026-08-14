@@ -5,7 +5,7 @@ Lançador interativo para CLIs de IA com flags pré-configuradas. Nunca mais esq
 ## Instalação
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cleofasvolarehost/ai-launcher/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Hiper-nexus/ai-launcher/main/install.sh | bash
 ```
 
 Compatível com o Bash padrão do macOS (`3.2`) e com Linux moderno. Não precisa instalar Bash via Homebrew.
@@ -13,7 +13,7 @@ Compatível com o Bash padrão do macOS (`3.2`) e com Linux moderno. Não precis
 Ou manualmente:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cleofasvolarehost/ai-launcher/main/ai -o ~/.local/bin/ai
+curl -fsSL https://raw.githubusercontent.com/Hiper-nexus/ai-launcher/main/ai -o ~/.local/bin/ai
 chmod +x ~/.local/bin/ai
 ```
 

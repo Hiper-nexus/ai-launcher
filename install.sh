@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Instalador do AI CLI Launcher
-# Uso: curl -fsSL https://raw.githubusercontent.com/cleofasvolarehost/ai-launcher/main/install.sh | bash
+# Uso: curl -fsSL https://raw.githubusercontent.com/Hiper-nexus/ai-launcher/main/install.sh | bash
 
 set -euo pipefail
 
@@ -13,7 +13,7 @@ DIM='\033[2m'
 RESET='\033[0m'
 
 INSTALL_DIR="${AI_LAUNCHER_INSTALL_DIR:-${HOME}/.local/bin}"
-REPO_RAW="${AI_LAUNCHER_REPO_RAW:-https://raw.githubusercontent.com/cleofasvolarehost/ai-launcher/main}"
+REPO_RAW="${AI_LAUNCHER_REPO_RAW:-https://raw.githubusercontent.com/Hiper-nexus/ai-launcher/main}"
 
 echo -e "${BOLD}${CYAN}"
 echo "  ┌──────────────────────────────────────┐"

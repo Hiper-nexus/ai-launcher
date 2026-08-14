@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ai - Lançador rápido de CLIs de IA com flags pré-configuradas
-# https://github.com/cleofasvolarehost/ai-launcher
+# https://github.com/Hiper-nexus/ai-launcher
 #
 # Uso: ai (interativo) | ai c/x/g (direto) | ai c "prompt aqui"
 
