@@ -22,6 +22,7 @@ chmod +x ~/.local/bin/ai
 ```bash
 ai              # Menu interativo com status de cada CLI
 ai c            # Claude Code direto
+ai glm          # GLM 5.3 (Z.ai) via Claude Code
 ai ds           # DeepSeek V4-Flash via Claude Code
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai x            # Codex direto
@@ -49,7 +50,7 @@ ai --help       # Ajuda
 | CLI | Atalho | Flag padrão |
 |-----|--------|-------------|
 | Claude Code | `ai c` | `--dangerously-skip-permissions` |
-| GLM/Z.ai | `ai glm` | Claude Code via provider `glm` |
+| GLM/Z.ai | `ai glm` | Claude Code via provider `glm` — **GLM 5.3** (1M de contexto) nos slots sonnet/opus, `glm-4.7` no haiku |
 | Muse Spark (Meta AI) | `ai ms` | CLI própria (REPL/one-shot) via `api.meta.ai`; `ai ms claude` abre no Claude Code (yolo); `ai ms model` escolhe o modelo para os dois caminhos |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]` | Codex profile `fugu` |

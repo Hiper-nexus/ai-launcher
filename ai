@@ -147,6 +147,19 @@ CODEX_AUTH_FILE="${HOME}/.codex/auth.json"
 XACCOUNT_KEYCHAIN_PREFIX="ai-launcher-xconta"
 XACCOUNTS_DIR="${HOME}/.local/share/ai-launcher/accounts-codex"
 
+# ── GLM (Z.ai): fonte única do modelo ────────────────────
+# A Z.ai troca de versão rápido (5.2 em 06/2026, 5.3 em 14/08/2026) e o alias
+# antigo passa a resolver para o novo no próprio servidor — pedir glm-5.2 hoje
+# já responde glm-5.3. Subir de versão aqui é uma linha; na hora, AI_GLM_MODEL=.
+#
+# Sem sufixo de contexto: o "[1m]" que vinha colado no nome era um escape ANSI
+# de negrito da doc da Z.ai, não uma variante — a API devolve 400 "modelCode:
+# does not exist" para glm-5.x[1m]. O 1M de contexto do 5.3 já é o default, e
+# quem cuida do compact é o CLAUDE_CODE_AUTO_COMPACT_WINDOW logo abaixo.
+GLM_MODEL="${AI_GLM_MODEL:-glm-5.3}"
+# Slot barato (haiku): glm-4.5-air foi aposentado e hoje já cai em glm-4.7.
+GLM_FAST_MODEL="${AI_GLM_FAST_MODEL:-glm-4.7}"
+
 # Providers disponíveis: nome=base_url (URLs confirmadas pelo multi-claude)
 declare -A PROVIDER_URLS=(
     [anthropic]=""
@@ -176,7 +189,7 @@ declare -A PROVIDER_MODELS=(
 # Env vars extras por provider (timeout, tráfego, etc.)
 declare -A PROVIDER_EXTRA_ENV=(
     [anthropic]=""
-    [glm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.5-air ANTHROPIC_DEFAULT_SONNET_MODEL=glm-5.2[1m] ANTHROPIC_DEFAULT_OPUS_MODEL=glm-5.2[1m]"
+    [glm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=${GLM_FAST_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${GLM_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${GLM_MODEL}"
     [sakana]=""
     [openrouter]=""
     [deepseek]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
@@ -4272,7 +4285,7 @@ CLIs de IA:
   c -r                   Resume sessão (picker interativo)
   c -n "nome"            Sessão nomeada
   c --bare               Modo mínimo (sem hooks/plugins)
-  glm, zai               Abre Claude Code usando GLM/Z.ai
+  glm, zai               Abre Claude Code usando GLM/Z.ai (GLM 5.3)
   ms, muse-spark         CLI própria do Muse Spark (Meta AI)
   ms claude              Abre Claude Code usando Muse Spark (yolo)
   ms model [nome]        Escolhe o modelo — vale para os dois caminhos
@@ -4398,7 +4411,8 @@ Exemplos:
   ai c full "refatora tudo"       Opus max effort com prompt
   ai c -c                         Continua sessão
   ai c --via openrouter           Claude via OpenRouter
-  ai glm                          Claude via GLM/Z.ai
+  ai glm                          Claude via GLM 5.3 (Z.ai)
+  AI_GLM_MODEL=glm-4.7 ai glm     Fixa outro modelo GLM nesta execução
   ai ms                           Muse Spark na CLI própria (REPL)
   ai ms "resuma este repo"        Muse Spark one-shot
   ai ms model                     Escolhe o modelo (CLI + Claude Code)
@@ -4882,7 +4896,7 @@ elif [[ ${1:-} == "glm" || ${1:-} == "zai" || ${1:-} == "z.ai" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     provider_setup_env "glm" || exit 1
     enter_repo_if_needed
-    launch "GLM (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+    launch "GLM ${GLM_MODEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "muse-spark" || ${1:-} == "ms" || ${1:-} == "meta" ]]; then
     shift
     muse_dispatch "$@"
@@ -5388,7 +5402,7 @@ _fl_menu_label="${FL_MODEL##*/}"
 
 menu_group "CLAUDE CODE"
 menu_row  1 "$C_CLAUDE"   "Claude Code"  "${claude_ver}"        "${claude_status}"
-menu_row  2 "$C_GLM"      "GLM (Z.ai)"   "${glm_ver}"           "${glm_status}"
+menu_row  2 "$C_GLM"      "GLM ${GLM_MODEL#glm-} Z.ai" "${glm_ver}"  "${glm_status}"
 menu_row  3 "$C_MUSE"     "Muse Spark"   "${muse_spark_ver}"    "${muse_spark_status}"
 menu_row  4 "$C_DEEPSEEK" "DeepSeek"     "${deepseek_ver}"      "${deepseek_status}"
 
@@ -5449,7 +5463,7 @@ case $choice in
        launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     2) provider_setup_env "glm" || continue
        enter_repo_if_needed
-       launch "GLM (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+       launch "GLM ${GLM_MODEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     3) provider_setup_env "muse-spark" || continue
        enter_repo_if_needed
        launch "Muse Spark (Meta AI)" claude "$CLAUDE_PROMPT_FLAG" MUSE_FLAGS ;;
