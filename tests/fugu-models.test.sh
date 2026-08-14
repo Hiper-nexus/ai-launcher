@@ -58,7 +58,9 @@ assert_invocation() {
         fail "${command}: esperado modelo '${expected_model}', obtido '${model}'"
 }
 
-# O setup deve gerar exatamente os seis IDs públicos documentados.
+# O setup deve gerar exatamente os cinco IDs que a API serve hoje.
+# Não existe fugu-cyber-v1.0: a Sakana publicou o Cyber sem variante versionada
+# e /v1/chat/completions responde 404 "Model not found" para esse nome.
 HOME="$TEST_HOME" CODEX_HOME="$CODEX_HOME" PATH="${FAKE_BIN}:$PATH" \
     "$ROOT/ai" fugu setup >/dev/null
 
@@ -75,7 +77,6 @@ expected = [
     "fugu-ultra-v1.0",
     "fugu-ultra-v1.1",
     "fugu-cyber",
-    "fugu-cyber-v1.0",
 ]
 if slugs != expected:
     raise SystemExit(f"catálogo inesperado: {slugs!r}")
@@ -87,11 +88,11 @@ assert_invocation "fugu-ultra" "fugu-ultra-v1.1"
 assert_invocation "fugu-ultra-v1.0" "fugu-ultra-v1.0"
 assert_invocation "fugu-ultra-20260615" "fugu-ultra-v1.0"
 assert_invocation "fugu-ultra-v1.1" "fugu-ultra-v1.1"
-assert_invocation "fugu-cyber" "fugu-cyber-v1.0"
-assert_invocation "fugu-cyber-v1.0" "fugu-cyber-v1.0"
+assert_invocation "fugu-cyber" "fugu-cyber"
+assert_invocation "sakana-cyber" "fugu-cyber"
 
 # A rota genérica do Codex deve usar a mesma resolução.
 assert_invocation "x" "fugu-ultra-v1.1" --via fugu-ultra
-assert_invocation "x" "fugu-cyber-v1.0" --via fugu-cyber
+assert_invocation "x" "fugu-cyber" --via fugu-cyber
 
 echo "PASS: catálogo e aliases Fugu"

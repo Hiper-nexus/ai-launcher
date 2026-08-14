@@ -30,6 +30,7 @@ ai fugu         # Codex via Sakana Fugu
 ai fugu-ultra   # Fugu Ultra (alias da versão atual: V1.1)
 ai fugu-ultra-v1.0  # Fugu Ultra V1.0
 ai fugu-ultra-v1.1  # Fugu Ultra V1.1
+ai fugu-cyber   # Fugu Cyber — orquestração p/ segurança (acesso sob formulário)
 ai g            # Gemini direto
 ai k            # Kimi Code direto
 ai cu           # Cursor Agent direto
@@ -53,7 +54,7 @@ ai --help       # Ajuda
 | GLM/Z.ai | `ai glm` | Claude Code via provider `glm` — **GLM 5.3** (1M de contexto) nos slots sonnet/opus, `glm-4.7` no haiku |
 | Muse Spark (Meta AI) | `ai ms` | CLI própria (REPL/one-shot) via `api.meta.ai`; `ai ms claude` abre no Claude Code (yolo); `ai ms model` escolhe o modelo para os dois caminhos |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
-| Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]` | Codex profile `fugu` |
+| Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]`, `ai fugu-cyber` | Codex profile `fugu` |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--yolo` |
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
@@ -410,6 +411,7 @@ Modelos suportados:
 | `fugu-ultra` | Alias estável da versão atual do Fugu Ultra (`fugu-ultra-v1.1`). |
 | `fugu-ultra-v1.0` | Fugu Ultra V1.0, também conhecido como `fugu-ultra-20260615`. |
 | `fugu-ultra-v1.1` | Fugu Ultra V1.1. |
+| `fugu-cyber` | Orquestração para segurança (21/07/2026). **Sem variante versionada** e com acesso liberado sob formulário. |
 
 ```bash
 ai p add sakana                 # salva a SAKANA_API_KEY e instala o perfil
@@ -418,11 +420,20 @@ ai fugu-ultra "tarefa pesada"   # alias -> fugu-ultra-v1.1
 ai fugu-ultra-v1.0 "compat"     # abre Fugu Ultra V1.0
 ai fugu-ultra-v1.1 "pesada"     # abre Fugu Ultra V1.1
 ai fugu-ultra-20260615 "compat" # alias histórico -> fugu-ultra-v1.0
+ai fugu-cyber "audita isso"     # Fugu Cyber (alias: ai sakana-cyber)
 ai x --via sakana               # equivalente via Codex
 ai x --via fugu-ultra           # alias -> Fugu Ultra V1.1
 ai x --via fugu-ultra-v1.0      # Codex via Fugu Ultra V1.0
+ai x --via fugu-cyber           # Codex via Fugu Cyber
 codex-fugu                      # wrapper direto criado em ~/.local/bin
 ```
+
+**Fugu Cyber precisa de liberação manual.** Sem o formulário aprovado a API
+responde `403 permission_error` na primeira mensagem — já dentro do Codex, onde
+sai como erro solto. O launcher avisa antes de abrir e mostra o link do
+formulário. Atenção também ao nome: **não existe `fugu-cyber-v1.0`** — esse ID
+devolve `404 Model not found`. O Cyber é publicado sem variante versionada,
+diferente do Ultra.
 
 Arquivos criados pelo setup:
 
