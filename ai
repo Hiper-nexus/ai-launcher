@@ -30,6 +30,8 @@ GEMINI_FLAGS=(--yolo --model pro --skip-trust)
 AGY_FLAGS=(--dangerously-skip-permissions)
 KIMI_FLAGS=(--yolo)
 GROK_FLAGS=(--always-approve --permission-mode bypassPermissions)
+# deepcode é TUI de sessão (sem yolo/auto-aprovação): flags vazias, como o prime.
+DEEPCODE_FLAGS=()
 QODER_FLAGS=(--dangerously-skip-permissions)
 CURSOR_FLAGS=(--yolo --sandbox disabled --approve-mcps --trust)
 OMP_FLAGS=(--yolo)
@@ -100,6 +102,7 @@ GEMINI_PROMPT_FLAG="-p"
 AGY_PROMPT_FLAG="-p"
 KIMI_PROMPT_FLAG="-p"
 GROK_PROMPT_FLAG="-p"
+DEEPCODE_PROMPT_FLAG="-p"
 QODER_PROMPT_FLAG="-p"
 CURSOR_PROMPT_FLAG="-p"
 # omp: -p é o modo print (one-shot headless), mesma convenção do Claude/Codex.
@@ -2332,6 +2335,7 @@ C_CLAUDE=$(_fg 217 119  87 173 33)   # terracota Anthropic
 C_GLM=$(_fg     56 160 255  75 36)   # azul Z.ai
 C_MUSE=$(_fg     0 129 251  33 34)   # azul Meta
 C_DEEPSEEK=$(_fg 77 107 254  69 34)  # azul DeepSeek
+C_DEEPCODE=$(_fg 77 107 254  69 34)  # azul DeepSeek (Deep Code CLI)
 C_QWEN=$(_fg    124  92 237 099 35)  # roxo Qwen
 C_SAKANA=$(_fg  255 111 145 211 35)  # rosa Sakana
 C_CODEX=$(_fg    16 163 127  36 32)  # verde OpenAI
@@ -2511,7 +2515,7 @@ AI_VERSION_CACHE="$AI_CACHE_DIR/versions.cache"
 AI_VERSION_TTL_MIN=5
 
 preload_versions() {
-    local cmds=(claude codex gemini agy kimi grok qodercli cursor-agent \
+    local cmds=(claude codex gemini agy kimi grok deepcode qodercli cursor-agent \
                 omp prime-agent codex-security qwen)
     # Cache ainda válido → nada a fazer.
     if [[ -f "$AI_VERSION_CACHE" ]] && \
@@ -2790,6 +2794,7 @@ launch() {
         AGY_FLAGS)    flags_ref=("${AGY_FLAGS[@]+"${AGY_FLAGS[@]}"}") ;;
         KIMI_FLAGS)   flags_ref=("${KIMI_FLAGS[@]+"${KIMI_FLAGS[@]}"}") ;;
         GROK_FLAGS)   flags_ref=("${GROK_FLAGS[@]+"${GROK_FLAGS[@]}"}") ;;
+        DEEPCODE_FLAGS) flags_ref=("${DEEPCODE_FLAGS[@]+"${DEEPCODE_FLAGS[@]}"}") ;;
         QODER_FLAGS)  flags_ref=("${QODER_FLAGS[@]+"${QODER_FLAGS[@]}"}") ;;
         CURSOR_FLAGS) flags_ref=("${CURSOR_FLAGS[@]+"${CURSOR_FLAGS[@]}"}") ;;
         OMP_FLAGS)    flags_ref=("${OMP_FLAGS[@]+"${OMP_FLAGS[@]}"}") ;;
@@ -2809,6 +2814,7 @@ launch() {
             agy)    echo "  Instale: curl -fsSL https://antigravity.google/cli/install.sh | bash" ;;
             kimi)   echo "  Instale: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash" ;;
             grok)   echo "  Instale: curl -fsSL https://x.ai/cli/install.sh | bash" ;;
+            deepcode) echo "  Instale: npm install -g @vegamo/deepcode-cli" ;;
             qodercli) echo "  Instale: npm install -g @qoder-ai/qodercli" ;;
             omp)    omp_install_hint ;;
             prime-agent)
@@ -4341,6 +4347,7 @@ CLIs de IA:
   gemini, g              Abre Gemini CLI
   kimi,     k              Abre Kimi Code CLI
   grok,    gr              Abre Grok CLI (xAI)
+  deepcode, dc             Abre Deep Code CLI (DeepSeek V4)
   qoder,   q               Abre Qoder CLI (modo yolo)
   cursor,  cu              Abre Cursor Agent CLI (modo yolo)
   agy,     a              Abre Antigravity CLI
@@ -4477,6 +4484,7 @@ Exemplos:
   ai g                            Gemini
   ai k                            Kimi Code
   ai grok                         Grok (xAI)
+  ai deepcode                     Deep Code (DeepSeek V4)
   ai q                            Qoder CLI (modo yolo)
   ai qoder "prompt"               Qoder CLI com prompt direto
   ai cu                           Cursor Agent CLI (modo yolo)
@@ -5095,6 +5103,12 @@ elif [[ ${1:-} == "grok" || ${1:-} == "gr" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     launch "Grok" grok "$GROK_PROMPT_FLAG" GROK_FLAGS "$@"
+elif [[ ${1:-} == "deepcode" || ${1:-} == "dc" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    enter_repo_if_needed
+    launch "Deep Code" deepcode "$DEEPCODE_PROMPT_FLAG" DEEPCODE_FLAGS "$@"
 elif [[ ${1:-} == "qoder" || ${1:-} == "q" || ${1:-} == "qodercli" ]]; then
     shift
     parse_global_flags "$@"
@@ -5414,6 +5428,7 @@ gemini_status=$(status_icon gemini)
 agy_status=$(status_icon agy)
 kimi_status=$(status_icon kimi)
 grok_status=$(status_icon grok)
+deepcode_status=$(status_icon deepcode)
 qoder_status=$(status_icon qodercli)
 cursor_status=$(status_icon cursor-agent)
 omp_status=$(status_icon omp)
@@ -5433,6 +5448,7 @@ gemini_ver=$(get_version gemini)
 agy_ver=$(get_version agy)
 kimi_ver=$(get_version kimi)
 grok_ver=$(get_version grok)
+deepcode_ver=$(get_version deepcode)
 qoder_ver=$(get_version qodercli)
 cursor_ver=$(get_version cursor-agent)
 omp_ver=$(get_version omp)
@@ -5460,26 +5476,27 @@ menu_group "OUTRAS CLIs"
 menu_row  7 "$C_GEMINI"   "Gemini"       "${gemini_ver}"        "${gemini_status}"
 menu_row  8 "$C_KIMI"     "Kimi Code"    "${kimi_ver}"          "${kimi_status}"
 menu_row  9 "$C_GROK"     "Grok (xAI)"   "${grok_ver}"          "${grok_status}"
-menu_row 10 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
-menu_row 11 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
-menu_row 12 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
-menu_row 13 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
-menu_row 14 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
+menu_row 10 "$C_DEEPCODE" "Deep Code"    "${deepcode_ver}"      "${deepcode_status}"
+menu_row 11 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
+menu_row 12 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
+menu_row 13 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
+menu_row 14 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
+menu_row 15 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 15 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 16 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 17 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 18 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 19 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 20 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
-menu_row 21 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 16 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 17 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 18 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 19 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 20 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 21 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 22 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 22 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 23 "$C_TOOL" "🔌 Providers"
-menu_tool 24 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 25 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 23 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 24 "$C_TOOL" "🔌 Providers"
+menu_tool 25 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 26 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -5499,7 +5516,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-25/0]: " choice
+read -rp "Escolha [1-26/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -5527,30 +5544,32 @@ case $choice in
     9) enter_repo_if_needed
        launch "Grok" grok "$GROK_PROMPT_FLAG" GROK_FLAGS ;;
    10) enter_repo_if_needed
+       launch "Deep Code" deepcode "$DEEPCODE_PROMPT_FLAG" DEEPCODE_FLAGS ;;
+   11) enter_repo_if_needed
        agy_add_workspace_flag
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-   11) enter_repo_if_needed
-       launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
    12) enter_repo_if_needed
-       launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
+       launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
    13) enter_repo_if_needed
-       launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS ;;
+       launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
    14) enter_repo_if_needed
+       launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS ;;
+   15) enter_repo_if_needed
        launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
-   15) ollama_dispatch || true ;;
-   16) hf_menu_panel || true ;;
-   17) fl_dispatch || true ;;
-   18) qwen_launch || true ;;
-   19) qwen_launch_claude || true ;;
-   20) muse_dispatch || true ;;
-   21) provider_setup_env "deepseek" || continue
+   16) ollama_dispatch || true ;;
+   17) hf_menu_panel || true ;;
+   18) fl_dispatch || true ;;
+   19) qwen_launch || true ;;
+   20) qwen_launch_claude || true ;;
+   21) muse_dispatch || true ;;
+   22) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="deepseek-v4-pro"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   22) enter_repo_if_needed
+   23) enter_repo_if_needed
        launch_codex_security ;;
-   23) provider_list ;;
-   24) flags_menu
+   24) provider_list ;;
+   25) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -5570,7 +5589,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   25) conta_menu ;;
+   26) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
