@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.38.0"
+AI_LAUNCHER_VERSION="1.39.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -651,6 +651,10 @@ model = "fugu"
 model_reasoning_effort = "high"
 model_provider = "sakana"
 model_catalog_json = "${catalog_escaped}"
+# Janela explícita (o catálogo Fugu documenta 1M) + auto-compactação com
+# folga antes do teto — não depende do top-level do config.toml da máquina.
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
 
 [features]
 image_generation = false

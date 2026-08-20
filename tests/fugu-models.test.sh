@@ -71,6 +71,11 @@ assert_invocation() {
 HOME="$TEST_HOME" CODEX_HOME="$CODEX_HOME" PATH="${FAKE_BIN}:$PATH" \
     "$ROOT/ai" fugu setup >/dev/null
 
+grep -q '^model_context_window = 1000000$' "$CODEX_HOME/fugu.config.toml" ||
+    fail "perfil fugu sem model_context_window = 1000000"
+grep -q '^model_auto_compact_token_limit = 900000$' "$CODEX_HOME/fugu.config.toml" ||
+    fail "perfil fugu sem model_auto_compact_token_limit = 900000"
+
 python3 - "$CODEX_HOME/fugu.json" <<'PY'
 import json
 import sys
