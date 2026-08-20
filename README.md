@@ -26,6 +26,7 @@ ai glm          # GLM 5.3 (Z.ai) via Claude Code
 ai ds           # DeepSeek V4-Flash via Claude Code
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai x            # Codex direto
+ai sol          # Codex GPT-5.6 Sol com janela de 1M de contexto (aliases: x-1m, x1m)
 ai fugu         # Codex via Sakana Fugu
 ai claude-fugu  # Claude Code via endpoint Anthropic-compatible da Sakana
 ai fugu -c model_reasoning_effort=xhigh  # Fugu com raciocínio profundo
@@ -57,6 +58,7 @@ ai --help       # Ajuda
 | GLM/Z.ai | `ai glm` | Claude Code via provider `glm` — **GLM 5.3** (1M de contexto) nos slots sonnet/opus, `glm-4.7` no haiku |
 | Muse Spark (Meta AI) | `ai ms` | CLI própria (REPL/one-shot) via `api.meta.ai`; `ai ms claude` abre no Claude Code (yolo); `ai ms model` escolhe o modelo para os dois caminhos |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
+| Codex Sol 1M | `ai sol` | idem + `-m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` |
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]`, `ai fugu-cyber`, `ai claude-fugu` | Codex profile `fugu` ou endpoint Anthropic-compatible no Claude Code |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--yolo` |
@@ -329,6 +331,26 @@ comandos `scan`/`bulk-scan` o launcher detecta isso e injeta `--python` apontand
 primeiro interpretador compatível do PATH (`python3.14` → `python3.10`). Se você passar
 `--python` explicitamente, o seu vence — nada é duplicado. Outros subcomandos não recebem
 a flag, que só existe no scan.
+
+## Codex GPT-5.6 Sol (janela de 1M)
+
+O Codex limita o contexto por padrão (ajustado pela OpenAI para custo/desempenho), mas o `gpt-5.6-sol` documenta janela de 1.050.000 tokens. O `ai sol` ativa 1M **só na sessão lançada**, sem tocar no `~/.codex/config.toml`:
+
+```bash
+ai sol                   # Codex com gpt-5.6-sol + contexto de 1M
+ai sol "tarefa gigante"  # one-shot com prompt
+ai sol --conta trabalho  # troca de conta Codex e já lança
+```
+
+Equivale a `codex -m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` — a compactação automática do histórico começa em 900k, deixando folga antes do teto. Ajustes por env: `AI_CODEX_SOL_MODEL`, `AI_CODEX_SOL_CONTEXT_WINDOW`, `AI_CODEX_SOL_AUTOCOMPACT_LIMIT`.
+
+Para tornar 1M o **padrão permanente** do Codex (aí sim editando config), adicione no topo do `~/.codex/config.toml`, antes de qualquer `[seção]`:
+
+```toml
+model = "gpt-5.6-sol"
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
+```
 
 ## Contas Claude (multi-conta sem logout — macOS)
 
