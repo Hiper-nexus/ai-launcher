@@ -445,6 +445,25 @@ provider_setup_env() {
     echo -e "${CYAN}Provider:${RESET} ${provider} → ${base_url}"
 }
 
+sakana_setup_claude_env() {
+    local api_key
+    api_key=$(provider_load_key sakana) || true
+    api_key="${api_key:-${SAKANA_API_KEY:-}}"
+    if [[ -z "$api_key" ]]; then
+        echo -e "${RED}Erro: API key para sakana não configurada.${RESET}"
+        echo "  Configure: ai p add sakana"
+        return 1
+    fi
+
+    export ANTHROPIC_BASE_URL="https://api.sakana.ai"
+    export ANTHROPIC_AUTH_TOKEN="$api_key"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="fugu-cyber"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="fugu-ultra"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="fugu"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="fugu"
+    export CLAUDE_CODE_SUBAGENT_MODEL="fugu"
+}
+
 sakana_write_fugu_catalog() {
     local catalog="$1"
     cat > "$catalog" <<'JSON'
@@ -457,7 +476,11 @@ sakana_write_fugu_catalog() {
       "supported_reasoning_levels": [
         {
           "effort": "high",
-          "description": "Deep reasoning for complex problems"
+          "description": "default reasoning effort to balance speed and performance"
+        },
+        {
+          "effort": "xhigh",
+          "description": "deep reasoning for complex problem"
         }
       ],
       "shell_type": "shell_command",
@@ -479,13 +502,21 @@ sakana_write_fugu_catalog() {
       "experimental_supported_tools": []
     },
     {
-      "slug": "fugu-ultra",
-      "display_name": "Fugu Ultra",
+      "slug": "fugu-ultra-v1.1",
+      "display_name": "Fugu Ultra V1.1",
       "context_window": 1000000,
       "supported_reasoning_levels": [
         {
           "effort": "high",
-          "description": "Deep reasoning for complex problems"
+          "description": "default reasoning effort to balance speed and performance"
+        },
+        {
+          "effort": "xhigh",
+          "description": "deep reasoning for complex problem"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for the hardest problems"
         }
       ],
       "shell_type": "shell_command",
@@ -513,7 +544,11 @@ sakana_write_fugu_catalog() {
       "supported_reasoning_levels": [
         {
           "effort": "high",
-          "description": "Deep reasoning for complex problems"
+          "description": "default reasoning effort to balance speed and performance"
+        },
+        {
+          "effort": "xhigh",
+          "description": "deep reasoning for complex problem"
         }
       ],
       "shell_type": "shell_command",
@@ -535,47 +570,23 @@ sakana_write_fugu_catalog() {
       "experimental_supported_tools": []
     },
     {
-      "slug": "fugu-ultra-v1.1",
-      "display_name": "Fugu Ultra V1.1",
-      "context_window": 1000000,
-      "supported_reasoning_levels": [
-        {
-          "effort": "high",
-          "description": "Deep reasoning for complex problems"
-        }
-      ],
-      "shell_type": "shell_command",
-      "visibility": "list",
-      "supported_in_api": true,
-      "priority": 3,
-      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and your ability to help until it is restarted, give the exact recovery steps, and let the user run it manually when they are ready. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
-      "supports_reasoning_summaries": true,
-      "default_reasoning_summary": "none",
-      "support_verbosity": false,
-      "default_verbosity": null,
-      "apply_patch_tool_type": "freeform",
-      "input_modalities": ["text", "image"],
-      "truncation_policy": {
-        "mode": "tokens",
-        "limit": 10000
-      },
-      "supports_parallel_tool_calls": true,
-      "experimental_supported_tools": []
-    },
-    {
       "slug": "fugu-cyber",
       "display_name": "Fugu Cyber",
       "context_window": 1000000,
       "supported_reasoning_levels": [
         {
           "effort": "high",
-          "description": "Deep reasoning for complex problems"
+          "description": "default reasoning effort to balance speed and performance"
+        },
+        {
+          "effort": "xhigh",
+          "description": "deep reasoning for complex problem"
         }
       ],
       "shell_type": "shell_command",
       "visibility": "list",
       "supported_in_api": true,
-      "priority": 4,
+      "priority": 3,
       "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and your ability to help until it is restarted, give the exact recovery steps, and let the user run it manually when they are ready. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
       "supports_reasoning_summaries": true,
       "default_reasoning_summary": "none",
@@ -723,22 +734,28 @@ sakana_install_codex_config() {
 
     mkdir -p "$codex_home" "$(dirname "$wrapper")"
 
-    local catalog_current=true
-    local required_model
-    if [[ ! -f "$catalog" ]]; then
-        catalog_current=false
-    else
-        for required_model in \
-            fugu \
-            fugu-ultra \
-            fugu-ultra-v1.0 \
-            fugu-ultra-v1.1 \
-            fugu-cyber; do
-            if ! grep -q "\"slug\": \"${required_model}\"" "$catalog" 2>/dev/null; then
-                catalog_current=false
-                break
-            fi
-        done
+    local catalog_current=false
+    if [[ -f "$catalog" ]] && python3 - "$catalog" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    models = json.load(handle)["models"]
+
+efforts_by_model = {
+    model["slug"]: [level["effort"] for level in model["supported_reasoning_levels"]]
+    for model in models
+}
+expected = {
+    "fugu": ["high", "xhigh"],
+    "fugu-ultra-v1.1": ["high", "xhigh", "max"],
+    "fugu-ultra-v1.0": ["high", "xhigh"],
+    "fugu-cyber": ["high", "xhigh"],
+}
+raise SystemExit(0 if efforts_by_model == expected else 1)
+PY
+    then
+        catalog_current=true
     fi
     if [[ "$force" == true || "$catalog_current" == false ]]; then
         sakana_write_fugu_catalog "$catalog"
@@ -4285,6 +4302,25 @@ codex_add_model_flag() {
 launch_sakana_fugu() {
     local requested_model="${1:-fugu}"
     shift || true
+    while [[ $# -gt 0 && ${1:-} == -* ]]; do
+        case "$1" in
+            -m|--model)
+                shift
+                [[ $# -gt 0 ]] && requested_model="$1" && shift
+                ;;
+            -c|--config)
+                shift
+                [[ $# -gt 0 ]] && CODEX_FLAGS+=("-c" "$1") && shift
+                ;;
+            --search|--no-alt-screen)
+                CODEX_FLAGS+=("$1")
+                shift
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
     local api_model
     api_model=$(sakana_resolve_fugu_model "$requested_model") || {
         echo -e "${RED}Modelo Sakana desconhecido: ${requested_model}${RESET}"
@@ -4340,10 +4376,12 @@ CLIs de IA:
   deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
   codex,  x              Abre Codex CLI
   sakana, fugu           Abre Codex com Sakana Fugu
+  claude-fugu, cfugu     Abre Claude Code com o endpoint Anthropic da Sakana
   fugu-ultra             Abre Fugu Ultra (alias atual: V1.1)
   fugu-ultra-v1.0        Abre Fugu Ultra V1.0
   fugu-ultra-v1.1        Abre Fugu Ultra V1.1
   fugu-cyber             Abre Fugu Cyber (acesso liberado sob formulário)
+  Fugu: -c model_reasoning_effort=xhigh; Ultra V1.1 também aceita max
   gemini, g              Abre Gemini CLI
   kimi,     k              Abre Kimi Code CLI
   grok,    gr              Abre Grok CLI (xAI)
@@ -4475,7 +4513,10 @@ Exemplos:
   ai ds-pro                       Claude via DeepSeek V4-Pro
   ai x                            Codex
   ai fugu                         Codex via Sakana Fugu
+  ai claude-fugu                  Claude Code via endpoint Anthropic da Sakana
+  ai fugu -c model_reasoning_effort=xhigh
   ai fugu-ultra "tarefa pesada"   Fugu Ultra (alias de V1.1)
+  ai fugu-ultra -c model_reasoning_effort=max "tarefa máxima"
   ai fugu-ultra-v1.0 "compat"     Fugu Ultra V1.0
   ai fugu-ultra-v1.1 "pesada"     Fugu Ultra V1.1
   ai fugu-cyber "audita isso"     Fugu Cyber (orquestração p/ segurança)
@@ -5056,6 +5097,13 @@ elif [[ ${1:-} == "codex" || ${1:-} == "x" ]]; then
     fi
     enter_repo_if_needed
     launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS "$@"
+elif [[ ${1:-} == "claude-fugu" || ${1:-} == "cfugu" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    sakana_setup_claude_env || exit 1
+    enter_repo_if_needed
+    launch "Claude Code + Sakana Fugu" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "sakana" || ${1:-} == "fugu" ]]; then
     shift
     if [[ "${1:-}" == "setup" || "${1:-}" == "install" ]]; then

@@ -27,7 +27,10 @@ ai ds           # DeepSeek V4-Flash via Claude Code
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai x            # Codex direto
 ai fugu         # Codex via Sakana Fugu
+ai claude-fugu  # Claude Code via endpoint Anthropic-compatible da Sakana
+ai fugu -c model_reasoning_effort=xhigh  # Fugu com raciocínio profundo
 ai fugu-ultra   # Fugu Ultra (alias da versão atual: V1.1)
+ai fugu-ultra -c model_reasoning_effort=max  # máximo disponível no Ultra V1.1
 ai fugu-ultra-v1.0  # Fugu Ultra V1.0
 ai fugu-ultra-v1.1  # Fugu Ultra V1.1
 ai fugu-cyber   # Fugu Cyber — orquestração p/ segurança (acesso sob formulário)
@@ -54,7 +57,7 @@ ai --help       # Ajuda
 | GLM/Z.ai | `ai glm` | Claude Code via provider `glm` — **GLM 5.3** (1M de contexto) nos slots sonnet/opus, `glm-4.7` no haiku |
 | Muse Spark (Meta AI) | `ai ms` | CLI própria (REPL/one-shot) via `api.meta.ai`; `ai ms claude` abre no Claude Code (yolo); `ai ms model` escolhe o modelo para os dois caminhos |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
-| Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]`, `ai fugu-cyber` | Codex profile `fugu` |
+| Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]`, `ai fugu-cyber`, `ai claude-fugu` | Codex profile `fugu` ou endpoint Anthropic-compatible no Claude Code |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--yolo` |
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
@@ -405,18 +408,20 @@ O launcher instala o perfil Fugu do Codex e usa a API compatível com Responses 
 
 Modelos suportados:
 
-| Model ID | Descrição |
-|---|---|
-| `fugu` | Modelo Fugu padrão. |
-| `fugu-ultra` | Alias estável da versão atual do Fugu Ultra (`fugu-ultra-v1.1`). |
-| `fugu-ultra-v1.0` | Fugu Ultra V1.0, também conhecido como `fugu-ultra-20260615`. |
-| `fugu-ultra-v1.1` | Fugu Ultra V1.1. |
-| `fugu-cyber` | Orquestração para segurança (21/07/2026). **Sem variante versionada** e com acesso liberado sob formulário. |
+| Model ID | Reasoning | Descrição |
+|---|---|---|
+| `fugu` | `high`, `xhigh` | Modelo Fugu padrão. |
+| `fugu-ultra-v1.0` | `high`, `xhigh` | Fugu Ultra V1.0, também conhecido como `fugu-ultra-20260615`. |
+| `fugu-ultra-v1.1` | `high`, `xhigh`, `max` | Fugu Ultra V1.1. O comando `ai fugu-ultra` resolve para esta versão. |
+| `fugu-cyber` | `high`, `xhigh` | Orquestração para segurança (21/07/2026). **Sem variante versionada** e com acesso liberado sob formulário. |
 
 ```bash
 ai p add sakana                 # salva a SAKANA_API_KEY e instala o perfil
 ai fugu                         # abre Codex com model fugu
+ai claude-fugu                  # abre Claude Code via Sakana
+ai fugu -c model_reasoning_effort=xhigh  # usa o novo nível xhigh
 ai fugu-ultra "tarefa pesada"   # alias -> fugu-ultra-v1.1
+ai fugu-ultra -c model_reasoning_effort=max "tarefa máxima"
 ai fugu-ultra-v1.0 "compat"     # abre Fugu Ultra V1.0
 ai fugu-ultra-v1.1 "pesada"     # abre Fugu Ultra V1.1
 ai fugu-ultra-20260615 "compat" # alias histórico -> fugu-ultra-v1.0
