@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.40.0"
+AI_LAUNCHER_VERSION="1.41.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -75,7 +75,7 @@ OLLAMA_LOCAL_MODEL="${AI_OLLAMA_LOCAL_MODEL:-}"
 #   ai hf endpoint https://SEU-ENDPOINT.aws.endpoints.huggingface.cloud
 # O nome do modelo é público (existe no Hub), então pode ficar como default.
 HF_ENDPOINT_URL="${AI_HF_ENDPOINT_URL:-}"
-HF_ENDPOINT_MODEL="${AI_HF_ENDPOINT_MODEL:-thisnick/Llama-3.3-70B-Instruct-abliterated-FP8-Dynamic}"
+HF_ENDPOINT_MODEL="${AI_HF_ENDPOINT_MODEL:-orcarouter/Qwen3.8-27B-Uncensored-FP8}"
 
 # ── Featherless (catálogo uncensored via API, plano pago) ─
 # 21 mil+ modelos abliterated/uncensored do HF, API OpenAI-compatible.
@@ -3380,7 +3380,7 @@ def stream(messages):
         URL, data=body,
         headers={"Authorization": "Bearer " + TOK, "Content-Type": "application/json"},
     )
-    # Cold start: a GPU pode estar dormindo (503/502). Tenta reconectar ~2 min.
+    # Cold start: a GPU pode estar dormindo (503/502). Tenta reconectar ~5 min.
     deadline = None
     while True:
         try:
@@ -3389,7 +3389,7 @@ def stream(messages):
         except urllib.error.HTTPError as e:
             if e.code in (502, 503) :
                 if deadline is None:
-                    deadline = 120
+                    deadline = 300
                     sys.stdout.write(DIM + "acordando a GPU" + RESET)
                     sys.stdout.flush()
                 if deadline <= 0:
@@ -3488,6 +3488,29 @@ for e in d.get("items",[]):
 PY
 }
 
+# Acorda a GPU (scale-to-zero) antes de abrir clientes que NÃO reesperam o 503
+# — como o Codex. Faz pings curtos ao /v1/chat/completions até responder 200
+# (acorda a réplica inteira, valendo também p/ /v1/responses). Retorna 1 se não
+# acordar em ~5 min. Ctrl-C interrompe.
+hf_wait_awake() {
+    local url="${1%/}" tok="$2" i code
+    local body="{\"model\":\"${HF_ENDPOINT_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}"
+    for ((i=0; i<50; i++)); do
+        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 \
+            -H "Authorization: Bearer $tok" -H "Content-Type: application/json" \
+            -X POST "$url/v1/chat/completions" -d "$body" 2>/dev/null)
+        [[ "$code" == "200" ]] && { (( i > 0 )) && printf '\n'; return 0; }
+        # Resposta definitiva não-transitória (401/404/…): deixa o Codex reportar
+        if [[ -n "$code" && "$code" != "503" && "$code" != "502" && "$code" != "000" ]]; then
+            (( i > 0 )) && printf '\n'; return 0
+        fi
+        (( i == 0 )) && printf '%bacordando a GPU%b' "$DIM" "$RESET"
+        printf '.'
+        sleep 6
+    done
+    printf '\n'; return 1
+}
+
 # Lança o Codex usando o endpoint HF como model_provider.
 # O provider é injetado via overrides -c (efêmeros): a URL NUNCA é gravada
 # no ~/.codex/config.toml. O token vai por env (HF_TOKEN), lido pelo Codex.
@@ -3513,6 +3536,14 @@ hf_launch_codex() {
     # wire_api="responses": o Codex atual só fala a Responses API da OpenAI;
     # o vLLM do endpoint expõe /v1/responses, então conversa direto.
     export HF_TOKEN="$tok"
+
+    # Codex não reespera o 503 do scale-to-zero: acorda a GPU aqui primeiro.
+    if ! hf_wait_awake "$url" "$tok"; then
+        echo -e "${RED}Erro: o endpoint não acordou a tempo (~5 min).${RESET}" >&2
+        echo -e "${DIM}Tente de novo em instantes, ou rode 'ai hf status' pra ver as réplicas.${RESET}" >&2
+        return 1
+    fi
+
     enter_repo_if_needed
     exec codex "${CODEX_FLAGS[@]}" \
         -c model_providers.hf.name='"HF Endpoint"' \
