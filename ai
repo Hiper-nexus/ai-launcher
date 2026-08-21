@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.39.0"
+AI_LAUNCHER_VERSION="1.40.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -41,6 +41,11 @@ MUSE_FLAGS=(--dangerously-skip-permissions)
 # prime-agent é TUI de sessão persistente (sem prompt one-shot): sem flags
 # padrão; subcomandos (agents/status/doctor/update…) passam direto no dispatch.
 PRIME_FLAGS=()
+# opencode: --auto é o yolo dele (auto-aprova o que não estiver explicitamente
+# negado). NÃO pode vir antes do subcomando 'run' — o yargs trata 'run' como
+# comando e rejeita a flag, cuspindo o help. Por isso o opencode não usa o
+# launch() genérico e sim opencode_launch(), que monta a ordem certa.
+OPENCODE_FLAGS=(--auto)
 
 # ── Codex GPT-5.6 Sol com janela de 1M (ai sol) ──────────
 # O Codex limita o contexto por padrão (custo/latência), mas o gpt-5.6-sol
@@ -118,6 +123,8 @@ CURSOR_PROMPT_FLAG="-p"
 OMP_PROMPT_FLAG="-p"
 # prime-agent: TUI interativa, não aceita prompt one-shot → prompt-flag vazio.
 PRIME_PROMPT_FLAG=""
+# opencode: o one-shot é um SUBCOMANDO ('opencode run "msg"'), não uma flag.
+# Quem monta a linha é opencode_launch(); não existe OPENCODE_PROMPT_FLAG.
 
 # Perfis do Claude (flags extras por modo)
 get_claude_profile_flags() {
@@ -2377,6 +2384,7 @@ C_QODER=$(_fg   167 139 250 141 35)  # lavanda Qoder
 C_CURSOR=$(_fg  148 163 184 145 90)  # ardósia Cursor
 C_OMP=$(_fg     251 146  60 208 33)  # laranja omp (oh-my-pi)
 C_PRIME=$(_fg   217  70 239 207 35)  # fúcsia Prime Agent
+C_OPENCODE=$(_fg 94 234 212  86 36)  # água-marinha opencode
 C_OLLAMA=$(_fg  245 245 245 255 37)  # branco Ollama
 C_HF=$(_fg      255 214  10 220 33)  # amarelo Hugging Face
 C_FL=$(_fg      132 204  22 148 32)  # lima Featherless
@@ -2546,7 +2554,7 @@ AI_VERSION_TTL_MIN=5
 
 preload_versions() {
     local cmds=(claude codex gemini agy kimi grok deepcode qodercli cursor-agent \
-                omp prime-agent codex-security qwen)
+                omp prime-agent codex-security qwen opencode)
     # Cache ainda válido → nada a fazer.
     if [[ -f "$AI_VERSION_CACHE" ]] && \
        [[ -n "$(find "$AI_VERSION_CACHE" -mmin "-$AI_VERSION_TTL_MIN" 2>/dev/null)" ]]; then
@@ -2585,6 +2593,80 @@ preload_versions() {
 
 check_installed() {
     command -v "$1" &>/dev/null
+}
+
+# ── opencode ─────────────────────────────────────────────
+opencode_install_hint() {
+    echo "  Instale: brew install anomalyco/tap/opencode"
+    echo "  Depois:  ai oc auth login"
+}
+
+# As credenciais do opencode NÃO vivem no providers.conf: ficam num JSON
+# global escrito por 'opencode auth login'. XDG_DATA_HOME tem prioridade,
+# mesma regra que o binário usa.
+opencode_auth_file() {
+    if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+        printf '%s' "${XDG_DATA_HOME}/opencode/auth.json"
+    else
+        printf '%s' "${HOME}/.local/share/opencode/auth.json"
+    fi
+}
+
+opencode_status_icon() {
+    local f
+    f="$(opencode_auth_file)"
+    if ! check_installed opencode; then
+        echo -e "${RED}✗ não instalado${RESET}"
+    elif [[ -s "$f" ]] && grep -q '"type"' "$f" 2>/dev/null; then
+        echo -e "${GREEN}✔${RESET}"
+    else
+        echo -e "${YELLOW}✗ sem login${RESET}"
+    fi
+}
+
+# O opencode não passa pelo launch() genérico: no one-shot as flags precisam vir
+# DEPOIS de 'run' (ver comentário em OPENCODE_FLAGS). Subcomando reconhecido
+# passa verbatim, sem --auto e sem virar prompt.
+opencode_launch() {
+    if ! check_installed opencode; then
+        echo -e "${RED}Erro: opencode não está instalado.${RESET}"
+        opencode_install_hint
+        exit 1
+    fi
+    # Subcomando do opencode ou flag informativa passa verbatim: sem --auto e
+    # sem virar prompt. Senão 'ai oc --version' abriria uma sessão com o texto
+    # "--version" — o mesmo erro que o teste do omp cobre.
+    case "${1:-}" in
+        auth|providers|models|mcp|agent|serve|web|stats|export|import|github|pr|session|plugin|plug|db|debug|upgrade|uninstall|attach|acp|completion|run|--version|-v|--help|-h)
+            exec opencode "$@"
+            ;;
+    esac
+    # -m/--model (e --agent/--variant) são traduzidos e viajam junto do 'run';
+    # o que sobrar é o prompt.
+    local -a extra=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -m|--model)
+                shift; [[ $# -gt 0 ]] || break
+                extra+=(-m "$1"); shift ;;
+            --agent|--variant)
+                extra+=("$1"); shift; [[ $# -gt 0 ]] || break
+                extra+=("$1"); shift ;;
+            *) break ;;
+        esac
+    done
+    local -a flags=("${OPENCODE_FLAGS[@]+"${OPENCODE_FLAGS[@]}"}")
+    save_history "opencode"
+    if [[ $# -gt 0 ]]; then
+        local prompt="$*"
+        echo -e "${GREEN}Iniciando opencode:${RESET} opencode run ${flags[*]+"${flags[*]}"} \"${prompt}\""
+        echo ""
+        exec opencode run ${flags[@]+"${flags[@]}"} ${extra[@]+"${extra[@]}"} "$prompt"
+    else
+        echo -e "${GREEN}Iniciando opencode:${RESET} opencode ${flags[*]+"${flags[*]}"}"
+        echo ""
+        exec opencode ${flags[@]+"${flags[@]}"} ${extra[@]+"${extra[@]}"}
+    fi
 }
 
 # Dica de instalação do omp. Vive numa função porque o bloco 'ai omp' faz
@@ -4402,6 +4484,7 @@ CLIs de IA:
   qoder,   q               Abre Qoder CLI (modo yolo)
   cursor,  cu              Abre Cursor Agent CLI (modo yolo)
   agy,     a              Abre Antigravity CLI
+  opencode, oc             Abre opencode (--auto; 'ai oc auth' passa verbatim)
 
   --via <provider>       Usa provider alternativo (ex: glm no Claude, sakana no Codex)
 
@@ -5177,6 +5260,12 @@ elif [[ ${1:-} == "agy" || ${1:-} == "a" || ${1:-} == "antigravity" ]]; then
     enter_repo_if_needed
     agy_add_workspace_flag
     launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS "$@"
+elif [[ ${1:-} == "opencode" || ${1:-} == "oc" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    enter_repo_if_needed
+    opencode_launch "$@"
 elif [[ ${1:-} == "kimi" || ${1:-} == "k" ]]; then
     shift
     parse_global_flags "$@"
@@ -5519,6 +5608,7 @@ qoder_status=$(status_icon qodercli)
 cursor_status=$(status_icon cursor-agent)
 omp_status=$(status_icon omp)
 prime_status=$(status_icon prime-agent)
+opencode_status=$(opencode_status_icon)
 secscan_status=$(status_icon codex-security)
 ollama_status=$(ollama_status_icon)
 hf_status=$(hf_status_icon)
@@ -5539,6 +5629,7 @@ qoder_ver=$(get_version qodercli)
 cursor_ver=$(get_version cursor-agent)
 omp_ver=$(get_version omp)
 prime_ver=$(get_version prime-agent)
+opencode_ver=$(get_version opencode)
 secscan_ver=$(get_version codex-security)
 qwen_status=$(qwen_status_icon)
 qwen_ver=$(get_version qwen)
@@ -5568,21 +5659,22 @@ menu_row 12 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}
 menu_row 13 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
 menu_row 14 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
 menu_row 15 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
+menu_row 16 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 16 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 17 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 18 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 19 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 20 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 21 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
-menu_row 22 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 17 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 18 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 19 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 20 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 21 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 22 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 23 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 23 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 24 "$C_TOOL" "🔌 Providers"
-menu_tool 25 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 26 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 24 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 25 "$C_TOOL" "🔌 Providers"
+menu_tool 26 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 27 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -5597,12 +5689,13 @@ flag_row "$C_GROK"   "Grok"   "${GROK_FLAGS[*]+"${GROK_FLAGS[*]}"}"
 flag_row "$C_QODER"  "Qoder"  "${QODER_FLAGS[*]+"${QODER_FLAGS[*]}"}"
 flag_row "$C_CURSOR" "Cursor" "${CURSOR_FLAGS[*]+"${CURSOR_FLAGS[*]}"}"
 flag_row "$C_OMP"    "omp"    "${OMP_FLAGS[*]+"${OMP_FLAGS[*]}"}"
+flag_row "$C_OPENCODE" "opencode" "${OPENCODE_FLAGS[*]+"${OPENCODE_FLAGS[*]}"}"
 echo ""
 
 show_last_used
 echo ""
 
-read -rp "Escolha [1-26/0]: " choice
+read -rp "Escolha [1-27/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -5642,20 +5735,22 @@ case $choice in
        launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS ;;
    15) enter_repo_if_needed
        launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
-   16) ollama_dispatch || true ;;
-   17) hf_menu_panel || true ;;
-   18) fl_dispatch || true ;;
-   19) qwen_launch || true ;;
-   20) qwen_launch_claude || true ;;
-   21) muse_dispatch || true ;;
-   22) provider_setup_env "deepseek" || continue
+   16) enter_repo_if_needed
+       opencode_launch ;;
+   17) ollama_dispatch || true ;;
+   18) hf_menu_panel || true ;;
+   19) fl_dispatch || true ;;
+   20) qwen_launch || true ;;
+   21) qwen_launch_claude || true ;;
+   22) muse_dispatch || true ;;
+   23) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="deepseek-v4-pro"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   23) enter_repo_if_needed
+   24) enter_repo_if_needed
        launch_codex_security ;;
-   24) provider_list ;;
-   25) flags_menu
+   25) provider_list ;;
+   26) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -5675,7 +5770,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   26) conta_menu ;;
+   27) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
