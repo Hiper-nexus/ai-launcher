@@ -25,8 +25,6 @@ ai c            # Claude Code direto
 ai glm          # GLM 5.3 (Z.ai) via Claude Code
 ai ds           # DeepSeek V4-Flash via Claude Code
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
-ai dsh          # DeepSeek Harness (dsh) — UI web em 127.0.0.1:3080
-ai dsh "tarefa" # Harness headless: roda uma sessão, imprime a resposta e sai
 ai x            # Codex direto
 ai sol          # Codex GPT-5.6 Sol com janela de 1M de contexto (aliases: x-1m, x1m)
 ai fugu         # Codex via Sakana Fugu
@@ -74,7 +72,6 @@ ai --help       # Ajuda
 | Featherless | `ai fl` | catálogo uncensored via API (21 mil+ modelos, plano pago) |
 | Qwen (Alibaba) | `ai qw` | Qwen-Max via Model Studio — CLI própria **ou** dentro do Claude Code |
 | Prime Agent | `ai prime`, `ai pa` | sessão persistente (sem one-shot); subcomandos e `--resume` passam direto |
-| DeepSeek Harness | `ai dsh`, `ai harness` | agente próprio da DeepSeek (não é Claude Code): sem argumento abre a UI web, com prompt roda o perfil `headless` |
 
 ## omp (oh-my-pi)
 
@@ -311,28 +308,6 @@ curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh
 > Subcomandos (`agents`, `attach`, `status`, `doctor`, `update`, `shutdown`,
 > `schedule`) e flags informativas (`--resume`, `--version`, `--help`) passam
 > **diretos** para o CLI. Sem subcomando, o launcher abre a TUI.
-
-## DeepSeek Harness (`ai dsh`)
-
-O [DeepSeek Harness](https://deepseek.com/harness/en/) (`dsh`) é o agente da própria DeepSeek — não é o Claude Code apontado para a API deles (isso é o `ai ds`). O launcher dele não abre uma sessão: boota um **perfil**, que é uma pilha ordenada de plugins. Dois perfis vêm prontos e se inicializam sozinhos no primeiro uso:
-
-| Comando | O que roda |
-|---------|-----------|
-| `ai dsh` | `dsh web` — UI no browser em `http://127.0.0.1:3080` |
-| `ai dsh "roda os testes"` | `dsh --profile headless "roda os testes"` — uma sessão, imprime a resposta final e sai |
-| `ai dsh headless "job"` / `ai dsh tui …` | atalho para `--profile <nome>` |
-| `ai dsh web --port 8080` | passa verbatim para o app web |
-| `ai dsh --profile tui --resume <id>` | gramática do `dsh`, passa verbatim — como qualquer argumento que comece com `-`, para uma flag solta nunca virar prompt de uma sessão nova |
-| `ai dsh plugin --profile tui add <pkg>` | gerência de plugins (encaminha para o pnpm) |
-| `ai dsh --version`, `--help`, `--dump-config` | informativas: passam verbatim e não pedem key |
-
-Perfis fora de `web`/`headless` (o `tui`, por exemplo) precisam ser criados antes com `ai dsh plugin --profile <nome> add <pacote>`.
-
-**Instalação:** nenhuma, por padrão. Sem `dsh` no PATH o launcher baixa na hora, nesta ordem: `pnpm dlx @deepseek-ai/dsh@latest` e, só se não houver pnpm, `npx -y …` — com aviso. A ordem não é estética: a árvore do dsh tem ~500 pacotes em versões de pré-lançamento, e o resolvedor do npm engasga nela (mais de dez minutos sem escrever um byte, nos testes), enquanto o pnpm resolve em segundos. Para não pagar o download a cada chamada: `pnpm add -g @deepseek-ai/dsh`. Requer Node ≥ 22.19 (ou ≥ 24). `AI_DSH_PKG` fixa a versão baixada.
-
-**Key:** a mesma do `ai ds` — o slot `deepseek` do `providers.conf` (`ai p add deepseek`). O `dsh` lê credencial do ambiente do processo antes de qualquer arquivo, então o launcher só exporta `DEEPSEEK_API_KEY` na hora de rodar; nada é escrito em `~/.dsh`. A telemetria entra desligada (`DSH_TELEMETRY_DISABLED=1`) a menos que você já tenha definido a variável.
-
-O diretório de onde você chama vira o workspace da sessão — por isso o `ai dsh` respeita o picker de repos como as outras CLIs.
 
 ## Codex Security (scanner da OpenAI)
 

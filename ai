@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.42.0"
+AI_LAUNCHER_VERSION="1.41.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -46,11 +46,6 @@ PRIME_FLAGS=()
 # comando e rejeita a flag, cuspindo o help. Por isso o opencode não usa o
 # launch() genérico e sim opencode_launch(), que monta a ordem certa.
 OPENCODE_FLAGS=(--auto)
-# DeepSeek Harness (dsh) não tem flag de yolo: permissão e modo de ferramentas
-# são decididos dentro da sessão (web) ou pelo perfil, não na linha de comando.
-# O que o launcher controla aqui é qual pacote é baixado quando o binário 'dsh'
-# não está no PATH — o dsh é zero-install por desenho.
-DSH_PKG="${AI_DSH_PKG:-@deepseek-ai/dsh@latest}"
 
 # ── Codex GPT-5.6 Sol com janela de 1M (ai sol) ──────────
 # O Codex limita o contexto por padrão (custo/latência), mas o gpt-5.6-sol
@@ -130,8 +125,6 @@ OMP_PROMPT_FLAG="-p"
 PRIME_PROMPT_FLAG=""
 # opencode: o one-shot é um SUBCOMANDO ('opencode run "msg"'), não uma flag.
 # Quem monta a linha é opencode_launch(); não existe OPENCODE_PROMPT_FLAG.
-# dsh: o one-shot é um PERFIL ('dsh --profile headless "msg"'), não uma flag.
-# Quem monta a linha é dsh_launch(); não existe DSH_PROMPT_FLAG.
 
 # Perfis do Claude (flags extras por modo)
 get_claude_profile_flags() {
@@ -2392,7 +2385,6 @@ C_CURSOR=$(_fg  148 163 184 145 90)  # ardósia Cursor
 C_OMP=$(_fg     251 146  60 208 33)  # laranja omp (oh-my-pi)
 C_PRIME=$(_fg   217  70 239 207 35)  # fúcsia Prime Agent
 C_OPENCODE=$(_fg 94 234 212  86 36)  # água-marinha opencode
-C_DSH=$(_fg      77 107 254  69 34)  # azul DeepSeek (Harness)
 C_OLLAMA=$(_fg  245 245 245 255 37)  # branco Ollama
 C_HF=$(_fg      255 214  10 220 33)  # amarelo Hugging Face
 C_FL=$(_fg      132 204  22 148 32)  # lima Featherless
@@ -2562,7 +2554,7 @@ AI_VERSION_TTL_MIN=5
 
 preload_versions() {
     local cmds=(claude codex gemini agy kimi grok deepcode qodercli cursor-agent \
-                omp prime-agent codex-security qwen opencode dsh)
+                omp prime-agent codex-security qwen opencode)
     # Cache ainda válido → nada a fazer.
     if [[ -f "$AI_VERSION_CACHE" ]] && \
        [[ -n "$(find "$AI_VERSION_CACHE" -mmin "-$AI_VERSION_TTL_MIN" 2>/dev/null)" ]]; then
@@ -2675,146 +2667,6 @@ opencode_launch() {
         echo ""
         exec opencode ${flags[@]+"${flags[@]}"} ${extra[@]+"${extra[@]}"}
     fi
-}
-
-# ── DeepSeek Harness (dsh) ───────────────────────────────
-# O dsh não é uma CLI de sessão como as outras: o launcher dele boota um
-# PERFIL — uma pilha ordenada de plugins. Dois perfis vêm prontos e se
-# inicializam sozinhos no primeiro uso: 'web' (UI no browser, 127.0.0.1:3080)
-# e 'headless' (roda uma sessão, imprime a resposta final e sai). Qualquer
-# outro perfil (ex.: tui) precisa ser criado antes com 'dsh plugin'.
-# Tudo em stderr: a dica pode sair no meio de um 'ai dsh --dump-config', que é
-# lido por máquina, e prosa em português no stdout corrompe o JSON.
-dsh_install_hint() {
-    echo "  Instale: pnpm add -g @deepseek-ai/dsh" >&2
-    echo "  (o próprio 'dsh plugin' encaminha para o pnpm, então ele é a via natural)" >&2
-    echo "  Requer Node >= 22.19 (ou >= 24) no PATH." >&2
-}
-
-# Como invocar o dsh: binário do PATH, senão pnpm, senão npx.
-#
-# A ordem NÃO é estética. A árvore do dsh tem ~500 pacotes com versões de
-# pré-lançamento, e o resolvedor do npm engasga nela: 'npx @deepseek-ai/dsh'
-# fica dezenas de minutos sem escrever um byte, enquanto o pnpm resolve a mesma
-# árvore em segundos. Por isso o npx só entra quando não há pnpm, e avisando.
-_DSH_CMD=()
-dsh_resolve_cmd() {
-    if check_installed dsh; then
-        _DSH_CMD=(dsh)
-    elif check_installed pnpm; then
-        _DSH_CMD=(pnpm dlx "$DSH_PKG")
-    elif check_installed npx; then
-        _DSH_CMD=(npx -y "$DSH_PKG")
-        echo -e "${YELLOW}Sem 'dsh' e sem pnpm: caindo no npx, que na árvore do dsh pode levar muitos minutos.${RESET}" >&2
-        dsh_install_hint
-    else
-        echo -e "${RED}Erro: 'dsh' não está instalado e não há pnpm nem npx no PATH.${RESET}" >&2
-        dsh_install_hint
-        return 1
-    fi
-}
-
-# A key é a MESMA do 'ai ds' (slot 'deepseek' do providers.conf). O dsh lê
-# credencial do ambiente do processo antes de qualquer arquivo, então exportar
-# aqui reaproveita a key já salva sem escrever nada em ~/.dsh.
-dsh_setup_key() {
-    local key
-    key=$(provider_load_key deepseek 2>/dev/null || true)
-    key="${key:-${DEEPSEEK_API_KEY:-}}"
-    if [[ -z "$key" ]]; then
-        if [[ -t 0 ]]; then
-            read -rsp "$(echo -e "  ${BOLD}API Key para deepseek:${RESET} ")" key
-            echo ""
-            [[ -n "$key" ]] || { echo -e "${RED}Key vazia.${RESET}"; return 1; }
-            provider_save_key deepseek "$key" || return 1
-            echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET}"
-        else
-            echo -e "${RED}Erro: API key para deepseek não configurada.${RESET}"
-            echo "  Configure: ai p add deepseek"
-            return 1
-        fi
-    fi
-    export DEEPSEEK_API_KEY="$key"
-    # Mesma postura do resto do launcher quanto a tráfego não essencial —
-    # respeitando quem já definiu a variável na mão.
-    export DSH_TELEMETRY_DISABLED="${DSH_TELEMETRY_DISABLED:-1}"
-}
-
-# Versão para o menu: com o binário instalado é a dele; sem ele o que existe é
-# o caminho npx, e "npx" diz mais do que um traço.
-dsh_version() {
-    if check_installed dsh; then
-        get_version dsh
-    elif check_installed pnpm; then
-        printf '%s' "pnpm dlx"
-    elif check_installed npx; then
-        printf '%s' "npx (lento)"
-    else
-        printf '%s' "-"
-    fi
-}
-
-dsh_status_icon() {
-    local key
-    key=$(provider_load_key deepseek 2>/dev/null || true)
-    key="${key:-${DEEPSEEK_API_KEY:-}}"
-    if ! check_installed dsh && ! check_installed pnpm && ! check_installed npx; then
-        echo -e "${RED}✗ sem node${RESET}"
-    elif [[ -z "$key" ]]; then
-        echo -e "${YELLOW}✗ sem key${RESET}"
-    else
-        echo -e "${GREEN}✔${RESET}"
-    fi
-}
-
-# Dispatch do dsh. Três casos que se parecem na linha de comando, como no omp
-# e no opencode:
-#   1. gerência/informativa (plugin, --help, --version, dumps) passa verbatim e
-#      ANTES de tudo: 'ai dsh --version' não pode virar prompt nem pedir
-#      credencial, e 'ai dsh --dump-config' é lido por máquina — por isso o
-#      picker de repo (que escreve em stdout e bloqueia esperando caminho)
-#      também fica depois deste case, e não no dispatch como nas outras CLIs;
-#   2. gramática do dsh — 'web', '--profile x', '--patch' e QUALQUER outra flag
-#      — passa verbatim: 'ai dsh --resume abc' virando prompt abriria uma
-#      sessão nova cobrada com o texto "--resume abc" em vez de retomar a
-#      antiga, e o erro do dsh ("--profile is required") é resposta melhor;
-#   3. o resto é prompt e vira o one-shot 'dsh --profile headless "…"'.
-# Sem argumento nenhum abre a UI web, que é o modo padrão do produto.
-dsh_launch() {
-    dsh_resolve_cmd || exit 1
-    case "${1:-}" in
-        plugin|--help|-h|--version|-V|--dump-config|--dump-default-config)
-            exec "${_DSH_CMD[@]}" "$@"
-            ;;
-    esac
-    enter_repo_if_needed
-    dsh_setup_key || exit 1
-    save_history "dsh"
-    case "${1:-}" in
-        web|--profile|--patch|-*)
-            echo -e "${GREEN}Iniciando dsh:${RESET} ${_DSH_CMD[*]} $*"
-            echo ""
-            exec "${_DSH_CMD[@]}" "$@"
-            ;;
-        headless|tui)
-            # 'ai dsh headless "job"' é 'dsh --profile headless "job"'. Sem a
-            # tradução o dsh trataria 'headless' como argumento do app e
-            # abortaria com "--profile <name> is required".
-            local profile="$1"; shift
-            echo -e "${GREEN}Iniciando dsh:${RESET} ${_DSH_CMD[*]} --profile ${profile} $*"
-            echo ""
-            exec "${_DSH_CMD[@]}" --profile "$profile" "$@"
-            ;;
-    esac
-    if [[ $# -gt 0 ]]; then
-        local prompt="$*"
-        echo -e "${GREEN}Iniciando dsh:${RESET} ${_DSH_CMD[*]} --profile headless \"${prompt}\""
-        echo ""
-        exec "${_DSH_CMD[@]}" --profile headless "$prompt"
-    fi
-    echo -e "${GREEN}Iniciando dsh:${RESET} ${_DSH_CMD[*]} web"
-    echo ""
-    exec "${_DSH_CMD[@]}" web
 }
 
 # Dica de instalação do omp. Vive numa função porque o bloco 'ai omp' faz
@@ -4664,7 +4516,6 @@ CLIs de IA:
   cursor,  cu              Abre Cursor Agent CLI (modo yolo)
   agy,     a              Abre Antigravity CLI
   opencode, oc             Abre opencode (--auto; 'ai oc auth' passa verbatim)
-  dsh,     harness         DeepSeek Harness: UI web; com prompt roda headless
 
   --via <provider>       Usa provider alternativo (ex: glm no Claude, sakana no Codex)
 
@@ -4787,9 +4638,6 @@ Exemplos:
   ai ms -m muse-spark-1.1 claude  Claude Code em outro modelo
   ai ds                           Claude via DeepSeek V4-Flash
   ai ds-pro                       Claude via DeepSeek V4-Pro
-  ai dsh                          DeepSeek Harness: UI web em 127.0.0.1:3080
-  ai dsh "roda os testes"         Harness headless (one-shot, imprime e sai)
-  ai dsh plugin --profile tui add <pkg>   Gerência de plugins do perfil
   ai x                            Codex
   ai sol                          Codex GPT-5.6 Sol com janela de 1M de contexto
   ai sol "tarefa gigante"         (auto-compacta em 900k; aliases: x-1m, x1m)
@@ -5449,13 +5297,6 @@ elif [[ ${1:-} == "opencode" || ${1:-} == "oc" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     opencode_launch "$@"
-elif [[ ${1:-} == "dsh" || ${1:-} == "harness" ]]; then
-    shift
-    parse_global_flags "$@"
-    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
-    # Sem enter_repo_if_needed aqui de propósito: quem chama é o dsh_launch,
-    # depois de despachar as informativas (ver comentário lá).
-    dsh_launch "$@"
 elif [[ ${1:-} == "kimi" || ${1:-} == "k" ]]; then
     shift
     parse_global_flags "$@"
@@ -5799,7 +5640,6 @@ cursor_status=$(status_icon cursor-agent)
 omp_status=$(status_icon omp)
 prime_status=$(status_icon prime-agent)
 opencode_status=$(opencode_status_icon)
-dsh_status=$(dsh_status_icon)
 secscan_status=$(status_icon codex-security)
 ollama_status=$(ollama_status_icon)
 hf_status=$(hf_status_icon)
@@ -5821,7 +5661,6 @@ cursor_ver=$(get_version cursor-agent)
 omp_ver=$(get_version omp)
 prime_ver=$(get_version prime-agent)
 opencode_ver=$(get_version opencode)
-dsh_ver=$(dsh_version)
 secscan_ver=$(get_version codex-security)
 qwen_status=$(qwen_status_icon)
 qwen_ver=$(get_version qwen)
@@ -5852,22 +5691,21 @@ menu_row 13 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status
 menu_row 14 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
 menu_row 15 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
 menu_row 16 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
-menu_row 17 "$C_DSH"      "DeepSeek dsh" "${dsh_ver}"       "${dsh_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 18 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 19 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 20 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 21 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 22 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 23 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
-menu_row 24 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 17 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 18 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 19 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 20 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 21 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 22 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 23 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 25 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 26 "$C_TOOL" "🔌 Providers"
-menu_tool 27 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 28 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 24 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 25 "$C_TOOL" "🔌 Providers"
+menu_tool 26 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 27 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -5888,7 +5726,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-28/0]: " choice
+read -rp "Escolha [1-27/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -5930,21 +5768,20 @@ case $choice in
        launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
    16) enter_repo_if_needed
        opencode_launch ;;
-   17) dsh_launch ;;
-   18) ollama_dispatch || true ;;
-   19) hf_menu_panel || true ;;
-   20) fl_dispatch || true ;;
-   21) qwen_launch || true ;;
-   22) qwen_launch_claude || true ;;
-   23) muse_dispatch || true ;;
-   24) provider_setup_env "deepseek" || continue
+   17) ollama_dispatch || true ;;
+   18) hf_menu_panel || true ;;
+   19) fl_dispatch || true ;;
+   20) qwen_launch || true ;;
+   21) qwen_launch_claude || true ;;
+   22) muse_dispatch || true ;;
+   23) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="deepseek-v4-pro"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   25) enter_repo_if_needed
+   24) enter_repo_if_needed
        launch_codex_security ;;
-   26) provider_list ;;
-   27) flags_menu
+   25) provider_list ;;
+   26) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -5964,7 +5801,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   28) conta_menu ;;
+   27) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
