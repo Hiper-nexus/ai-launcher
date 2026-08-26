@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.43.0"
+AI_LAUNCHER_VERSION="1.43.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -171,18 +171,24 @@ XACCOUNTS_DIR="${HOME}/.local/share/ai-launcher/accounts-codex"
 # antigo passa a resolver para o novo no próprio servidor — pedir glm-5.2 hoje
 # já responde glm-5.3. Subir de versão aqui é uma linha; na hora, AI_GLM_MODEL=.
 #
-# Sem sufixo de contexto: o "[1m]" que vinha colado no nome era um escape ANSI
-# de negrito da doc da Z.ai, não uma variante — a API devolve 400 "modelCode:
-# does not exist" para glm-5.x[1m]. O 1M de contexto do 5.3 já é o default, e
-# quem cuida do compact é o CLAUDE_CODE_AUTO_COMPACT_WINDOW logo abaixo.
-GLM_MODEL="${AI_GLM_MODEL:-glm-5.3}"
+# Sufixo de janela: o "[1m]" é o mecanismo do PRÓPRIO Claude Code para 1M em
+# modelos que ele não conhece — a doc da Z.ai recomenda glm-5.3[1m] e o
+# unknown-model notice do client manda "append [1m] to the model name for 1M".
+# Sem ele o Claude assume a janela default de modelo desconhecido (~200k) e o
+# /context mente. O client faz strip do sufixo ANTES de chamar a API
+# (e.replace(/\[1m\]$/i,"") no bundle): o modelCode na Z.ai continua limpo —
+# o "400 modelCode does not exist" era de teste com o sufixo colado no curl.
+GLM_MODEL="${AI_GLM_MODEL:-glm-5.3[1m]}"
 # Variante Flash do 5.3. NÃO é alias do glm-5.3: é um modelCode próprio no
 # catálogo da Z.ai (confirmado em /paas/v4/models). Mesma janela de 1M do 5.3,
 # com resposta mais rápida e barata — papel de slot barato (antes glm-4.7).
 # Por isso mora no haiku do provider glm: quem abre 'ai glm' troca para o Flash
 # no /model sem sair da sessão; 'ai gf' abre a sessão inteira nele.
 # Na hora: AI_GLM_FLASH_MODEL=.
-GLM_FLASH_MODEL="${AI_GLM_FLASH_MODEL:-glm-5.3-flash}"
+GLM_FLASH_MODEL="${AI_GLM_FLASH_MODEL:-glm-5.3-flash[1m]}"
+# Versões sem o sufixo, para rótulos de menu/launch ("5.3", não "5.3[1m]").
+GLM_MODEL_LABEL="${GLM_MODEL%%\[*}"
+GLM_FLASH_MODEL_LABEL="${GLM_FLASH_MODEL%%\[*}"
 
 # Providers disponíveis: nome=base_url (URLs confirmadas pelo multi-claude)
 declare -A PROVIDER_URLS=(
@@ -4645,8 +4651,8 @@ Exemplos:
   ai c --via openrouter           Claude via OpenRouter
   ai glm                          Claude via GLM 5.3; /model oferece o Flash
   ai gf "corrige o teste"         Claude via GLM 5.3 Flash com prompt
-  AI_GLM_MODEL=glm-4.7 ai glm     Fixa outro modelo GLM nesta execução
-  AI_GLM_FLASH_MODEL=glm-4.7-flash ai gf   Idem para o slot Flash
+  AI_GLM_MODEL=glm-4.7[1m] ai glm   Fixa outro modelo ([1m] declara 1M)
+  AI_GLM_FLASH_MODEL=glm-4.7-flash[1m] ai gf   Idem para o slot Flash
   ai ms                           Muse Spark na CLI própria (REPL)
   ai ms "resuma este repo"        Muse Spark one-shot
   ai ms model                     Escolhe o modelo (CLI + Claude Code)
@@ -5137,14 +5143,14 @@ elif [[ ${1:-} == "glm-flash" || ${1:-} == "gf" || ${1:-} == "zf" || ${1:-} == "
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     glm_flash_setup_env || exit 1
     enter_repo_if_needed
-    launch "GLM ${GLM_FLASH_MODEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+    launch "GLM ${GLM_FLASH_MODEL_LABEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "glm" || ${1:-} == "zai" || ${1:-} == "z.ai" ]]; then
     shift
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     provider_setup_env "glm" || exit 1
     enter_repo_if_needed
-    launch "GLM ${GLM_MODEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+    launch "GLM ${GLM_MODEL_LABEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "muse-spark" || ${1:-} == "ms" || ${1:-} == "meta" ]]; then
     shift
     muse_dispatch "$@"
@@ -5699,7 +5705,7 @@ _fl_menu_label="${FL_MODEL##*/}"
 
 menu_group "CLAUDE CODE"
 menu_row  1 "$C_CLAUDE"   "Claude Code"  "${claude_ver}"        "${claude_status}"
-menu_row  2 "$C_GLM"      "GLM ${GLM_MODEL#glm-} Z.ai" "${glm_ver}"  "${glm_status}"
+menu_row  2 "$C_GLM"      "GLM ${GLM_MODEL_LABEL#glm-} Z.ai" "${glm_ver}"  "${glm_status}"
 menu_row  3 "$C_MUSE"     "Muse Spark"   "${muse_spark_ver}"    "${muse_spark_status}"
 menu_row  4 "$C_DEEPSEEK" "DeepSeek"     "${deepseek_ver}"      "${deepseek_status}"
 
@@ -5763,7 +5769,7 @@ case $choice in
        launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     2) provider_setup_env "glm" || continue
        enter_repo_if_needed
-       launch "GLM ${GLM_MODEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+       launch "GLM ${GLM_MODEL_LABEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     3) provider_setup_env "muse-spark" || continue
        enter_repo_if_needed
        launch "Muse Spark (Meta AI)" claude "$CLAUDE_PROMPT_FLAG" MUSE_FLAGS ;;

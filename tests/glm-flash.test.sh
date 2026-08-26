@@ -58,14 +58,17 @@ env_is() {
         fail "${key}: esperado '${expected}', obtido '${got}'"
 }
 
-# Os quatro aliases levam ao mesmo lugar.
+# Os quatro aliases levam ao mesmo lugar. O sufixo [1m] viaja em TODOS os
+# slots: é ele que faz o Claude Code enxergar a janela de 1M (sem ele, o
+# client assume ~200k para modelo desconhecido) — e o client faz o strip
+# antes de chamar a API.
 for alias_cmd in glm-flash gf zf flash; do
     run_launcher "$alias_cmd"
     env_is ANTHROPIC_BASE_URL             "https://api.z.ai/api/anthropic"
-    env_is ANTHROPIC_MODEL                "glm-5.3-flash"
-    env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "glm-5.3-flash"
-    env_is ANTHROPIC_DEFAULT_SONNET_MODEL "glm-5.3-flash"
-    env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "glm-5.3-flash"
+    env_is ANTHROPIC_MODEL                "glm-5.3-flash[1m]"
+    env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "glm-5.3-flash[1m]"
+    env_is ANTHROPIC_DEFAULT_SONNET_MODEL "glm-5.3-flash[1m]"
+    env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "glm-5.3-flash[1m]"
     # O Flash também tem 1M: a janela de auto-compact do GLM continua valendo.
     env_is CLAUDE_CODE_AUTO_COMPACT_WINDOW "1000000"
     # Mesma key do slot 'glm' — o Flash não é um provider novo.
@@ -78,9 +81,10 @@ env_is ANTHROPIC_MODEL "glm-4.7-flash"
 
 # 'ai glm' segue no 5.3 nos slots sonnet/opus; o haiku é o Flash — é o que
 # faz o /model da sessão GLM oferecer o 5.3 Flash sem item de menu próprio.
+# Sufixo [1m] presente em tudo: janela de 1M declarada ao client.
 run_launcher glm
-env_is ANTHROPIC_DEFAULT_SONNET_MODEL "glm-5.3"
-env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "glm-5.3"
-env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "glm-5.3-flash"
+env_is ANTHROPIC_DEFAULT_SONNET_MODEL "glm-5.3[1m]"
+env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "glm-5.3[1m]"
+env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "glm-5.3-flash[1m]"
 
 echo "PASS: dispatch do GLM 5.3 Flash"
