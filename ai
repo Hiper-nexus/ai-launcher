@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.41.0"
+AI_LAUNCHER_VERSION="1.42.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -178,6 +178,12 @@ XACCOUNTS_DIR="${HOME}/.local/share/ai-launcher/accounts-codex"
 GLM_MODEL="${AI_GLM_MODEL:-glm-5.3}"
 # Slot barato (haiku): glm-4.5-air foi aposentado e hoje já cai em glm-4.7.
 GLM_FAST_MODEL="${AI_GLM_FAST_MODEL:-glm-4.7}"
+# Variante Flash do 5.3. NÃO é alias do glm-5.3: é um modelCode próprio no
+# catálogo da Z.ai (confirmado em /paas/v4/models), então mora num slot
+# separado em vez de sobrescrever GLM_MODEL. Mesma janela de 1M do 5.3, com
+# resposta mais rápida e barata — vale como sessão inteira, não só como slot
+# haiku. Na hora: AI_GLM_FLASH_MODEL=.
+GLM_FLASH_MODEL="${AI_GLM_FLASH_MODEL:-glm-5.3-flash}"
 
 # Providers disponíveis: nome=base_url (URLs confirmadas pelo multi-claude)
 declare -A PROVIDER_URLS=(
@@ -459,6 +465,19 @@ provider_setup_env() {
     fi
 
     echo -e "${CYAN}Provider:${RESET} ${provider} → ${base_url}"
+}
+
+# GLM Flash: mesmo provider e mesma base_url do GLM — muda só o modelo, e em
+# TODOS os slots. O provider_setup_env acabou de exportar sonnet/opus=glm-5.3
+# e haiku=glm-4.7 via PROVIDER_EXTRA_ENV; sobrescrever os quatro (inclusive o
+# haiku) é o que impede a sessão de misturar duas gerações de modelo — sem
+# isso, o subagente barato continuaria caindo no 4.7.
+glm_flash_setup_env() {
+    provider_setup_env "glm" || return 1
+    export ANTHROPIC_MODEL="$GLM_FLASH_MODEL"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$GLM_FLASH_MODEL"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="$GLM_FLASH_MODEL"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$GLM_FLASH_MODEL"
 }
 
 sakana_setup_claude_env() {
@@ -4495,6 +4514,7 @@ CLIs de IA:
   c -n "nome"            Sessão nomeada
   c --bare               Modo mínimo (sem hooks/plugins)
   glm, zai               Abre Claude Code usando GLM/Z.ai (GLM 5.3)
+  glm-flash, gf, flash   Idem, no GLM 5.3 Flash (mesmo 1M, mais rápido/barato)
   ms, muse-spark         CLI própria do Muse Spark (Meta AI)
   ms claude              Abre Claude Code usando Muse Spark (yolo)
   ms model [nome]        Escolhe o modelo — vale para os dois caminhos
@@ -4626,7 +4646,9 @@ Exemplos:
   ai c -c                         Continua sessão
   ai c --via openrouter           Claude via OpenRouter
   ai glm                          Claude via GLM 5.3 (Z.ai)
+  ai gf "corrige o teste"         Claude via GLM 5.3 Flash com prompt
   AI_GLM_MODEL=glm-4.7 ai glm     Fixa outro modelo GLM nesta execução
+  AI_GLM_FLASH_MODEL=glm-4.7-flash ai gf   Idem para o slot Flash
   ai ms                           Muse Spark na CLI própria (REPL)
   ai ms "resuma este repo"        Muse Spark one-shot
   ai ms model                     Escolhe o modelo (CLI + Claude Code)
@@ -5111,6 +5133,13 @@ if [[ ${1:-} == "timeout" ]]; then
     shift
     run_with_timeout "$@"
     exit $?
+elif [[ ${1:-} == "glm-flash" || ${1:-} == "gf" || ${1:-} == "zf" || ${1:-} == "flash" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    glm_flash_setup_env || exit 1
+    enter_repo_if_needed
+    launch "GLM ${GLM_FLASH_MODEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "glm" || ${1:-} == "zai" || ${1:-} == "z.ai" ]]; then
     shift
     parse_global_flags "$@"
@@ -5700,12 +5729,13 @@ menu_row 20 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}
 menu_row 21 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
 menu_row 22 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
 menu_row 23 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 24 "$C_GLM"      "GLM Flash"    "${GLM_FLASH_MODEL}"    "${glm_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 24 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 25 "$C_TOOL" "🔌 Providers"
-menu_tool 26 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 27 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 25 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 26 "$C_TOOL" "🔌 Providers"
+menu_tool 27 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 28 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -5726,7 +5756,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-27/0]: " choice
+read -rp "Escolha [1-28/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -5778,10 +5808,13 @@ case $choice in
        export ANTHROPIC_MODEL="deepseek-v4-pro"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   24) enter_repo_if_needed
+   24) glm_flash_setup_env || continue
+       enter_repo_if_needed
+       launch "GLM ${GLM_FLASH_MODEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+   25) enter_repo_if_needed
        launch_codex_security ;;
-   25) provider_list ;;
-   26) flags_menu
+   26) provider_list ;;
+   27) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -5801,7 +5834,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   27) conta_menu ;;
+   28) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
