@@ -2,9 +2,10 @@
 
 # ai glm-flash: mesmo provider/base_url do GLM, modelo trocado em TODOS os
 # slots. O ponto delicado: o PROVIDER_EXTRA_ENV do glm exporta sonnet/opus=
-# glm-5.3 e haiku=glm-4.7 ANTES do override do Flash — se algum slot escapar,
-# a sessão mistura duas gerações de modelo sem avisar. Este teste trava os
-# quatro slots, a base_url e a não-contaminação do 'ai glm' normal.
+# glm-5.3 e haiku=glm-5.3-flash ANTES do override do Flash — se algum slot
+# escapar, a sessão mistura duas gerações de modelo sem avisar. Este teste
+# trava os quatro slots, a base_url e o mapeamento do 'ai glm' normal (haiku
+# = Flash, para o /model da sessão GLM oferecê-lo).
 
 set -euo pipefail
 
@@ -75,10 +76,11 @@ done
 ( export AI_GLM_FLASH_MODEL="glm-4.7-flash"; run_launcher gf )
 env_is ANTHROPIC_MODEL "glm-4.7-flash"
 
-# 'ai glm' segue no 5.3 com haiku 4.7: o Flash não pode vazar para o GLM normal.
+# 'ai glm' segue no 5.3 nos slots sonnet/opus; o haiku é o Flash — é o que
+# faz o /model da sessão GLM oferecer o 5.3 Flash sem item de menu próprio.
 run_launcher glm
 env_is ANTHROPIC_DEFAULT_SONNET_MODEL "glm-5.3"
 env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "glm-5.3"
-env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "glm-4.7"
+env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "glm-5.3-flash"
 
 echo "PASS: dispatch do GLM 5.3 Flash"

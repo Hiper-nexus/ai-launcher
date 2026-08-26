@@ -22,8 +22,8 @@ chmod +x ~/.local/bin/ai
 ```bash
 ai              # Menu interativo com status de cada CLI
 ai c            # Claude Code direto
-ai glm          # GLM 5.3 (Z.ai) via Claude Code
-ai gf           # GLM 5.3 Flash (Z.ai) via Claude Code (aliases: glm-flash, zf, flash)
+ai glm          # GLM 5.3 (Z.ai) via Claude Code — /model oferece o 5.3 Flash
+ai gf           # sessão inteira no GLM 5.3 Flash (aliases: glm-flash, zf, flash)
 ai ds           # DeepSeek V4-Flash via Claude Code
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai x            # Codex direto
@@ -56,8 +56,8 @@ ai --help       # Ajuda
 | CLI | Atalho | Flag padrão |
 |-----|--------|-------------|
 | Claude Code | `ai c` | `--dangerously-skip-permissions` |
-| GLM/Z.ai | `ai glm` | Claude Code via provider `glm` — **GLM 5.3** (1M de contexto) nos slots sonnet/opus, `glm-4.7` no haiku |
-| GLM Flash | `ai gf`, `ai glm-flash` | Mesmo provider `glm` — **GLM 5.3 Flash** (também 1M) em **todos** os slots, haiku incluído |
+| GLM/Z.ai | `ai glm` | Claude Code via provider `glm` — **GLM 5.3** (1M de contexto) nos slots sonnet/opus e **GLM 5.3 Flash** no haiku (troque no `/model` sem sair da sessão) |
+| GLM Flash | `ai gf`, `ai glm-flash` | Mesmo provider `glm` — **GLM 5.3 Flash** (também 1M) em **todos** os slots |
 | Muse Spark (Meta AI) | `ai ms` | CLI própria (REPL/one-shot) via `api.meta.ai`; `ai ms claude` abre no Claude Code (yolo); `ai ms model` escolhe o modelo para os dois caminhos |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
 | Codex Sol 1M | `ai sol` | idem + `-m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` |
