@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.43.1"
+AI_LAUNCHER_VERSION="1.44.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -83,6 +83,15 @@ HF_ENDPOINT_MODEL="${AI_HF_ENDPOINT_MODEL:-orcarouter/Qwen3.8-27B-Uncensored-FP8
 # Modelo default: Qwen2.5-Coder-32B abliterated (o melhor testado p/ RE).
 FL_HOST="${AI_FL_HOST:-https://api.featherless.ai/v1}"
 FL_MODEL="${AI_FL_MODEL:-huihui-ai/Qwen2.5-Coder-32B-Instruct-abliterated}"
+
+# ── Abliteration.ai (GLM-5.3 hospedado, sem censura) ─────
+# GLM-5.3 abliterated (direção de recusa removida nos pesos), servido pela
+# abliteration.ai com API OpenAI-compatible. Keys começam com ak_ e ficam no
+# providers.conf (slot 'abliteration', chmod 600) — nunca neste repo público.
+# Catálogo fixo: abliterated-model (multimodal), abliterated-model-large-v2
+# (GLM-5.3, texto) e abliterated-model-large (GLM-5.2, texto).
+AB_HOST="${AI_AB_HOST:-https://api.abliteration.ai/v1}"
+AB_MODEL="${AI_AB_MODEL:-abliterated-model-large-v2}"
 
 # ── Muse Spark (Meta AI) ─────────────────────────────────
 # API compatível com a Messages API da Anthropic (POST /v1/messages, SSE).
@@ -2411,6 +2420,7 @@ C_OPENCODE=$(_fg 94 234 212  86 36)  # água-marinha opencode
 C_OLLAMA=$(_fg  245 245 245 255 37)  # branco Ollama
 C_HF=$(_fg      255 214  10 220 33)  # amarelo Hugging Face
 C_FL=$(_fg      132 204  22 148 32)  # lima Featherless
+C_AB=$(_fg      239  68  68 196 31)  # vermelho Abliteration (sem censura)
 C_SEC=$(_fg     244  63  94 203 31)  # vermelho segurança
 C_TOOL=$(_fg    250 204  21 220 33)  # âmbar ferramentas
 C_RULE=$(_fg     71  85 105 240 90)  # linhas/separadores (90 = cinza; 30 é
@@ -3794,6 +3804,129 @@ fl_dispatch() {
 }
 
 # ╔══════════════════════════════════════════════════════╗
+# ║  ABLITERATION.AI — GLM-5.3 hospedado, sem censura    ║
+# ╚══════════════════════════════════════════════════════╝
+
+# Key da abliteration.ai (slot 'abliteration' no providers.conf, chmod 600)
+ab_api_key() {
+    local k="${ABLITERATION_API_KEY:-}"
+    [[ -z "$k" ]] && k=$(provider_load_key abliteration 2>/dev/null || true)
+    printf '%s' "$k"
+}
+
+ab_require_key() {
+    local k; k=$(ab_api_key)
+    if [[ -z "$k" ]]; then
+        echo -e "${RED}Erro: nenhuma API key da Abliteration.ai.${RESET}" >&2
+        echo "  Pegue em: https://abliteration.ai (console, keys começam com ak_)" >&2
+        echo "  Depois:   ai ab key" >&2
+        return 1
+    fi
+    printf '%s' "$k"
+}
+
+ab_save_key() {
+    local key="${1:-}"
+    if [[ -z "$key" && -t 0 ]]; then
+        read -rsp "$(echo -e "  ${BOLD}API key da Abliteration.ai (ak_...):${RESET} ")" key; echo ""
+    fi
+    [[ -z "$key" ]] && { echo -e "${RED}Erro: key vazia.${RESET}" >&2; return 1; }
+    provider_save_key abliteration "$key" || return 1
+    echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+}
+
+ab_status_icon() {
+    [[ -n "$(ab_api_key)" ]] && echo -e "${GREEN}✔${RESET}" || echo -e "${YELLOW}✗ sem key${RESET}"
+}
+
+# Chat contra a abliteration.ai (API OpenAI-compatible, streaming).
+# Sem prompt = REPL; com prompt = one-shot. thinking desligado por padrão
+# (AI_AB_THINKING=1 religa; no large-v2 o raciocínio não desliga, só baixa).
+ab_chat() {
+    local model="$1"; shift
+    local key; key=$(ab_require_key) || return 1
+    require_python || return 1
+
+    save_history "Abliteration [${model}]"
+    if [[ $# -gt 0 ]]; then
+        echo -e "${GREEN}Abliteration:${RESET} ${model} ${DIM}(one-shot, sem censura)${RESET}"
+    else
+        echo -e "${GREEN}Abliteration:${RESET} ${model} ${DIM}(/sair encerra, /limpar zera o contexto)${RESET}"
+    fi
+    echo ""
+
+    local pyfile; pyfile=$(mktemp -t ai-ab.XXXXXX) || return 1
+    trap "rm -f '$pyfile'" RETURN
+    cat > "$pyfile" <<'PY'
+import json, os, sys, urllib.request, urllib.error
+
+URL = os.environ["AB_URLV"].rstrip("/") + "/chat/completions"
+KEY = os.environ["AB_KEY"]
+MODEL = os.environ["AB_MODELV"]
+THINKING = os.environ.get("AB_THINK") == "1"
+DIM, RESET, RED = "\033[2m", "\033[0m", "\033[31m"
+
+def stream(messages):
+    body = json.dumps({"model": MODEL, "messages": messages, "stream": True,
+                       "max_tokens": 8192, "thinking": THINKING}).encode()
+    req = urllib.request.Request(URL, data=body, headers={
+        "Authorization": "Bearer " + KEY, "Content-Type": "application/json"})
+    parts = []
+    try:
+        r = urllib.request.urlopen(req, timeout=600)
+        for raw in r:
+            raw = raw.strip()
+            if not raw or not raw.startswith(b"data:"): continue
+            payload = raw[5:].strip()
+            if payload == b"[DONE]": break
+            try: chunk = json.loads(payload)
+            except json.JSONDecodeError: continue
+            if "error" in chunk:
+                msg = chunk["error"].get("message","") if isinstance(chunk["error"],dict) else str(chunk["error"])
+                print(f"{RED}erro: {msg}{RESET}", file=sys.stderr); return None
+            delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
+            c = delta.get("content")
+            if c: sys.stdout.write(c); sys.stdout.flush(); parts.append(c)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8","replace")[:300]
+        print(f"{RED}erro HTTP {e.code}: {detail}{RESET}", file=sys.stderr); return None
+    except KeyboardInterrupt:
+        print(); return "".join(parts)
+    except Exception as e:
+        print(f"{RED}erro: {e}{RESET}", file=sys.stderr); return None
+    print(); return "".join(parts)
+
+if len(sys.argv) > 1:
+    out = stream([{"role":"user","content":" ".join(sys.argv[1:])}])
+    sys.exit(0 if out is not None else 1)
+
+history = []
+while True:
+    try: line = input("\033[1m› \033[0m").strip()
+    except (EOFError, KeyboardInterrupt): print("\nSaindo."); break
+    if not line: continue
+    if line in ("/sair","/exit","/quit","/q"): print("Saindo."); break
+    if line in ("/limpar","/clear","/reset"): history=[]; print(f"{DIM}contexto zerado{RESET}"); continue
+    history.append({"role":"user","content":line})
+    out = stream(history)
+    if out is None: history.pop(); continue
+    history.append({"role":"assistant","content":out}); print()
+PY
+    AB_URLV="$AB_HOST" AB_KEY="$key" AB_MODELV="$model" \
+        AB_THINK="${AI_AB_THINKING:-}" python3 "$pyfile" "$@"
+}
+
+ab_dispatch() {
+    local sub="${1:-}"
+    local model="$AB_MODEL"
+    case "$sub" in
+        key|token)  shift || true; ab_save_key "${1:-}"; return $? ;;
+        -m|--model) shift || true; model="${1:-}"; [[ -z "$model" ]] && { echo -e "${RED}Uso: ai ab -m <modelo>${RESET}"; return 1; }; shift || true ;;
+    esac
+    ab_chat "$model" "$@"
+}
+
+# ╔══════════════════════════════════════════════════════╗
 # ║  MUSE SPARK (Meta AI) — CLI própria + Claude Code    ║
 # ╚══════════════════════════════════════════════════════╝
 
@@ -4589,6 +4722,17 @@ Featherless (catálogo uncensored via API, plano pago — 21 mil+ modelos):
   Modelo default: AI_FL_MODEL. Contexto 32K. Não loga. Retry automático se
   o modelo estiver lotado (capacity). Passa User-Agent p/ o Cloudflare.
 
+Abliteration.ai (GLM-5.3 hospedado, abliterated — sem censura):
+  ab                     Chat interativo no GLM-5.3 sem censura
+  ab "prompt"            One-shot com prompt direto
+  ab -m <modelo>         Outro modelo: abliterated-model (multimodal),
+                         abliterated-model-large-v2 (GLM-5.3, default),
+                         abliterated-model-large (GLM-5.2)
+  ab key [key]           Salva a API key ak_... (https://abliteration.ai)
+  Modelo default: AI_AB_MODEL. Thinking off por padrão; AI_AB_THINKING=1
+  religa (no large-v2 o raciocínio não desliga, só roda em low). Sem retenção
+  de prompts; billing por token. Key no providers.conf (chmod 600).
+
 Qwen (Alibaba Model Studio — Qwen-Max, DUAS opções, não é o Qoder):
   qw / qwen              Opção 1: Qwen Code CLI (CLI própria da Qwen)
   qw claude              Opção 2: Claude Code usando o Qwen-Max (Anthropic-compat)
@@ -4716,6 +4860,9 @@ Exemplos:
   ai fl                           Featherless (Qwen-Coder-32B, RE sem censura)
   ai fl "desofusca isso"          Featherless one-shot
   ai fl ls coder                  Lista modelos coder do plano
+  ai ab                           Abliteration.ai (GLM-5.3 sem censura)
+  ai ab "audita esse dump"        Abliteration one-shot
+  ai ab key                       Salva a key ak_... (1x por máquina)
   ai qw                           Qwen Code CLI (Qwen-Max via Alibaba)
   ai qw claude                    Claude Code usando o Qwen-Max
   ai qw key                       Salva a key da Alibaba/DashScope
@@ -5464,6 +5611,10 @@ elif [[ ${1:-} == "fl" || ${1:-} == "featherless" ]]; then
     shift
     fl_dispatch "$@"
     exit $?
+elif [[ ${1:-} == "ab" || ${1:-} == "abliteration" ]]; then
+    shift
+    ab_dispatch "$@"
+    exit $?
 elif [[ ${1:-} == "qw" || ${1:-} == "qwen" ]]; then
     shift
     qwen_dispatch "$@"
@@ -5677,6 +5828,7 @@ secscan_status=$(status_icon codex-security)
 ollama_status=$(ollama_status_icon)
 hf_status=$(hf_status_icon)
 fl_status=$(fl_status_icon)
+abl_status=$(ab_status_icon)
 
 claude_ver=$(get_version claude)
 glm_ver="${claude_ver}" # GLM usa Claude Code
@@ -5702,6 +5854,8 @@ show_splash
 
 _hf_menu_label="${HF_ENDPOINT_MODEL##*/}"
 _fl_menu_label="${FL_MODEL##*/}"
+_ab_menu_label="GLM-5.3"
+[[ "$AB_MODEL" != "abliterated-model-large-v2" ]] && _ab_menu_label="$AB_MODEL"
 
 menu_group "CLAUDE CODE"
 menu_row  1 "$C_CLAUDE"   "Claude Code"  "${claude_ver}"        "${claude_status}"
@@ -5733,12 +5887,13 @@ menu_row 20 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}
 menu_row 21 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
 menu_row 22 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
 menu_row 23 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 24 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 24 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 25 "$C_TOOL" "🔌 Providers"
-menu_tool 26 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 27 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 25 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 26 "$C_TOOL" "🔌 Providers"
+menu_tool 27 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 28 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -5759,7 +5914,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-27/0]: " choice
+read -rp "Escolha [1-28/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -5811,10 +5966,11 @@ case $choice in
        export ANTHROPIC_MODEL="deepseek-v4-pro"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   24) enter_repo_if_needed
+   24) ab_dispatch || true ;;
+   25) enter_repo_if_needed
        launch_codex_security ;;
-   25) provider_list ;;
-   26) flags_menu
+   26) provider_list ;;
+   27) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -5834,7 +5990,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   27) conta_menu ;;
+   28) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

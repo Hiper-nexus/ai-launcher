@@ -42,6 +42,7 @@ ai cu           # Cursor Agent direto
 ai omp          # omp (oh-my-pi) direto — 60+ providers num só agente
 ai omp models   # Providers/modelos que o omp enxerga hoje
 ai ol           # Ollama Cloud (roda em ollama.com, não na sua máquina)
+ai ab           # GLM-5.3 sem censura (Abliteration.ai) — chat ou one-shot
 ai c "prompt"   # Claude com prompt
 ai conta        # Menu de contas Claude (troca sem logout, macOS)
 ai conta save trabalho   # Salva a conta logada atual como "trabalho"
@@ -72,6 +73,7 @@ ai --help       # Ajuda
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
 | Featherless | `ai fl` | catálogo uncensored via API (21 mil+ modelos, plano pago) |
+| Abliteration.ai | `ai ab` | GLM-5.3 hospedado, abliterated (sem censura) — chat + one-shot |
 | Qwen (Alibaba) | `ai qw` | Qwen-Max via Model Studio — CLI própria **ou** dentro do Claude Code |
 | Prime Agent | `ai prime`, `ai pa` | sessão persistente (sem one-shot); subcomandos e `--resume` passam direto |
 
@@ -260,6 +262,19 @@ ai fl ls coder               # lista modelos coder do plano
 Modelo default: `huihui-ai/Qwen2.5-Coder-32B-Instruct-abliterated` (o melhor testado pra engenharia reversa — reconhece algoritmos de hash pelo nome, desofusca e reescreve legível, não recusa). Ajuste com `AI_FL_MODEL`. O cliente passa `User-Agent` de browser (o Featherless fica atrás de Cloudflare) e faz retry automático quando o modelo está lotado (`capacity_exhausted`, pois é compartilhado).
 
 **HF vs Featherless:** o HF (`ai hf`) é dedicado e pay-per-hour (mais barato para uso esporádico, contexto até 128K na H200); o Featherless é flat mensal, compartilhado, com muito mais variedade de modelos. Ambos 32K por padrão. Para RE pontual, qualquer um serve; escolha por custo de uso.
+
+## Abliteration.ai (GLM-5.3 hospedado, sem censura)
+
+`ai ab` fala com o [Abliteration.ai](https://abliteration.ai) — o **GLM-5.3 com a direção de recusa removida nos pesos** (abliteration), servido atrás de uma API OpenAI-compatible. Diferente do HF/Featherless (modelos menores, 32K), aqui é um modelo frontier hospedado: billing por token, sem retenção de prompts.
+
+```bash
+ai ab key                    # salva a key ak_... (https://abliteration.ai, 1x por máquina)
+ai ab                        # chat interativo no GLM-5.3 uncensored
+ai ab "audita esse dump"     # one-shot
+ai ab -m abliterated-model   # variante multimodal (aceita imagem/vídeo)
+```
+
+Modelos: `abliterated-model-large-v2` (GLM-5.3, default), `abliterated-model-large` (GLM-5.2) e `abliterated-model` (multimodal). Thinking desligado por padrão; `AI_AB_THINKING=1` religa (no large-v2 o raciocínio não desliga, roda em low). Ajustes: `AI_AB_MODEL`, `AI_AB_HOST`. A key fica no `providers.conf` (chmod 600, slot `abliteration`); `ABLITERATION_API_KEY` no ambiente tem prioridade.
 
 ## Qwen (Alibaba Model Studio — duas opções)
 
