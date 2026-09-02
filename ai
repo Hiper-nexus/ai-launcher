@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.45.0"
+AI_LAUNCHER_VERSION="1.47.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -38,6 +38,9 @@ OMP_FLAGS=(--yolo)
 # Muse Spark é yolo por definição: não entra no Toggle Flags, então continua
 # sem aprovação mesmo se o usuário desligar o yolo global do Claude Code.
 MUSE_FLAGS=(--dangerously-skip-permissions)
+# Muse Code (Meta) — TUI de sessão; yolo desliga approval+sandbox (ver 'muse --help')
+MUSE_CODE_FLAGS=(--yolo)
+MUSE_CODE_PROMPT_FLAG=""
 # prime-agent é TUI de sessão persistente (sem prompt one-shot): sem flags
 # padrão; subcomandos (agents/status/doctor/update…) passam direto no dispatch.
 PRIME_FLAGS=()
@@ -101,7 +104,7 @@ AB_MODEL="${AI_AB_MODEL:-abliterated-model-large-v2}"
 # thinking/redacted_thinking, por isso o teto de tokens é alto por padrão —
 # com max_tokens baixo a resposta volta vazia (stop_reason=max_tokens).
 MUSE_HOST="${AI_MUSE_HOST:-https://api.meta.ai}"
-MUSE_MODEL="${AI_MUSE_MODEL:-muse-spark-1.2}"
+MUSE_MODEL="${AI_MUSE_MODEL:-muse-spark-1.3}"
 MUSE_MAX_TOKENS="${AI_MUSE_MAX_TOKENS:-8192}"
 
 # ── Qwen Code CLI (Alibaba Model Studio, direto — não é o Qoder) ──
@@ -222,7 +225,7 @@ declare -A PROVIDER_MODELS=(
     [ollama]="qwen2.5-coder:32b"
     [lmstudio]="loaded-model"
     [litellm]="gpt-4o"
-    [muse-spark]="muse-spark-1.2"
+    [muse-spark]="muse-spark-1.3"
 )
 
 # Env vars extras por provider (timeout, tráfego, etc.)
@@ -235,7 +238,7 @@ declare -A PROVIDER_EXTRA_ENV=(
     [ollama]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [lmstudio]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
-    [muse-spark]="API_TIMEOUT_MS=600000 ANTHROPIC_MODEL=muse-spark-1.2 ANTHROPIC_DEFAULT_HAIKU_MODEL=muse-spark-1.2 ANTHROPIC_DEFAULT_SONNET_MODEL=muse-spark-1.2 ANTHROPIC_DEFAULT_OPUS_MODEL=muse-spark-1.2 CLAUDE_CODE_SUBAGENT_MODEL=muse-spark-1.2 ENABLE_TOOL_SEARCH=true"
+    [muse-spark]="API_TIMEOUT_MS=600000 ANTHROPIC_MODEL=muse-spark-1.3 ANTHROPIC_DEFAULT_HAIKU_MODEL=muse-spark-1.3 ANTHROPIC_DEFAULT_SONNET_MODEL=muse-spark-1.3 ANTHROPIC_DEFAULT_OPUS_MODEL=muse-spark-1.3 CLAUDE_CODE_SUBAGENT_MODEL=muse-spark-1.3 ENABLE_TOOL_SEARCH=true"
 )
 
 # ── omp (oh-my-pi): afinação padrão ──────────────────────
@@ -2934,6 +2937,7 @@ launch() {
     case "$flags_name" in
         CLAUDE_FLAGS) flags_ref=("${CLAUDE_FLAGS[@]}") ;;
         MUSE_FLAGS)   flags_ref=("${MUSE_FLAGS[@]+"${MUSE_FLAGS[@]}"}") ;;
+        MUSE_CODE_FLAGS) flags_ref=("${MUSE_CODE_FLAGS[@]+"${MUSE_CODE_FLAGS[@]}"}") ;;
         CODEX_FLAGS)  flags_ref=("${CODEX_FLAGS[@]}") ;;
         GEMINI_FLAGS) flags_ref=("${GEMINI_FLAGS[@]}") ;;
         AGY_FLAGS)    flags_ref=("${AGY_FLAGS[@]+"${AGY_FLAGS[@]}"}") ;;
@@ -4685,6 +4689,7 @@ CLIs de IA:
   ms, muse-spark         CLI própria do Muse Spark (Meta AI)
   ms claude              Abre Claude Code usando Muse Spark (yolo)
   ms model [nome]        Escolhe o modelo — vale para os dois caminhos
+  muse, mu               Abre Muse CLI (Meta — Muse Code, TUI Agente)
   deepseek, ds           Abre Claude Code usando DeepSeek (V4-Flash)
   deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
   codex,  x              Abre Codex CLI
@@ -5541,6 +5546,22 @@ elif [[ ${1:-} == "cursor" || ${1:-} == "cu" || ${1:-} == "cursor-agent" ]]; the
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS "$@"
+elif [[ ${1:-} == "muse" || ${1:-} == "mu" || ${1:-} == "muse-code" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    if ! check_installed muse; then
+        echo -e "${RED}Erro: Muse CLI não está instalada.${RESET}"
+        echo "  Instale: curl -fsSL https://api.meta.ai/muse-launcher.sh | bash"
+        exit 1
+    fi
+    # Subcomandos verbatim do muse (login/logout/auth/update) passam direto
+    case "${1:-}" in
+        login|logout|auth|update|--help|-h|--version|-v)
+            exec muse "$@" ;;
+    esac
+    enter_repo_if_needed
+    launch "Muse Code" muse "" MUSE_CODE_FLAGS "$@"
 elif [[ ${1:-} == "omp" || ${1:-} == "o" || ${1:-} == "oh-my-pi" ]]; then
     shift
     if ! check_installed omp; then
@@ -5855,6 +5876,7 @@ grok_status=$(status_icon grok)
 deepcode_status=$(status_icon deepcode)
 qoder_status=$(status_icon qodercli)
 cursor_status=$(status_icon cursor-agent)
+muse_code_status=$(status_icon muse)
 omp_status=$(status_icon omp)
 prime_status=$(status_icon prime-agent)
 opencode_status=$(opencode_status_icon)
@@ -5877,6 +5899,7 @@ grok_ver=$(get_version grok)
 deepcode_ver=$(get_version deepcode)
 qoder_ver=$(get_version qodercli)
 cursor_ver=$(get_version cursor-agent)
+muse_code_ver=$(get_version muse)
 omp_ver=$(get_version omp)
 prime_ver=$(get_version prime-agent)
 opencode_ver=$(get_version opencode)
@@ -5912,23 +5935,24 @@ menu_row 13 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status
 menu_row 14 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
 menu_row 15 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
 menu_row 16 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
+menu_row 17 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 17 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 18 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 19 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 20 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 21 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 22 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
-menu_row 23 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
-menu_row 24 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
-menu_row 25 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
+menu_row 18 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 19 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 20 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 21 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 22 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 23 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 24 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 25 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
+menu_row 26 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 26 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 27 "$C_TOOL" "🔌 Providers"
-menu_tool 28 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 29 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 27 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 28 "$C_TOOL" "🔌 Providers"
+menu_tool 29 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 30 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -5942,6 +5966,7 @@ flag_row "$C_KIMI"   "Kimi"   "${KIMI_FLAGS[*]+"${KIMI_FLAGS[*]}"}"
 flag_row "$C_GROK"   "Grok"   "${GROK_FLAGS[*]+"${GROK_FLAGS[*]}"}"
 flag_row "$C_QODER"  "Qoder"  "${QODER_FLAGS[*]+"${QODER_FLAGS[*]}"}"
 flag_row "$C_CURSOR" "Cursor" "${CURSOR_FLAGS[*]+"${CURSOR_FLAGS[*]}"}"
+flag_row "$C_MUSE"   "Muse"   "${MUSE_CODE_FLAGS[*]+"${MUSE_CODE_FLAGS[*]}"}"
 flag_row "$C_OMP"    "omp"    "${OMP_FLAGS[*]+"${OMP_FLAGS[*]}"}"
 flag_row "$C_OPENCODE" "opencode" "${OPENCODE_FLAGS[*]+"${OPENCODE_FLAGS[*]}"}"
 echo ""
@@ -5949,7 +5974,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-29/0]: " choice
+read -rp "Escolha [1-30/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -5991,22 +6016,25 @@ case $choice in
        launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
    16) enter_repo_if_needed
        opencode_launch ;;
-   17) ollama_dispatch || true ;;
-   18) hf_menu_panel || true ;;
-   19) fl_dispatch || true ;;
-   20) qwen_launch || true ;;
-   21) qwen_launch_claude || true ;;
-   22) muse_dispatch || true ;;
-   23) provider_setup_env "deepseek" || continue
+   17) if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; echo "  Instale: curl -fsSL https://api.meta.ai/muse-launcher.sh | bash"; continue; fi
+       enter_repo_if_needed
+       launch "Muse Code" muse "" MUSE_CODE_FLAGS ;;
+   18) ollama_dispatch || true ;;
+   19) hf_menu_panel || true ;;
+   20) fl_dispatch || true ;;
+   21) qwen_launch || true ;;
+   22) qwen_launch_claude || true ;;
+   23) muse_dispatch || true ;;
+   24) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="deepseek-v4-pro"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   24) ab_dispatch || true ;;
-   25) ab_launch_claude ;;
-   26) enter_repo_if_needed
+   25) ab_dispatch || true ;;
+   26) ab_launch_claude ;;
+   27) enter_repo_if_needed
        launch_codex_security ;;
-   27) provider_list ;;
-   28) flags_menu
+   28) provider_list ;;
+   29) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -6026,7 +6054,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   29) conta_menu ;;
+   30) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
