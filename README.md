@@ -73,7 +73,7 @@ ai --help       # Ajuda
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
 | Featherless | `ai fl` | catálogo uncensored via API (21 mil+ modelos, plano pago) |
-| Abliteration.ai | `ai ab` | GLM-5.3 hospedado, abliterated (sem censura) — chat + one-shot |
+| Abliteration.ai | `ai ab` | GLM-5.3 hospedado, abliterated (sem censura) — chat, one-shot ou Claude Code (`ai ab claude`) |
 | Qwen (Alibaba) | `ai qw` | Qwen-Max via Model Studio — CLI própria **ou** dentro do Claude Code |
 | Prime Agent | `ai prime`, `ai pa` | sessão persistente (sem one-shot); subcomandos e `--resume` passam direto |
 
@@ -272,7 +272,10 @@ ai ab key                    # salva a key ak_... (https://abliteration.ai, 1x p
 ai ab                        # chat interativo no GLM-5.3 uncensored
 ai ab "audita esse dump"     # one-shot
 ai ab -m abliterated-model   # variante multimodal (aceita imagem/vídeo)
+ai ab claude                 # Claude Code INTEIRO em cima do GLM-5.3 sem censura
 ```
+
+**Modo Claude (`ai ab claude`)** — mesmo esquema do `ai glm`: o Claude Code vira só o harness e todo o raciocínio roda no GLM-5.3 abliterated, via endpoint Anthropic-compatible da abliteration.ai (`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` exportados só na sessão, nada gravado em `~/.claude`). O slot haiku (tarefas de fundo) usa o `abliterated-model`, mais barato — ajuste com `AI_AB_HAIKU_MODEL`. A compactação automática segue a recomendação oficial de 240K para o contexto de 256K (`AI_AB_AUTOCOMPACT_WINDOW`). Setup manual/documentação: [docs.abliteration.ai/integrations/claude-code](https://docs.abliteration.ai/integrations/claude-code).
 
 Modelos: `abliterated-model-large-v2` (GLM-5.3, default), `abliterated-model-large` (GLM-5.2) e `abliterated-model` (multimodal). Thinking desligado por padrão; `AI_AB_THINKING=1` religa (no large-v2 o raciocínio não desliga, roda em low). Ajustes: `AI_AB_MODEL`, `AI_AB_HOST`. A key fica no `providers.conf` (chmod 600, slot `abliteration`); `ABLITERATION_API_KEY` no ambiente tem prioridade.
 

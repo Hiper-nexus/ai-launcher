@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.44.0"
+AI_LAUNCHER_VERSION="1.45.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -3921,9 +3921,39 @@ ab_dispatch() {
     local model="$AB_MODEL"
     case "$sub" in
         key|token)  shift || true; ab_save_key "${1:-}"; return $? ;;
+        claude)     shift || true; ab_launch_claude "$@"; return $? ;;
         -m|--model) shift || true; model="${1:-}"; [[ -z "$model" ]] && { echo -e "${RED}Uso: ai ab -m <modelo>${RESET}"; return 1; }; shift || true ;;
     esac
     ab_chat "$model" "$@"
+}
+
+# Claude Code inteiro em cima do GLM-5.3 sem censura (API Anthropic-compatible
+# da abliteration.ai). Mesmo esquema do qw claude: env só nesta sessão, nada
+# gravado em ~/.claude. Base URL SEM o /v1 (docs oficiais de integração).
+ab_launch_claude() {
+    if ! check_installed claude; then
+        echo -e "${RED}Erro: claude não está instalado.${RESET}"; return 1
+    fi
+    local key; key=$(ab_require_key) || return 1
+    local url="${AB_HOST%/v1}"
+    local model="${AI_AB_CLAUDE_MODEL:-${AB_MODEL}}"
+    clear_anthropic_provider_env
+    export ANTHROPIC_BASE_URL="$url"
+    export ANTHROPIC_AUTH_TOKEN="$key"
+    export ANTHROPIC_MODEL="$model"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="$model"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$model"
+    # haiku = tarefas de fundo (títulos etc.): vai o modelo mais barato do catálogo
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${AI_AB_HAIKU_MODEL:-abliterated-model}"
+    export CLAUDE_CODE_SUBAGENT_MODEL="$model"
+    # docs: 256K de contexto -> compacta em 240k p/ sobrar system prompt + tools
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW="${AI_AB_AUTOCOMPACT_WINDOW:-240000}"
+    export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+    echo -e "${GREEN}Claude Code${RESET} usando ${BOLD}${model}${RESET} ${DIM}(${url##*//}, sem censura)${RESET}"
+    echo ""
+    enter_repo_if_needed
+    # launch() já registra o histórico e faz o exec do claude
+    launch "Claude via Abliteration" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 }
 
 # ╔══════════════════════════════════════════════════════╗
@@ -4724,6 +4754,7 @@ Featherless (catálogo uncensored via API, plano pago — 21 mil+ modelos):
 
 Abliteration.ai (GLM-5.3 hospedado, abliterated — sem censura):
   ab                     Chat interativo no GLM-5.3 sem censura
+  ab claude              Claude Code inteiro em cima do GLM-5.3 (Anthropic-compat)
   ab "prompt"            One-shot com prompt direto
   ab -m <modelo>         Outro modelo: abliterated-model (multimodal),
                          abliterated-model-large-v2 (GLM-5.3, default),
@@ -4732,6 +4763,8 @@ Abliteration.ai (GLM-5.3 hospedado, abliterated — sem censura):
   Modelo default: AI_AB_MODEL. Thinking off por padrão; AI_AB_THINKING=1
   religa (no large-v2 o raciocínio não desliga, só roda em low). Sem retenção
   de prompts; billing por token. Key no providers.conf (chmod 600).
+  No modo claude: slot haiku usa AI_AB_HAIKU_MODEL (default abliterated-model)
+  e a compactação automática segue AI_AB_AUTOCOMPACT_WINDOW (default 240000).
 
 Qwen (Alibaba Model Studio — Qwen-Max, DUAS opções, não é o Qoder):
   qw / qwen              Opção 1: Qwen Code CLI (CLI própria da Qwen)
@@ -4862,6 +4895,7 @@ Exemplos:
   ai fl ls coder                  Lista modelos coder do plano
   ai ab                           Abliteration.ai (GLM-5.3 sem censura)
   ai ab "audita esse dump"        Abliteration one-shot
+  ai ab claude                    Claude Code em cima do GLM-5.3 sem censura
   ai ab key                       Salva a key ak_... (1x por máquina)
   ai qw                           Qwen Code CLI (Qwen-Max via Alibaba)
   ai qw claude                    Claude Code usando o Qwen-Max
@@ -5888,12 +5922,13 @@ menu_row 21 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}
 menu_row 22 "$C_MUSE"     "Muse CLI"     "${MUSE_MODEL}"         "${muse_cli_status}"
 menu_row 23 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
 menu_row 24 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
+menu_row 25 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 25 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 26 "$C_TOOL" "🔌 Providers"
-menu_tool 27 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 28 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 26 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 27 "$C_TOOL" "🔌 Providers"
+menu_tool 28 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 29 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -5914,7 +5949,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-28/0]: " choice
+read -rp "Escolha [1-29/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -5967,10 +6002,11 @@ case $choice in
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
    24) ab_dispatch || true ;;
-   25) enter_repo_if_needed
+   25) ab_launch_claude ;;
+   26) enter_repo_if_needed
        launch_codex_security ;;
-   26) provider_list ;;
-   27) flags_menu
+   27) provider_list ;;
+   28) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -5990,7 +6026,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   28) conta_menu ;;
+   29) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
