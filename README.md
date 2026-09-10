@@ -40,6 +40,8 @@ ai fugu-cyber   # Fugu Cyber — orquestração p/ segurança (acesso sob formul
 ai g            # Gemini direto
 ai k            # Kimi Code direto
 ai cu           # Cursor Agent direto
+ai dv           # Devin CLI (Cognition) — modo dangerous (auto-aprova tudo)
+ai dv "prompt"  # Devin one-shot (modo print)
 ai omp          # omp (oh-my-pi) direto — 60+ providers num só agente
 ai omp models   # Providers/modelos que o omp enxerga hoje
 ai ol           # Ollama Cloud (roda em ollama.com, não na sua máquina)
@@ -77,6 +79,7 @@ ai --help       # Ajuda
 | Abliteration.ai | `ai ab` | GLM-5.3 hospedado, abliterated (sem censura) — chat, one-shot ou Claude Code (`ai ab claude`) |
 | Qwen (Alibaba) | `ai qw` | Qwen-Max via Model Studio — CLI própria (`--yolo`) **ou** dentro do Claude Code |
 | Prime Agent | `ai prime`, `ai pa` | sessão persistente (sem one-shot); subcomandos e `--resume` passam direto |
+| Devin CLI | `ai dv`, `ai devin` | `--permission-mode dangerous --respect-workspace-trust false` |
 
 ## omp (oh-my-pi)
 
@@ -330,6 +333,54 @@ curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh
 > `schedule`) e flags informativas (`--resume`, `--version`, `--help`) passam
 > **diretos** para o CLI. Sem subcomando, o launcher abre a TUI.
 
+## Devin CLI (Cognition)
+
+`ai dv` (ou `ai devin`) abre o **Devin CLI** — agente da Cognition que roda tanto
+no terminal quanto na nuvem. Sem prompt ele abre a TUI; com prompt ele roda em
+modo print (one-shot).
+
+```bash
+ai dv                          # TUI do Devin, modo dangerous
+ai dv "corrige esse teste"     # one-shot (modo print)
+ai dv models                   # modelos disponíveis na sua conta
+ai dv doctor                   # diagnostica a config local
+ai dv auth login               # autentica (ou faça login dentro da TUI)
+ai dv update                   # atualiza o binário
+ai dv cloud list               # recursos do Devin Cloud
+```
+
+Instalação (uma vez por máquina):
+
+```bash
+curl -fsSL https://cli.devin.ai/install.sh | bash
+```
+
+O binário vai para `~/.local/bin/devin` (versões ficam em
+`~/.local/share/devin/cli/_versions/`, com um symlink `current`). O
+auto-update nativo é `ai dv update`.
+
+**Flags padrão:** `--permission-mode dangerous --respect-workspace-trust false`
+
+- `--permission-mode dangerous` é o yolo do Devin: o default é `auto`, que só
+  auto-aprova ferramentas de leitura — sem isso ele pediria aprovação a cada
+  escrita. Os degraus são `auto` → `accept-edits` → `smart` → `dangerous`.
+- `--respect-workspace-trust false` existe porque o modo print (`-p`) **não
+  consegue** exibir o prompt de confiança do diretório e falha num repo ainda
+  não confiado. Como o launcher já é yolo por padrão e entra no seu próprio
+  repo, a checagem é pulada. Remova essa flag de `DEVIN_FLAGS` em `ai` se
+  quiser o prompt de trust do Devin.
+
+> Subcomandos (`auth`, `mcp`, `models`, `doctor`, `rules`, `skills`, `plugins`,
+> `cloud`, `desktop`, `list`, `ls`, `rm`, `ssh`, `forward`, `update`, `version`,
+> `migrate`, `sandbox`, `setup`, `uninstall`, `acp`, `help`) e flags informativas
+> (`--version`, `--help`) passam **diretos** para o CLI, sem as flags de yolo.
+
+> **Pegadinha do launcher, não do Devin:** tudo que sobra na linha de comando
+> vira o **prompt** — então `ai dv --model opus` mandaria a string `--model opus`
+> como prompt, em vez de trocar de modelo. Isso vale para todas as CLIs do
+> launcher. Para escolher modelo, use a TUI (`ai dv`) ou chame o binário direto:
+> `devin --model opus --permission-mode dangerous`.
+
 ## Codex Security (scanner da OpenAI)
 
 Não é um agente interativo como as CLIs acima — é um scanner de vulnerabilidades com
@@ -441,6 +492,7 @@ npm install -g @google/gemini-cli           # Gemini
 curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash  # Kimi Code
 curl -fsSL https://antigravity.google/cli/install.sh | bash  # Antigravity
 curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh  # Prime Agent
+curl -fsSL https://cli.devin.ai/install.sh | bash                     # Devin CLI
 ```
 
 Depois, autentique cada ferramenta usando o fluxo nativo dela (`claude`, `codex` e `gemini`). O launcher não valida nem exige variáveis como `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` ou `GEMINI_API_KEY`.
