@@ -80,7 +80,7 @@ assert_args '--yolo|--provider|alibaba-token-plan|--model|qwen3.8-max|-p|tarefa|
     omp --via qwen "tarefa"
 assert_args '--yolo|--provider|sakana|--model|fugu|-p|tarefa|' \
     omp --via fugu "tarefa"
-assert_args '--yolo|--provider|meta|--model|muse-spark-1.2|-p|tarefa|' \
+assert_args '--yolo|--provider|meta|--model|muse-spark-1.3|-p|tarefa|' \
     omp --via muse-spark "tarefa"
 
 # -m explícito ganha do default do provider: um único --model chega no omp.
