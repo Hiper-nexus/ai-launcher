@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.48.0"
+AI_LAUNCHER_VERSION="1.49.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -147,8 +147,8 @@ QODER_PROMPT_FLAG="-p"
 CURSOR_PROMPT_FLAG="-p"
 # omp: -p é o modo print (one-shot headless), mesma convenção do Claude/Codex.
 OMP_PROMPT_FLAG="-p"
-# devin: -p/--print é o one-shot headless e aceita o prompt inline (-p "msg").
-DEVIN_PROMPT_FLAG="-p"
+# devin não tem PROMPT_FLAG aqui: o one-shot precisa de '-p -- <prompt>', dois
+# tokens que o launch() genérico não monta. Quem cuida é devin_launch().
 # prime-agent: TUI interativa, não aceita prompt one-shot → prompt-flag vazio.
 PRIME_PROMPT_FLAG=""
 # opencode: o one-shot é um SUBCOMANDO ('opencode run "msg"'), não uma flag.
@@ -2622,7 +2622,7 @@ AI_VERSION_TTL_MIN=5
 
 preload_versions() {
     local cmds=(claude codex gemini agy kimi grok deepcode qodercli cursor-agent \
-                omp prime-agent codex-security qwen opencode devin)
+                omp prime-agent codex-security qwen opencode muse devin)
     # Cache ainda válido → nada a fazer.
     if [[ -f "$AI_VERSION_CACHE" ]] && \
        [[ -n "$(find "$AI_VERSION_CACHE" -mmin "-$AI_VERSION_TTL_MIN" 2>/dev/null)" ]]; then
@@ -2734,6 +2734,60 @@ opencode_launch() {
         echo -e "${GREEN}Iniciando opencode:${RESET} opencode ${flags[*]+"${flags[*]}"}"
         echo ""
         exec opencode ${flags[@]+"${flags[@]}"} ${extra[@]+"${extra[@]}"}
+    fi
+}
+
+# Tira uma flag do DEVIN_FLAGS (e o valor dela, quando houver). O clap do devin
+# recusa repetição — 'devin --permission-mode a --permission-mode b' morre com
+# "cannot be used multiple times" — então quando o usuário passa uma flag que o
+# launcher já põe por padrão, o valor dele SUBSTITUI o default em vez de somar.
+devin_drop_flag() {
+    local alvo="$1" i=0
+    local -a out=()
+    while [[ $i -lt ${#DEVIN_FLAGS[@]} ]]; do
+        if [[ "${DEVIN_FLAGS[$i]}" == "$alvo" ]]; then
+            i=$((i + 1))
+            # Pula o valor, que vem logo depois — mas só se for mesmo um valor:
+            # flags booleanas (--sandbox) não têm, e aí o próximo token já é
+            # outra flag e não pode ser engolido.
+            if [[ $i -lt ${#DEVIN_FLAGS[@]} && "${DEVIN_FLAGS[$i]:0:1}" != "-" ]]; then
+                i=$((i + 1))
+            fi
+            continue
+        fi
+        out+=("${DEVIN_FLAGS[$i]}")
+        i=$((i + 1))
+    done
+    DEVIN_FLAGS=("${out[@]+"${out[@]}"}")
+}
+
+# Devin CLI. Não usa launch() por um motivo específico: o prompt do one-shot
+# tem de ir como '-p -- "texto"', com DOIS tokens antes dele.
+#
+# O -p/--print do devin tem valor OPCIONAL, e o clap não consome como valor um
+# token que começa com '-'. Então '-p "texto"' quebra assim que o texto começa
+# com hífen — e 'ai dv <qualquer-flag> "prompt"' é exatamente esse caso:
+#
+#   devin ... -p "-c continua"  →  error: unexpected argument '- ' found
+#
+# Com o -- separador (a forma que o próprio 'devin --help' documenta) o texto
+# volta a ser opaco pro clap. launch() sempre emite "$prompt_flag" "$prompt"
+# como dois argumentos, então não consegue montar '-p -- <prompt>'; daí o
+# caminho próprio, pela mesma razão do opencode_launch().
+devin_launch() {
+    local -a flags=("${DEVIN_FLAGS[@]+"${DEVIN_FLAGS[@]}"}")
+    save_history "Devin CLI"
+    # Prompt só de espaços ('ai dv ""') abre a TUI: '$#' conta argumentos, não
+    # conteúdo, então sem isto um argumento vazio viraria one-shot sem prompt.
+    if [[ -n "${*//[[:space:]]/}" ]]; then
+        local prompt="$*"
+        echo -e "${GREEN}Iniciando Devin CLI:${RESET} devin ${flags[*]+"${flags[*]}"} -p -- \"${prompt}\""
+        echo ""
+        exec devin ${flags[@]+"${flags[@]}"} -p -- "$prompt"
+    else
+        echo -e "${GREEN}Iniciando Devin CLI:${RESET} devin ${flags[*]+"${flags[*]}"}"
+        echo ""
+        exec devin ${flags[@]+"${flags[@]}"}
     fi
 }
 
@@ -2945,7 +2999,11 @@ provider_cli_status_icon() {
 }
 
 save_history() {
-    echo "$(date '+%Y-%m-%d %H:%M') | $1" >> "$HISTORY_FILE"
+    # Uma quebra de linha no rótulo forja uma entrada nova no histórico (o
+    # 'Último uso' lê com tail -1). O rótulo pode carregar _active_provider,
+    # que vem cru da linha de comando — então achata antes de gravar.
+    local label="${1//$'\n'/ }"
+    printf '%s | %s\n' "$(date '+%Y-%m-%d %H:%M')" "$label" >> "$HISTORY_FILE"
 }
 
 show_last_used() {
@@ -2970,7 +3028,6 @@ launch() {
         CLAUDE_FLAGS) flags_ref=("${CLAUDE_FLAGS[@]}") ;;
         MUSE_FLAGS)   flags_ref=("${MUSE_FLAGS[@]+"${MUSE_FLAGS[@]}"}") ;;
         MUSE_CODE_FLAGS) flags_ref=("${MUSE_CODE_FLAGS[@]+"${MUSE_CODE_FLAGS[@]}"}") ;;
-        DEVIN_FLAGS)  flags_ref=("${DEVIN_FLAGS[@]+"${DEVIN_FLAGS[@]}"}") ;;
         CODEX_FLAGS)  flags_ref=("${CODEX_FLAGS[@]}") ;;
         GEMINI_FLAGS) flags_ref=("${GEMINI_FLAGS[@]}") ;;
         AGY_FLAGS)    flags_ref=("${AGY_FLAGS[@]+"${AGY_FLAGS[@]}"}") ;;
@@ -4913,6 +4970,9 @@ Exemplos:
   ai cursor "prompt"              Cursor Agent com prompt direto
   ai dv                           Devin CLI (modo dangerous — auto-aprova tudo)
   ai devin "prompt"               Devin one-shot (modo print)
+  ai dv -c "continua isso"        Retoma a última sessão com um prompt
+  ai dv --model opus "tarefa"     Troca o modelo (substitui o default)
+  ai dv -- "texto começando com -"  Separa flag de prompt
   ai dv models                    Lista os modelos da sua conta Devin
   ai dv doctor                    Diagnostica a config local do Devin
   ai dv auth login                Autentica (ou faça login dentro da TUI)
@@ -5642,8 +5702,44 @@ elif [[ ${1:-} == "devin" || ${1:-} == "dv" ]]; then
         forward|update|version|migrate|sandbox|setup|uninstall|acp|help|--help|-h|--version|-V|-v)
             exec devin "$@" ;;
     esac
+    # --via é do launcher (troca de provider), e o devin tem login e catálogo
+    # próprios. Sem esta guarda o provider era ignorado em silêncio mas ia
+    # parar no histórico como se tivesse sido aplicado.
+    if [[ -n "$_active_provider" ]]; then
+        echo -e "${RED}Erro: devin não usa provider do launcher (--via).${RESET}"
+        echo "  Ele tem login/modelos próprios: ai dv models | ai dv auth login"
+        exit 1
+    fi
+    # Flags do devin que valem antes do prompt, no mesmo padrão do claude e do
+    # omp. Sem este laço o que sobra é tudo prompt (prompt="$*") e 'ai dv -c
+    # "continua"' mandaria a STRING '-c continua' como texto, em vez de retomar
+    # a última sessão.
+    while [[ $# -gt 0 && ${1:-} == -* ]]; do
+        case "$1" in
+            --)                shift; break ;;   # separador: o resto é prompt
+            -c|--continue)     DEVIN_FLAGS+=(--continue); _is_continuing=true; shift ;;
+            -r|--resume)       DEVIN_FLAGS+=(--resume); _is_continuing=true; shift
+                               [[ $# -gt 0 && "${1:0:1}" != "-" ]] && DEVIN_FLAGS+=("$1") && shift ;;
+            -m|--model)        devin_drop_flag --model; shift
+                               [[ $# -gt 0 ]] && DEVIN_FLAGS+=(--model "$1") && shift ;;
+            --permission-mode) devin_drop_flag --permission-mode; shift
+                               [[ $# -gt 0 ]] && DEVIN_FLAGS+=(--permission-mode "$1") && shift ;;
+            --sandbox)         devin_drop_flag --sandbox; DEVIN_FLAGS+=(--sandbox); shift ;;
+            -p|--print)        shift ;;   # devin_launch já emite o '-p --'
+            --*=*)             devin_drop_flag "${1%%=*}"; DEVIN_FLAGS+=("$1"); shift ;;
+            *)
+                # Token com '-' que o launcher não conhece: abortar em vez de
+                # dobrá-lo no prompt junto com as flags de yolo. Antes,
+                # 'ai dv --permission-mode auto "x"' pedia o modo MAIS seguro e
+                # recebia 'dangerous', com o texto virando parte do prompt.
+                echo -e "${RED}Flag não reconhecida: $1${RESET}"
+                echo "  Se é o começo do prompt, separe com '--':"
+                echo "    ai dv -- \"$*\""
+                exit 1 ;;
+        esac
+    done
     enter_repo_if_needed
-    launch "Devin CLI" devin "$DEVIN_PROMPT_FLAG" DEVIN_FLAGS "$@"
+    devin_launch "$@"
 elif [[ ${1:-} == "omp" || ${1:-} == "o" || ${1:-} == "oh-my-pi" ]]; then
     shift
     if ! check_installed omp; then
@@ -6110,7 +6206,7 @@ case $choice in
        launch "Muse Code" muse "" MUSE_CODE_FLAGS ;;
    18) if ! check_installed devin; then echo -e "${RED}Erro: Devin CLI não instalada.${RESET}"; echo "  Instale: curl -fsSL https://cli.devin.ai/install.sh | bash"; continue; fi
        enter_repo_if_needed
-       launch "Devin CLI" devin "$DEVIN_PROMPT_FLAG" DEVIN_FLAGS ;;
+       devin_launch ;;
    19) ollama_dispatch || true ;;
    20) hf_menu_panel || true ;;
    21) fl_dispatch || true ;;

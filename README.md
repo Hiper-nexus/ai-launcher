@@ -375,11 +375,38 @@ auto-update nativo é `ai dv update`.
 > `migrate`, `sandbox`, `setup`, `uninstall`, `acp`, `help`) e flags informativas
 > (`--version`, `--help`) passam **diretos** para o CLI, sem as flags de yolo.
 
-> **Pegadinha do launcher, não do Devin:** tudo que sobra na linha de comando
-> vira o **prompt** — então `ai dv --model opus` mandaria a string `--model opus`
-> como prompt, em vez de trocar de modelo. Isso vale para todas as CLIs do
-> launcher. Para escolher modelo, use a TUI (`ai dv`) ou chame o binário direto:
-> `devin --model opus --permission-mode dangerous`.
+> `--via <provider>` é recusado: o Devin tem login e catálogo de modelos
+> próprios (`ai dv auth login`, `ai dv models`).
+
+### Flags antes do prompt
+
+Estas flags são reconhecidas **antes** do prompt e viram flags de verdade —
+não texto do prompt:
+
+```bash
+ai dv -c "continua de onde paramos"    # retoma a última sessão (-r <id> também)
+ai dv --model opus "tarefa pesada"     # troca o modelo
+ai dv --permission-mode accept-edits "revisa isso"
+ai dv --sandbox "roda os testes"
+```
+
+`--model` e `--permission-mode` **substituem** o default do launcher em vez de
+somar: o clap do Devin recusa a flag repetida (`cannot be used multiple times`),
+então `ai dv --permission-mode auto` roda em `auto` de verdade — o `dangerous`
+sai do caminho.
+
+Qualquer flag com `-` que o launcher não conheça **aborta** em vez de virar
+prompt, para você não pedir o modo mais seguro e receber o mais perigoso sem
+aviso. Se o seu prompt é que começa com `-`, separe com `--`:
+
+```bash
+ai dv -- "-c é um parâmetro do meu script?"
+```
+
+Tudo que sobra vira o prompt e é enviado como `-p -- "<texto>"`. O `--` é
+necessário porque o `-p` do Devin tem valor **opcional** e o clap não consome
+como valor um token que começa com hífen — sem ele, um prompt com `-` morre em
+`error: unexpected argument`.
 
 ## Codex Security (scanner da OpenAI)
 
@@ -436,7 +463,7 @@ ai conta status          # uso de cada conta (janela 5h / 7 dias) + horário de 
 ai conta use pessoal     # ativa a conta "pessoal" na hora
 ai conta rm backup       # remove um backup salvo
 ai c --conta trabalho    # troca de conta e já lança o Claude
-ai conta                 # menu interativo (também é a opção 9 do menu principal)
+ai conta                 # menu interativo (também é a opção 32 do menu principal)
 ```
 
 **Auto-switch**: com 2+ contas salvas, `ai c` verifica a janela de 5h antes de lançar — se a conta ativa esgotou, troca automaticamente para outra com quota (fail-open: problema de rede nunca bloqueia o launch). Desligar: `AI_CONTA_AUTO_SWITCH=false`. Trocar mais cedo: `AI_CONTA_AUTO_THRESHOLD=95`.

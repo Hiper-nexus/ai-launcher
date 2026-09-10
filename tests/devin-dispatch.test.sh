@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 
-# Dispatch do Devin CLI (Cognition). Dois pontos delicados:
+# Dispatch do Devin CLI (Cognition). Três pontos delicados, todos travados aqui:
 #
 # 1. O yolo do devin é '--permission-mode dangerous' (o default 'auto' só
 #    auto-aprova leitura). Sem isso o launcher abriria o Devin pedindo
 #    aprovação a cada tool.
-# 2. '-p/--print' é o one-shot headless e aceita o prompt inline ("-p 'msg'").
-#    Ele NÃO consegue mostrar o prompt de workspace trust, então a flag
-#    '--respect-workspace-trust false' precisa viajar junto — senão o one-shot
-#    falha num diretório ainda não confiado pelo Devin.
 #
-# Subcomandos (models/doctor/auth/update…) têm de passar verbatim, sem flags
-# de yolo e sem virarem prompt.
+# 2. O one-shot precisa ser '-p -- <texto>', com DOIS tokens. O -p/--print do
+#    devin tem valor OPCIONAL e o clap não consome como valor um token que
+#    começa com '-': sem o separador, qualquer prompt com hífen morre em
+#    "error: unexpected argument". Por isso o devin não usa o launch() genérico.
+#
+# 3. Flags do devin antes do prompt viram flags DE VERDADE, não texto. Sem
+#    isso 'ai dv --permission-mode auto "x"' pedia o modo mais seguro e
+#    recebia 'dangerous', com o texto virando parte do prompt.
+#
+# Subcomandos (models/doctor/auth/update…) passam verbatim, sem flags de yolo.
 
 set -euo pipefail
 
@@ -41,7 +45,7 @@ run_dv() {
         HOME="$TEST_HOME" \
         PATH="${FAKE_BIN}:$PATH" \
         CAPTURE_ARGS="$CAPTURE_ARGS" \
-        "$ROOT/ai" "$@" >/dev/null
+        "$ROOT/ai" "$@" >/dev/null 2>&1
     )
     tr '\n' '|' < "$CAPTURE_ARGS"
 }
@@ -54,15 +58,64 @@ assert_args() {
         fail "ai $*: esperado '${expected}', obtido '${got}'"
 }
 
-# Sem prompt: TUI, com o yolo e sem -p.
-assert_args '--permission-mode|dangerous|--respect-workspace-trust|false|' devin
-assert_args '--permission-mode|dangerous|--respect-workspace-trust|false|' dv
+# O launcher tem de recusar sem nunca chegar a executar o devin.
+assert_rejects() {
+    : > "$CAPTURE_ARGS"
+    if (
+        cd "$ROOT"
+        HOME="$TEST_HOME" \
+        PATH="${FAKE_BIN}:$PATH" \
+        CAPTURE_ARGS="$CAPTURE_ARGS" \
+        "$ROOT/ai" "$@" >/dev/null 2>&1
+    ); then
+        fail "ai $*: devia ter falhado, mas saiu com sucesso"
+    fi
+    [[ ! -s "$CAPTURE_ARGS" ]] ||
+        fail "ai $*: devin foi executado mesmo assim ($(tr '\n' '|' < "$CAPTURE_ARGS"))"
+}
 
-# Com prompt: -p antes do texto, flags de yolo antes do -p.
-assert_args '--permission-mode|dangerous|--respect-workspace-trust|false|-p|refatora isso|' \
-    dv "refatora isso"
-assert_args '--permission-mode|dangerous|--respect-workspace-trust|false|-p|refatora isso|' \
-    devin "refatora isso"
+YOLO='--permission-mode|dangerous|--respect-workspace-trust|false|'
+
+# Sem prompt: TUI, com o yolo e sem -p.
+assert_args "$YOLO" devin
+assert_args "$YOLO" dv
+
+# Com prompt: '-p -- <texto>'.
+assert_args "${YOLO}-p|--|refatora isso|" dv "refatora isso"
+assert_args "${YOLO}-p|--|refatora isso|" devin "refatora isso"
+
+# O '--' deixa o texto opaco pro clap: prompt com hífen chega intacto.
+assert_args "${YOLO}-p|--|-c continua|"      dv -- "-c continua"
+assert_args "${YOLO}-p|--|--model opus|"     dv -- "--model opus"
+assert_args "${YOLO}-p|--|prompt; rm -rf /|" dv -- "prompt; rm -rf /"
+
+# Prompt vazio abre a TUI — '$#' conta argumentos, não conteúdo.
+assert_args "$YOLO" dv ""
+
+# Flags do devin antes do prompt viram flags de verdade.
+assert_args "${YOLO}--continue|"                  dv -c
+assert_args "${YOLO}--continue|-p|--|continua|"   dv -c "continua"
+assert_args "${YOLO}--resume|abc123|-p|--|segue|" dv -r abc123 "segue"
+assert_args "${YOLO}--model|opus|-p|--|tarefa|"   dv --model opus "tarefa"
+# O --permission-mode do usuário SUBSTITUI o default do launcher — o clap do
+# devin recusa a flag repetida ("cannot be used multiple times"), então o
+# 'dangerous' tem de sumir, não ficar na frente.
+assert_args '--respect-workspace-trust|false|--permission-mode|auto|-p|--|x|' \
+    dv --permission-mode auto "x"
+# Idem na forma '=' (o drop é por nome antes do '=').
+assert_args '--respect-workspace-trust|false|--permission-mode=smart|-p|--|x|' \
+    dv --permission-mode=smart "x"
+assert_args "${YOLO}--sandbox|-p|--|x|"          dv --sandbox "x"
+# '-p' do usuário é absorvido: devin_launch já emite o '-p --'.
+assert_args "${YOLO}-p|--|meu prompt|"           dv -p "meu prompt"
+
+# Token com '-' desconhecido aborta em vez de virar texto do prompt.
+assert_rejects dv -x "meu prompt"
+assert_rejects dv -p2 "meu prompt"
+
+# --via é do launcher e o devin não o suporta: recusar em vez de ignorar em
+# silêncio (e gravar no histórico como se tivesse aplicado).
+assert_rejects dv --via deepseek "refatora isso"
 
 # Subcomandos passam verbatim: sem flags de yolo e sem virar prompt.
 assert_args 'models|'      dv models
