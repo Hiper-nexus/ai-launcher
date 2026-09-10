@@ -33,6 +33,9 @@ set -euo pipefail
     printf 'ANTHROPIC_DEFAULT_SONNET_MODEL=%s\n' "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}"
     printf 'ANTHROPIC_DEFAULT_OPUS_MODEL=%s\n'   "${ANTHROPIC_DEFAULT_OPUS_MODEL:-}"
     printf 'ANTHROPIC_DEFAULT_FABLE_MODEL=%s\n'  "${ANTHROPIC_DEFAULT_FABLE_MODEL:-}"
+    printf 'CLAUDE_CODE_SUBAGENT_MODEL=%s\n'     "${CLAUDE_CODE_SUBAGENT_MODEL:-}"
+    printf 'CLAUDE_CODE_EFFORT_LEVEL=%s\n'       "${CLAUDE_CODE_EFFORT_LEVEL:-}"
+    printf 'CLAUDE_CODE_AUTO_COMPACT_WINDOW=%s\n' "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}"
 } > "$CAPTURE_ENV"
 SH
 chmod +x "${FAKE_BIN}/claude"
@@ -64,12 +67,16 @@ for alias_cmd in deepseek-v41 ds-v41 dsv41 deepseek-beta ds-beta; do
     env_is ANTHROPIC_BASE_URL  "https://api.deepseek.com/anthropic"
     env_is ANTHROPIC_MODEL     "deepseek-flash[1m]"
     env_is ANTHROPIC_AUTH_TOKEN "chave-de-teste"
-    # Slots do /model: troca de tier dentro da sessão (Haiku/Sonnet=V4.1,
-    # Opus/Fable=V4-Pro), todos com janela de 1M.
-    env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash[1m]"
+    # Slots conforme docs oficiais DeepSeek x Claude Code: Opus/Sonnet no
+    # Flash [1m], Haiku e subagentes no Flash simples. Fable=V4-Pro é
+    # exceção nossa (tier Pro no /model).
+    env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash"
     env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-flash[1m]"
-    env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-v4-pro[1m]"
+    env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-flash[1m]"
     env_is ANTHROPIC_DEFAULT_FABLE_MODEL  "deepseek-v4-pro[1m]"
+    env_is CLAUDE_CODE_SUBAGENT_MODEL     "deepseek-flash"
+    env_is CLAUDE_CODE_EFFORT_LEVEL       "max"
+    env_is CLAUDE_CODE_AUTO_COMPACT_WINDOW "786432"
 done
 
 # Override por env var: se a DeepSeek mudar o ID de novo (ou um código
@@ -81,9 +88,9 @@ env_is ANTHROPIC_MODEL "deepseek-v4.1-flash"
 # ds-v41; o PROVIDER_MODELS fica com o nome limpo porque o omp o consome.
 run_launcher ds
 env_is ANTHROPIC_MODEL "deepseek-flash[1m]"
-env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash[1m]"
+env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash"
 env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-flash[1m]"
-env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-v4-pro[1m]"
+env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-flash[1m]"
 # O V4-Pro segue um tier à parte, também com 1M.
 run_launcher ds-pro
 env_is ANTHROPIC_MODEL "deepseek-v4-pro[1m]"

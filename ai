@@ -248,11 +248,14 @@ declare -A PROVIDER_EXTRA_ENV=(
     [glm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=${GLM_FLASH_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${GLM_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${GLM_MODEL}"
     [sakana]=""
     [openrouter]=""
-    # Slots do seletor /model do Claude Code: Haiku/Sonnet=V4.1 Flash, com
-    # sufixo [1m] pra janela de 1M; Opus/Fable=V4-Pro (também 1M). O
-    # AUTO_COMPACT_WINDOW=1000000 segue o padrão do glm. NÃO vale pro omp,
-    # que lê o PROVIDER_MODELS (nome limpo, sem sufixo).
-    [deepseek]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro[1m] ANTHROPIC_DEFAULT_FABLE_MODEL=deepseek-v4-pro[1m]"
+    # Config oficial da DeepSeek p/ Claude Code (api-docs.deepseek.com/
+    # quick_start/agent_integrations/claude_code): main/Opus/Sonnet no
+    # V4.1 Flash [1m] (janela de 1M), Haiku e subagentes no Flash simples,
+    # esforço max e auto-compact em 786432 (~768k, com folga antes do 1M).
+    # Exceção nossa: slot Fable=V4-Pro[1m], pra ter o tier Pro no /model
+    # (o Pro oficial segue pelo 'ai ds-pro'). NÃO vale pro omp, que lê o
+    # PROVIDER_MODELS (nome limpo, sem sufixo).
+    [deepseek]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432 CLAUDE_CODE_EFFORT_LEVEL=max CLAUDE_CODE_SUBAGENT_MODEL=deepseek-flash ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-flash ANTHROPIC_DEFAULT_SONNET_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=deepseek-v4-pro[1m]"
     [ollama]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [lmstudio]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
