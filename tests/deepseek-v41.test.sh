@@ -57,18 +57,19 @@ env_is() {
         fail "${key}: esperado '${expected}', obtido '${got}'"
 }
 
-# Todos os aliases levam ao mesmo lugar: provider deepseek + modelo GA.
+# Todos os aliases levam ao mesmo lugar: provider deepseek + modelo GA com
+# sufixo [1m] (janela de 1M no Claude Code; o endpoint ignora o sufixo).
 for alias_cmd in deepseek-v41 ds-v41 dsv41 deepseek-beta ds-beta; do
     run_launcher "$alias_cmd"
     env_is ANTHROPIC_BASE_URL  "https://api.deepseek.com/anthropic"
-    env_is ANTHROPIC_MODEL     "deepseek-flash"
+    env_is ANTHROPIC_MODEL     "deepseek-flash[1m]"
     env_is ANTHROPIC_AUTH_TOKEN "chave-de-teste"
-    # Slots do /model: troca de tier dentro da sessão (Haiku=V4.1,
-    # Sonnet=V4-Flash, Opus/Fable=V4-Pro).
-    env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash"
-    env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-flash"
-    env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-v4-pro"
-    env_is ANTHROPIC_DEFAULT_FABLE_MODEL  "deepseek-v4-pro"
+    # Slots do /model: troca de tier dentro da sessão (Haiku/Sonnet=V4.1,
+    # Opus/Fable=V4-Pro), todos com janela de 1M.
+    env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash[1m]"
+    env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-flash[1m]"
+    env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-v4-pro[1m]"
+    env_is ANTHROPIC_DEFAULT_FABLE_MODEL  "deepseek-v4-pro[1m]"
 done
 
 # Override por env var: se a DeepSeek mudar o ID de novo (ou um código
@@ -76,15 +77,15 @@ done
 ( export AI_DEEPSEEK_V41_MODEL="deepseek-v4.1-flash"; run_launcher ds-v41 )
 env_is ANTHROPIC_MODEL "deepseek-v4.1-flash"
 
-# 'ai ds' (menu 4) agora abre no V4.1 Flash — o 'deepseek-v4-flash' virou
-# alias legado do V4.1 no servidor, então o default usa o nome canônico.
+# 'ai ds' (menu 4) abre no V4.1 Flash com janela de 1M — mesmo modelo do
+# ds-v41; o PROVIDER_MODELS fica com o nome limpo porque o omp o consome.
 run_launcher ds
-env_is ANTHROPIC_MODEL "deepseek-flash"
-env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash"
-env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-flash"
-env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-v4-pro"
-# O V4-Pro segue um tier à parte.
+env_is ANTHROPIC_MODEL "deepseek-flash[1m]"
+env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash[1m]"
+env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-flash[1m]"
+env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-v4-pro[1m]"
+# O V4-Pro segue um tier à parte, também com 1M.
 run_launcher ds-pro
-env_is ANTHROPIC_MODEL "deepseek-v4-pro"
+env_is ANTHROPIC_MODEL "deepseek-v4-pro[1m]"
 
 echo "PASS: dispatch do DeepSeek V4.1 Flash (GA)"

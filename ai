@@ -210,10 +210,11 @@ GLM_FLASH_MODEL_LABEL="${GLM_FLASH_MODEL%%\[*}"
 
 # DeepSeek V4.1 Flash (GA). A DeepSeek dropou os números de versão do nome:
 # o ID 'deepseek-flash' sempre aponta pro V4.1 mais novo (changelog em
-# api-docs.deepseek.com/updates/). O beta 'expires-on-0910' acabou em
-# 10/09/2026; se precisar de um código específico de novo, basta exportar
-# AI_DEEPSEEK_V41_MODEL=<model> que CLI e menu pegam a mudança.
-DEEPSEEK_V41_MODEL="${AI_DEEPSEEK_V41_MODEL:-deepseek-flash}"
+# api-docs.deepseek.com/updates/). O sufixo [1m] é o mesmo truque do GLM:
+# faz o Claude Code enxergar a janela de 1M do modelo (o endpoint ignora o
+# sufixo — testado, responde 200 com o nome limpo). Se precisar de um código
+# específico, exporte AI_DEEPSEEK_V41_MODEL=<model> que CLI e menu pegam.
+DEEPSEEK_V41_MODEL="${AI_DEEPSEEK_V41_MODEL:-deepseek-flash[1m]}"
 
 # Providers disponíveis: nome=base_url (URLs confirmadas pelo multi-claude)
 declare -A PROVIDER_URLS=(
@@ -247,10 +248,11 @@ declare -A PROVIDER_EXTRA_ENV=(
     [glm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=${GLM_FLASH_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${GLM_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${GLM_MODEL}"
     [sakana]=""
     [openrouter]=""
-    # Slots do seletor /model do Claude Code: Haiku/Sonnet=V4.1 Flash (o
-    # 'deepseek-v4-flash' virou alias legado do V4.1), Opus/Fable=V4-Pro.
-    # Vale pra ds, ds-pro e ds-v41 — dá pra trocar de tier sem sair da sessão.
-    [deepseek]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 ANTHROPIC_DEFAULT_HAIKU_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro ANTHROPIC_DEFAULT_FABLE_MODEL=deepseek-v4-pro"
+    # Slots do seletor /model do Claude Code: Haiku/Sonnet=V4.1 Flash, com
+    # sufixo [1m] pra janela de 1M; Opus/Fable=V4-Pro (também 1M). O
+    # AUTO_COMPACT_WINDOW=1000000 segue o padrão do glm. NÃO vale pro omp,
+    # que lê o PROVIDER_MODELS (nome limpo, sem sufixo).
+    [deepseek]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro[1m] ANTHROPIC_DEFAULT_FABLE_MODEL=deepseek-v4-pro[1m]"
     [ollama]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [lmstudio]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
@@ -5371,7 +5373,7 @@ elif [[ ${1:-} == "deepseek-pro" || ${1:-} == "dsp" || ${1:-} == "ds-pro" ]]; th
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     provider_setup_env "deepseek" || exit 1
-    export ANTHROPIC_MODEL="deepseek-v4-pro"
+    export ANTHROPIC_MODEL="deepseek-v4-pro[1m]"
     enter_repo_if_needed
     launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "deepseek-v41" || ${1:-} == "ds-v41" || ${1:-} == "dsv41" \
@@ -5388,8 +5390,9 @@ elif [[ ${1:-} == "deepseek" || ${1:-} == "ds" ]]; then
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     provider_setup_env "deepseek" || exit 1
+    export ANTHROPIC_MODEL="$DEEPSEEK_V41_MODEL"
     enter_repo_if_needed
-    launch "DeepSeek" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+    launch "DeepSeek V4.1" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "claude" || ${1:-} == "c" ]]; then
     shift
     # Verifica se o primeiro arg é um perfil
@@ -6025,8 +6028,9 @@ case $choice in
        enter_repo_if_needed
        launch "Muse Spark (Meta AI)" claude "$CLAUDE_PROMPT_FLAG" MUSE_FLAGS ;;
     4) provider_setup_env "deepseek" || continue
+       export ANTHROPIC_MODEL="$DEEPSEEK_V41_MODEL"
        enter_repo_if_needed
-       launch "DeepSeek" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+       launch "DeepSeek V4.1" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     5) launch_sakana_fugu "fugu" ;;
     6) xconta_autoswitch_if_needed
        enter_repo_if_needed
@@ -6062,7 +6066,7 @@ case $choice in
    22) qwen_launch_claude || true ;;
    23) muse_dispatch || true ;;
    24) provider_setup_env "deepseek" || continue
-       export ANTHROPIC_MODEL="deepseek-v4-pro"
+       export ANTHROPIC_MODEL="deepseek-v4-pro[1m]"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
    25) provider_setup_env "deepseek" || continue
