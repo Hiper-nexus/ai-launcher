@@ -234,7 +234,7 @@ declare -A PROVIDER_MODELS=(
     [glm]=""
     [sakana]="fugu"
     [openrouter]="anthropic/claude-sonnet-4"
-    [deepseek]="deepseek-v4-flash"
+    [deepseek]="deepseek-flash"
     [ollama]="qwen2.5-coder:32b"
     [lmstudio]="loaded-model"
     [litellm]="gpt-4o"
@@ -247,10 +247,10 @@ declare -A PROVIDER_EXTRA_ENV=(
     [glm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=${GLM_FLASH_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${GLM_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${GLM_MODEL}"
     [sakana]=""
     [openrouter]=""
-    # Slots do seletor /model do Claude Code: Haiku=V4.1 (rápido, multimodal),
-    # Sonnet=V4-Flash, Opus/Fable=V4-Pro. Vale pra ds, ds-pro e ds-v41 — do
-    # menu 4 dá pra trocar de tier sem sair da sessão.
-    [deepseek]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 ANTHROPIC_DEFAULT_HAIKU_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-flash ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro ANTHROPIC_DEFAULT_FABLE_MODEL=deepseek-v4-pro"
+    # Slots do seletor /model do Claude Code: Haiku/Sonnet=V4.1 Flash (o
+    # 'deepseek-v4-flash' virou alias legado do V4.1), Opus/Fable=V4-Pro.
+    # Vale pra ds, ds-pro e ds-v41 — dá pra trocar de tier sem sair da sessão.
+    [deepseek]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 ANTHROPIC_DEFAULT_HAIKU_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro ANTHROPIC_DEFAULT_FABLE_MODEL=deepseek-v4-pro"
     [ollama]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [lmstudio]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
@@ -4713,7 +4713,7 @@ CLIs de IA:
   ms claude              Abre Claude Code usando Muse Spark (yolo)
   ms model [nome]        Escolhe o modelo — vale para os dois caminhos
   muse, mu               Abre Muse CLI (Meta — Muse Code, TUI Agente)
-  deepseek, ds           Abre Claude Code usando DeepSeek (V4-Flash)
+  deepseek, ds           Abre Claude Code usando DeepSeek (V4.1 Flash)
   deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
   deepseek-v41, ds-v41   Abre Claude Code usando DeepSeek V4.1 Flash (GA)
   codex,  x              Abre Codex CLI
@@ -4868,7 +4868,7 @@ Exemplos:
   ai ms key                       Salva a key do Muse Spark
   ai ms claude                    Claude Code via Muse Spark (yolo)
   ai ms -m muse-spark-1.1 claude  Claude Code em outro modelo
-  ai ds                           Claude via DeepSeek V4-Flash
+  ai ds                           Claude via DeepSeek V4.1 Flash
   ai ds-pro                       Claude via DeepSeek V4-Pro
   ai ds-v41                       Claude via DeepSeek V4.1 Flash (beta)
   ai x                            Codex
@@ -5952,7 +5952,7 @@ menu_group "CLAUDE CODE"
 menu_row  1 "$C_CLAUDE"   "Claude Code"  "${claude_ver}"        "${claude_status}"
 menu_row  2 "$C_GLM"      "GLM ${GLM_MODEL_LABEL#glm-} Z.ai" "${glm_ver}"  "${glm_status}"
 menu_row  3 "$C_MUSE"     "Muse Spark"   "${muse_spark_ver}"    "${muse_spark_status}"
-menu_row  4 "$C_DEEPSEEK" "DeepSeek"     "${deepseek_ver}"      "${deepseek_status}"
+menu_row  4 "$C_DEEPSEEK" "DeepSeek V4.1" "${deepseek_ver}"      "${deepseek_status}"
 
 menu_group "CODEX"
 menu_row  5 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"

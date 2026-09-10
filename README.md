@@ -24,9 +24,9 @@ ai              # Menu interativo com status de cada CLI
 ai c            # Claude Code direto
 ai glm          # GLM 5.3 (Z.ai) via Claude Code — /model oferece o 5.3 Flash
 ai gf           # sessão inteira no GLM 5.3 Flash (aliases: glm-flash, zf, flash)
-ai ds           # DeepSeek V4-Flash via Claude Code
+ai ds           # DeepSeek V4.1 Flash (GA, model ID: deepseek-flash) via Claude Code
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
-ai ds-v41       # DeepSeek V4.1 Flash (GA, model ID: deepseek-flash) via Claude Code
+ai ds-v41       # DeepSeek V4.1 Flash — alias do ai ds
 ai x            # Codex direto
 ai sol          # Codex GPT-5.6 Sol com janela de 1M de contexto (aliases: x-1m, x1m)
 ai fugu         # Codex via Sakana Fugu

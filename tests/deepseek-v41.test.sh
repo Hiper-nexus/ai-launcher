@@ -66,7 +66,7 @@ for alias_cmd in deepseek-v41 ds-v41 dsv41 deepseek-beta ds-beta; do
     # Slots do /model: troca de tier dentro da sessão (Haiku=V4.1,
     # Sonnet=V4-Flash, Opus/Fable=V4-Pro).
     env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash"
-    env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-v4-flash"
+    env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-flash"
     env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-v4-pro"
     env_is ANTHROPIC_DEFAULT_FABLE_MODEL  "deepseek-v4-pro"
 done
@@ -76,13 +76,14 @@ done
 ( export AI_DEEPSEEK_V41_MODEL="deepseek-v4.1-flash"; run_launcher ds-v41 )
 env_is ANTHROPIC_MODEL "deepseek-v4.1-flash"
 
-# O DeepSeek V4-Flash (padrão, 'ai ds' = menu 4) continua intacto no modelo
-# principal, mas agora também oferece os tiers no /model.
+# 'ai ds' (menu 4) agora abre no V4.1 Flash — o 'deepseek-v4-flash' virou
+# alias legado do V4.1 no servidor, então o default usa o nome canônico.
 run_launcher ds
-env_is ANTHROPIC_MODEL "deepseek-v4-flash"
+env_is ANTHROPIC_MODEL "deepseek-flash"
 env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash"
-env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-v4-flash"
+env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-flash"
 env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-v4-pro"
+# O V4-Pro segue um tier à parte.
 run_launcher ds-pro
 env_is ANTHROPIC_MODEL "deepseek-v4-pro"
 
