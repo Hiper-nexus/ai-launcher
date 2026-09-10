@@ -29,6 +29,10 @@ set -euo pipefail
     printf 'ANTHROPIC_BASE_URL=%s\n'  "${ANTHROPIC_BASE_URL:-}"
     printf 'ANTHROPIC_MODEL=%s\n'     "${ANTHROPIC_MODEL:-}"
     printf 'ANTHROPIC_AUTH_TOKEN=%s\n' "${ANTHROPIC_AUTH_TOKEN:-}"
+    printf 'ANTHROPIC_DEFAULT_HAIKU_MODEL=%s\n'  "${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}"
+    printf 'ANTHROPIC_DEFAULT_SONNET_MODEL=%s\n' "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}"
+    printf 'ANTHROPIC_DEFAULT_OPUS_MODEL=%s\n'   "${ANTHROPIC_DEFAULT_OPUS_MODEL:-}"
+    printf 'ANTHROPIC_DEFAULT_FABLE_MODEL=%s\n'  "${ANTHROPIC_DEFAULT_FABLE_MODEL:-}"
 } > "$CAPTURE_ENV"
 SH
 chmod +x "${FAKE_BIN}/claude"
@@ -59,6 +63,12 @@ for alias_cmd in deepseek-v41 ds-v41 dsv41 deepseek-beta ds-beta; do
     env_is ANTHROPIC_BASE_URL  "https://api.deepseek.com/anthropic"
     env_is ANTHROPIC_MODEL     "deepseek-flash"
     env_is ANTHROPIC_AUTH_TOKEN "chave-de-teste"
+    # Slots do /model: troca de tier dentro da sessão (Haiku=V4.1,
+    # Sonnet=V4-Flash, Opus/Fable=V4-Pro).
+    env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash"
+    env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-v4-flash"
+    env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-v4-pro"
+    env_is ANTHROPIC_DEFAULT_FABLE_MODEL  "deepseek-v4-pro"
 done
 
 # Override por env var: se a DeepSeek mudar o ID de novo (ou um código
@@ -66,10 +76,13 @@ done
 ( export AI_DEEPSEEK_V41_MODEL="deepseek-v4.1-flash"; run_launcher ds-v41 )
 env_is ANTHROPIC_MODEL "deepseek-v4.1-flash"
 
-# O DeepSeek V4-Flash (padrão, 'ai ds') continua intacto — opção nova não mexe
-# no default nem no V4-Pro.
+# O DeepSeek V4-Flash (padrão, 'ai ds' = menu 4) continua intacto no modelo
+# principal, mas agora também oferece os tiers no /model.
 run_launcher ds
 env_is ANTHROPIC_MODEL "deepseek-v4-flash"
+env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "deepseek-flash"
+env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-v4-flash"
+env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-v4-pro"
 run_launcher ds-pro
 env_is ANTHROPIC_MODEL "deepseek-v4-pro"
 
