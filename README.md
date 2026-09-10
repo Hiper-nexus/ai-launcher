@@ -26,6 +26,7 @@ ai glm          # GLM 5.3 (Z.ai) via Claude Code — /model oferece o 5.3 Flash
 ai gf           # sessão inteira no GLM 5.3 Flash (aliases: glm-flash, zf, flash)
 ai ds           # DeepSeek V4-Flash via Claude Code
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
+ai ds-v41       # DeepSeek V4.1 Flash (GA, model ID: deepseek-flash) via Claude Code
 ai x            # Codex direto
 ai sol          # Codex GPT-5.6 Sol com janela de 1M de contexto (aliases: x-1m, x1m)
 ai fugu         # Codex via Sakana Fugu
@@ -64,7 +65,7 @@ ai --help       # Ajuda
 | Codex Sol 1M | `ai sol` | idem + `-m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` |
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]`, `ai fugu-cyber`, `ai claude-fugu` | Codex profile `fugu` ou endpoint Anthropic-compatible no Claude Code |
 | Gemini | `ai g` | `--yolo` |
-| Kimi Code | `ai k` | `--yolo` |
+| Kimi Code | `ai k` | `--auto` (never-ask; o `--yolo` do kimi ainda pede yes em ação arriscada/plano) |
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
 | Qoder | `ai q` | `--dangerously-skip-permissions` |
 | Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
@@ -74,7 +75,7 @@ ai --help       # Ajuda
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
 | Featherless | `ai fl` | catálogo uncensored via API (21 mil+ modelos, plano pago) |
 | Abliteration.ai | `ai ab` | GLM-5.3 hospedado, abliterated (sem censura) — chat, one-shot ou Claude Code (`ai ab claude`) |
-| Qwen (Alibaba) | `ai qw` | Qwen-Max via Model Studio — CLI própria **ou** dentro do Claude Code |
+| Qwen (Alibaba) | `ai qw` | Qwen-Max via Model Studio — CLI própria (`--yolo`) **ou** dentro do Claude Code |
 | Prime Agent | `ai prime`, `ai pa` | sessão persistente (sem one-shot); subcomandos e `--resume` passam direto |
 
 ## omp (oh-my-pi)
