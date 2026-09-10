@@ -28,13 +28,19 @@ CLAUDE_FLAGS=(--dangerously-skip-permissions)
 CODEX_FLAGS=(--dangerously-bypass-approvals-and-sandbox)
 GEMINI_FLAGS=(--yolo --model pro --skip-trust)
 AGY_FLAGS=(--dangerously-skip-permissions)
-KIMI_FLAGS=(--yolo)
+# kimi: --auto é o never-ask de verdade. O --yolo do kimi é só o modo
+# "Ask When Needed" (rotina auto; ação arriscada, plano e pergunta ainda
+# pedem yes), então não serve como yolo do launcher.
+KIMI_FLAGS=(--auto)
 GROK_FLAGS=(--always-approve --permission-mode bypassPermissions)
 # deepcode é TUI de sessão (sem yolo/auto-aprovação): flags vazias, como o prime.
 DEEPCODE_FLAGS=()
 QODER_FLAGS=(--dangerously-skip-permissions)
 CURSOR_FLAGS=(--yolo --sandbox disabled --approve-mcps --trust)
 OMP_FLAGS=(--yolo)
+# Qwen Code (fork do Gemini CLI): --yolo auto-aprova tudo. Vale junto do
+# prompt posicional no one-shot (sem o conflito do kimi com -p).
+QWEN_FLAGS=(--yolo)
 # Muse Spark é yolo por definição: não entra no Toggle Flags, então continua
 # sem aprovação mesmo se o usuário desligar o yolo global do Claude Code.
 MUSE_FLAGS=(--dangerously-skip-permissions)
@@ -201,6 +207,13 @@ GLM_FLASH_MODEL="${AI_GLM_FLASH_MODEL:-glm-5.3-flash[1m]}"
 # Versões sem o sufixo, para rótulos de menu/launch ("5.3", não "5.3[1m]").
 GLM_MODEL_LABEL="${GLM_MODEL%%\[*}"
 GLM_FLASH_MODEL_LABEL="${GLM_FLASH_MODEL%%\[*}"
+
+# DeepSeek V4.1 Flash (GA). A DeepSeek dropou os números de versão do nome:
+# o ID 'deepseek-flash' sempre aponta pro V4.1 mais novo (changelog em
+# api-docs.deepseek.com/updates/). O beta 'expires-on-0910' acabou em
+# 10/09/2026; se precisar de um código específico de novo, basta exportar
+# AI_DEEPSEEK_V41_MODEL=<model> que CLI e menu pegam a mudança.
+DEEPSEEK_V41_MODEL="${AI_DEEPSEEK_V41_MODEL:-deepseek-flash}"
 
 # Providers disponíveis: nome=base_url (URLs confirmadas pelo multi-claude)
 declare -A PROVIDER_URLS=(
@@ -4335,7 +4348,7 @@ qwen_launch() {
     echo ""
     export OPENAI_API_KEY="$key" OPENAI_BASE_URL="$base" OPENAI_MODEL="$QWEN_MODEL"
     enter_repo_if_needed
-    exec qwen "$@"
+    exec qwen "${QWEN_FLAGS[@]}" "$@"
 }
 
 qwen_dispatch() {
@@ -4699,6 +4712,7 @@ CLIs de IA:
   muse, mu               Abre Muse CLI (Meta — Muse Code, TUI Agente)
   deepseek, ds           Abre Claude Code usando DeepSeek (V4-Flash)
   deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
+  deepseek-v41, ds-v41   Abre Claude Code usando DeepSeek V4.1 Flash (GA)
   codex,  x              Abre Codex CLI
   sakana, fugu           Abre Codex com Sakana Fugu
   claude-fugu, cfugu     Abre Claude Code com o endpoint Anthropic da Sakana
@@ -4853,6 +4867,7 @@ Exemplos:
   ai ms -m muse-spark-1.1 claude  Claude Code em outro modelo
   ai ds                           Claude via DeepSeek V4-Flash
   ai ds-pro                       Claude via DeepSeek V4-Pro
+  ai ds-v41                       Claude via DeepSeek V4.1 Flash (beta)
   ai x                            Codex
   ai sol                          Codex GPT-5.6 Sol com janela de 1M de contexto
   ai sol "tarefa gigante"         (auto-compacta em 900k; aliases: x-1m, x1m)
@@ -5356,6 +5371,15 @@ elif [[ ${1:-} == "deepseek-pro" || ${1:-} == "dsp" || ${1:-} == "ds-pro" ]]; th
     export ANTHROPIC_MODEL="deepseek-v4-pro"
     enter_repo_if_needed
     launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+elif [[ ${1:-} == "deepseek-v41" || ${1:-} == "ds-v41" || ${1:-} == "dsv41" \
+     || ${1:-} == "deepseek-beta" || ${1:-} == "ds-beta" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    provider_setup_env "deepseek" || exit 1
+    export ANTHROPIC_MODEL="$DEEPSEEK_V41_MODEL"
+    enter_repo_if_needed
+    launch "DeepSeek V4.1 Flash" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "deepseek" || ${1:-} == "ds" ]]; then
     shift
     parse_global_flags "$@"
@@ -5952,14 +5976,15 @@ menu_row 21 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}
 menu_row 22 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
 menu_row 23 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
 menu_row 24 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
-menu_row 25 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
-menu_row 26 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
+menu_row 25 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
+menu_row 26 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
+menu_row 27 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 27 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 28 "$C_TOOL" "🔌 Providers"
-menu_tool 29 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 30 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 28 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 29 "$C_TOOL" "🔌 Providers"
+menu_tool 30 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 31 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -5970,6 +5995,7 @@ flag_row "$C_CODEX"  "Codex"  "${CODEX_FLAGS[*]+"${CODEX_FLAGS[*]}"}"
 flag_row "$C_GEMINI" "Gemini" "${GEMINI_FLAGS[*]+"${GEMINI_FLAGS[*]}"}"
 flag_row "$C_AGY"    "Agy"    "${AGY_FLAGS[*]+"${AGY_FLAGS[*]}"}"
 flag_row "$C_KIMI"   "Kimi"   "${KIMI_FLAGS[*]+"${KIMI_FLAGS[*]}"}"
+flag_row "$C_QWEN"   "Qwen"   "${QWEN_FLAGS[*]+"${QWEN_FLAGS[*]}"}"
 flag_row "$C_GROK"   "Grok"   "${GROK_FLAGS[*]+"${GROK_FLAGS[*]}"}"
 flag_row "$C_QODER"  "Qoder"  "${QODER_FLAGS[*]+"${QODER_FLAGS[*]}"}"
 flag_row "$C_CURSOR" "Cursor" "${CURSOR_FLAGS[*]+"${CURSOR_FLAGS[*]}"}"
@@ -5981,7 +6007,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-30/0]: " choice
+read -rp "Escolha [1-31/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -6036,12 +6062,16 @@ case $choice in
        export ANTHROPIC_MODEL="deepseek-v4-pro"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   25) ab_dispatch || true ;;
-   26) ab_launch_claude ;;
-   27) enter_repo_if_needed
+   25) provider_setup_env "deepseek" || continue
+       export ANTHROPIC_MODEL="$DEEPSEEK_V41_MODEL"
+       enter_repo_if_needed
+       launch "DeepSeek V4.1 Flash" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+   26) ab_dispatch || true ;;
+   27) ab_launch_claude ;;
+   28) enter_repo_if_needed
        launch_codex_security ;;
-   28) provider_list ;;
-   29) flags_menu
+   29) provider_list ;;
+   30) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -6061,7 +6091,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   30) conta_menu ;;
+   31) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
