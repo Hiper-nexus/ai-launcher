@@ -78,7 +78,7 @@ assert_args '--yolo|--provider|zai|--model|glm-5.2|-p|tarefa|' \
     omp --via glm "tarefa"
 assert_args '--yolo|--provider|alibaba-token-plan|--model|qwen3.8-max|-p|tarefa|' \
     omp --via qwen "tarefa"
-assert_args '--yolo|--provider|sakana|--model|fugu|-p|tarefa|' \
+assert_args '--yolo|--provider|sakana|--model|fugu-ultra-v2.0|-p|tarefa|' \
     omp --via fugu "tarefa"
 assert_args '--yolo|--provider|meta|--model|muse-spark-1.3|-p|tarefa|' \
     omp --via muse-spark "tarefa"

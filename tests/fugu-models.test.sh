@@ -21,9 +21,12 @@ printf '%s\n' "$@" > "$CAPTURE_ARGS"
 if [[ -n "${CAPTURE_ENV:-}" ]]; then
     printf '%s\n' \
         "${ANTHROPIC_BASE_URL:-}" \
+        "${ANTHROPIC_MODEL:-}" \
         "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}" \
         "${ANTHROPIC_DEFAULT_OPUS_MODEL:-}" \
-        "${ANTHROPIC_DEFAULT_FABLE_MODEL:-}" > "$CAPTURE_ENV"
+        "${ANTHROPIC_DEFAULT_FABLE_MODEL:-}" \
+        "${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}" \
+        "${CLAUDE_CODE_SUBAGENT_MODEL:-}" > "$CAPTURE_ENV"
 fi
 SH
 chmod +x "${FAKE_BIN}/codex"
@@ -75,6 +78,8 @@ grep -q '^model_context_window = 1000000$' "$CODEX_HOME/fugu.config.toml" ||
     fail "perfil fugu sem model_context_window = 1000000"
 grep -q '^model_auto_compact_token_limit = 900000$' "$CODEX_HOME/fugu.config.toml" ||
     fail "perfil fugu sem model_auto_compact_token_limit = 900000"
+grep -q '^model = "fugu-ultra-v2.0"$' "$CODEX_HOME/fugu.config.toml" ||
+    fail "perfil fugu não usa Ultra V2.0 por padrão"
 
 python3 - "$CODEX_HOME/fugu.json" <<'PY'
 import json
@@ -88,10 +93,10 @@ efforts_by_model = {
     for model in models
 }
 expected = {
-    "fugu": ["high", "xhigh"],
+    "fugu-ultra-v2.0": ["high", "xhigh", "max"],
+    "fugu-max-v1.0": ["high", "xhigh", "max"],
     "fugu-ultra-v1.1": ["high", "xhigh", "max"],
     "fugu-ultra-v1.0": ["high", "xhigh"],
-    "fugu-cyber": ["high", "xhigh"],
 }
 if efforts_by_model != expected:
     raise SystemExit(f"catálogo inesperado: {efforts_by_model!r}")
@@ -105,9 +110,7 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     catalog = json.load(handle)
-catalog["models"][0]["supported_reasoning_levels"] = [
-    catalog["models"][0]["supported_reasoning_levels"][0]
-]
+catalog["models"][0]["supported_reasoning_levels"] = catalog["models"][0]["supported_reasoning_levels"][:2]
 catalog["models"].append({**catalog["models"][1], "slug": "fugu-ultra"})
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     json.dump(catalog, handle)
@@ -121,29 +124,30 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     models = json.load(handle)["models"]
 slugs = [model["slug"] for model in models]
-fugu = next(model for model in models if model["slug"] == "fugu")
-efforts = [level["effort"] for level in fugu["supported_reasoning_levels"]]
-if "fugu-ultra" in slugs or efforts != ["high", "xhigh"]:
+ultra = next(model for model in models if model["slug"] == "fugu-ultra-v2.0")
+efforts = [level["effort"] for level in ultra["supported_reasoning_levels"]]
+if "fugu-ultra" in slugs or efforts != ["high", "xhigh", "max"]:
     raise SystemExit(f"catálogo legado não foi atualizado: {slugs!r} / {efforts!r}")
 PY
 
 # Aliases estáveis devem resolver para a versão documentada atual.
 assert_invocation "fugu" ""
-assert_invocation "fugu-ultra" "fugu-ultra-v1.1"
+assert_invocation "fugu-ultra" ""
+assert_invocation "fugu-ultra-v2.0" ""
+assert_invocation "fugu-max" "fugu-max-v1.0"
+assert_invocation "fugu-max-v1.0" "fugu-max-v1.0"
 assert_invocation "fugu-ultra-v1.0" "fugu-ultra-v1.0"
 assert_invocation "fugu-ultra-20260615" "fugu-ultra-v1.0"
 assert_invocation "fugu-ultra-v1.1" "fugu-ultra-v1.1"
-assert_invocation "fugu-cyber" "fugu-cyber"
-assert_invocation "sakana-cyber" "fugu-cyber"
-assert_invocation "fugu" "fugu-ultra-v1.1" --model fugu-ultra-v1.1 -c model_reasoning_effort=max
+assert_invocation "fugu" "fugu-max-v1.0" --model fugu-max -c model_reasoning_effort=max
 
 mapfile -t args < "$CAPTURE_ARGS"
 [[ "${args[*]}" == *"-c model_reasoning_effort=max"* ]] ||
     fail "flags de raciocínio não chegaram ao Codex (${args[*]-})"
 
 # A rota genérica do Codex deve usar a mesma resolução.
-assert_invocation "x" "fugu-ultra-v1.1" --via fugu-ultra
-assert_invocation "x" "fugu-cyber" --via fugu-cyber
+assert_invocation "x" "" --via fugu-ultra
+assert_invocation "x" "fugu-max-v1.0" --via fugu-max
 
 # O endpoint Anthropic-compatible da Sakana também deve estar disponível no
 # launcher por um atalho próprio do Claude Code.
@@ -164,9 +168,12 @@ mapfile -t args < "$CAPTURE_ARGS"
     fail "claude-fugu não encaminhou a chamada (${args[*]-})"
 mapfile -t provider_env < "$CAPTURE_ENV"
 [[ "${provider_env[0]:-}" == "https://api.sakana.ai" &&
-   "${provider_env[1]:-}" == "fugu" &&
-   "${provider_env[2]:-}" == "fugu-ultra" &&
-   "${provider_env[3]:-}" == "fugu-cyber" ]] ||
+   "${provider_env[1]:-}" == "fugu-ultra-v2.0" &&
+   "${provider_env[2]:-}" == "fugu-ultra-v2.0" &&
+   "${provider_env[3]:-}" == "fugu-ultra-v2.0" &&
+   "${provider_env[4]:-}" == "fugu-ultra-v2.0" &&
+   "${provider_env[5]:-}" == "fugu-max-v1.0" &&
+   "${provider_env[6]:-}" == "fugu-max-v1.0" ]] ||
     fail "claude-fugu configurou modelos inválidos (${provider_env[*]-})"
 
 echo "PASS: catálogo e aliases Fugu"

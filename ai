@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.49.0"
+AI_LAUNCHER_VERSION="1.50.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -226,6 +226,12 @@ GLM_FLASH_MODEL_LABEL="${GLM_FLASH_MODEL%%\[*}"
 # específico, exporte AI_DEEPSEEK_V41_MODEL=<model> que CLI e menu pegam.
 DEEPSEEK_V41_MODEL="${AI_DEEPSEEK_V41_MODEL:-deepseek-flash[1m]}"
 
+# IDs versionados confirmados no catálogo /v1/models da Sakana em 11/09/2026.
+# O launcher fixa a versão para uma atualização futura do alias remoto não
+# trocar o modelo silenciosamente.
+SAKANA_DEFAULT_MODEL="fugu-ultra-v2.0"
+SAKANA_MAX_MODEL="fugu-max-v1.0"
+
 # Providers disponíveis: nome=base_url (URLs confirmadas pelo multi-claude)
 declare -A PROVIDER_URLS=(
     [anthropic]=""
@@ -243,7 +249,7 @@ declare -A PROVIDER_URLS=(
 declare -A PROVIDER_MODELS=(
     [anthropic]=""
     [glm]=""
-    [sakana]="fugu"
+    [sakana]="${SAKANA_DEFAULT_MODEL}"
     [openrouter]="anthropic/claude-sonnet-4"
     [deepseek]="deepseek-flash"
     [ollama]="qwen2.5-coder:32b"
@@ -437,7 +443,7 @@ provider_setup_env() {
     fi
 
     case "$provider" in
-        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1|fugu-cyber|sakana-cyber)
+        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v2.0|sakana-ultra-v2.0|fugu-max|sakana-max|fugu-max-v1.0|sakana-max-v1.0|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1)
             echo -e "${RED}Provider ${provider} usa Codex, não Claude Code.${RESET}"
             echo "  Use: ai fugu"
             echo "  Ou:  ai x --via sakana"
@@ -539,11 +545,12 @@ sakana_setup_claude_env() {
 
     export ANTHROPIC_BASE_URL="https://api.sakana.ai"
     export ANTHROPIC_AUTH_TOKEN="$api_key"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL="fugu-cyber"
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="fugu-ultra"
-    export ANTHROPIC_DEFAULT_SONNET_MODEL="fugu"
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="fugu"
-    export CLAUDE_CODE_SUBAGENT_MODEL="fugu"
+    export ANTHROPIC_MODEL="$SAKANA_DEFAULT_MODEL"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="$SAKANA_DEFAULT_MODEL"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$SAKANA_DEFAULT_MODEL"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="$SAKANA_DEFAULT_MODEL"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$SAKANA_MAX_MODEL"
+    export CLAUDE_CODE_SUBAGENT_MODEL="$SAKANA_MAX_MODEL"
 }
 
 sakana_write_fugu_catalog() {
@@ -552,8 +559,8 @@ sakana_write_fugu_catalog() {
 {
   "models": [
     {
-      "slug": "fugu",
-      "display_name": "Fugu",
+      "slug": "fugu-ultra-v2.0",
+      "display_name": "Fugu Ultra V2.0",
       "context_window": 1000000,
       "supported_reasoning_levels": [
         {
@@ -563,6 +570,10 @@ sakana_write_fugu_catalog() {
         {
           "effort": "xhigh",
           "description": "deep reasoning for complex problem"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for the hardest problems"
         }
       ],
       "shell_type": "shell_command",
@@ -570,7 +581,7 @@ sakana_write_fugu_catalog() {
       "supported_in_api": true,
       "priority": 0,
       "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and your ability to help until it is restarted, give the exact recovery steps, and let the user run it manually when they are ready. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
-      "supports_reasoning_summaries": false,
+      "supports_reasoning_summaries": true,
       "default_reasoning_summary": "none",
       "support_verbosity": false,
       "default_verbosity": null,
@@ -584,8 +595,8 @@ sakana_write_fugu_catalog() {
       "experimental_supported_tools": []
     },
     {
-      "slug": "fugu-ultra-v1.1",
-      "display_name": "Fugu Ultra V1.1",
+      "slug": "fugu-max-v1.0",
+      "display_name": "Fugu Max V1.0",
       "context_window": 1000000,
       "supported_reasoning_levels": [
         {
@@ -620,8 +631,8 @@ sakana_write_fugu_catalog() {
       "experimental_supported_tools": []
     },
     {
-      "slug": "fugu-ultra-v1.0",
-      "display_name": "Fugu Ultra V1.0",
+      "slug": "fugu-ultra-v1.1",
+      "display_name": "Fugu Ultra V1.1",
       "context_window": 1000000,
       "supported_reasoning_levels": [
         {
@@ -631,6 +642,10 @@ sakana_write_fugu_catalog() {
         {
           "effort": "xhigh",
           "description": "deep reasoning for complex problem"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for the hardest problems"
         }
       ],
       "shell_type": "shell_command",
@@ -652,8 +667,8 @@ sakana_write_fugu_catalog() {
       "experimental_supported_tools": []
     },
     {
-      "slug": "fugu-cyber",
-      "display_name": "Fugu Cyber",
+      "slug": "fugu-ultra-v1.0",
+      "display_name": "Fugu Ultra V1.0",
       "context_window": 1000000,
       "supported_reasoning_levels": [
         {
@@ -688,25 +703,21 @@ sakana_write_fugu_catalog() {
 JSON
 }
 
-# Resolve aliases accepted by the launcher to the documented versioned Sakana
-# model IDs. The dated Ultra V1.0 name remains a compatibility alias.
+# Resolve aliases accepted by the launcher to the versioned Sakana model IDs.
+# The dated Ultra V1.0 name remains a compatibility alias.
 sakana_resolve_fugu_model() {
     case "${1:-fugu}" in
-        sakana|fugu)
-            printf '%s\n' "fugu"
+        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v2.0|sakana-ultra-v2.0)
+            printf '%s\n' "$SAKANA_DEFAULT_MODEL"
             ;;
-        fugu-ultra|sakana-ultra)
-            printf '%s\n' "fugu-ultra-v1.1"
+        fugu-max|sakana-max|fugu-max-v1.0|sakana-max-v1.0)
+            printf '%s\n' "$SAKANA_MAX_MODEL"
             ;;
         fugu-ultra-v1.0|fugu-ultra-20260615|sakana-ultra-v1.0)
             printf '%s\n' "fugu-ultra-v1.0"
             ;;
         fugu-ultra-v1.1|sakana-ultra-v1.1)
             printf '%s\n' "fugu-ultra-v1.1"
-            ;;
-        fugu-cyber|sakana-cyber)
-            # Sem variante versionada: a API responde 404 para fugu-cyber-v1.0.
-            printf '%s\n' "fugu-cyber"
             ;;
         *)
             return 1
@@ -720,7 +731,7 @@ sakana_write_fugu_profile() {
     local catalog_escaped="${catalog//\\/\\\\}"
     catalog_escaped="${catalog_escaped//\"/\\\"}"
     cat > "$profile" <<TOML
-model = "fugu"
+model = "${SAKANA_DEFAULT_MODEL}"
 model_reasoning_effort = "high"
 model_provider = "sakana"
 model_catalog_json = "${catalog_escaped}"
@@ -833,10 +844,10 @@ efforts_by_model = {
     for model in models
 }
 expected = {
-    "fugu": ["high", "xhigh"],
+    "fugu-ultra-v2.0": ["high", "xhigh", "max"],
+    "fugu-max-v1.0": ["high", "xhigh", "max"],
     "fugu-ultra-v1.1": ["high", "xhigh", "max"],
     "fugu-ultra-v1.0": ["high", "xhigh"],
-    "fugu-cyber": ["high", "xhigh"],
 }
 raise SystemExit(0 if efforts_by_model == expected else 1)
 PY
@@ -888,7 +899,7 @@ PY
 codex_provider_setup_env() {
     local provider="$1"
     case "$provider" in
-        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1|fugu-cyber|sakana-cyber)
+        sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v2.0|sakana-ultra-v2.0|fugu-max|sakana-max|fugu-max-v1.0|sakana-max-v1.0|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1)
             provider="sakana"
             ;;
         ""|codex|openai)
@@ -4743,16 +4754,8 @@ launch_sakana_fugu() {
 
     codex_provider_setup_env "sakana" || exit 1
     codex_add_profile_flag "fugu"
-    if [[ "$api_model" != "fugu" ]]; then
+    if [[ "$api_model" != "$SAKANA_DEFAULT_MODEL" ]]; then
         codex_add_model_flag "$api_model"
-    fi
-
-    # Cyber é o único da família com liberação manual. Sem o formulário
-    # aprovado a API devolve 403 só na primeira mensagem — já dentro do Codex,
-    # onde sai como erro solto e sem instrução. Avisa antes de abrir.
-    if [[ "$api_model" == "fugu-cyber" ]]; then
-        echo -e "${DIM}Fugu Cyber precisa de liberação manual da Sakana.${RESET}"
-        echo -e "${DIM}  Sem acesso a API responde 403 — formulário: https://forms.gle/vQecc93rAA3wif3f6${RESET}"
     fi
 
     enter_repo_if_needed
@@ -4793,13 +4796,14 @@ CLIs de IA:
   deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
   deepseek-v41, ds-v41   Abre Claude Code usando DeepSeek V4.1 Flash (GA)
   codex,  x              Abre Codex CLI
-  sakana, fugu           Abre Codex com Sakana Fugu
+  sakana, fugu           Abre Codex com Fugu Ultra V2.0
   claude-fugu, cfugu     Abre Claude Code com o endpoint Anthropic da Sakana
-  fugu-ultra             Abre Fugu Ultra (alias atual: V1.1)
+  fugu-ultra             Abre Fugu Ultra V2.0
+  fugu-max               Abre Fugu Max V1.0
+  fugu-ultra-v2.0        Abre Fugu Ultra V2.0
   fugu-ultra-v1.0        Abre Fugu Ultra V1.0
   fugu-ultra-v1.1        Abre Fugu Ultra V1.1
-  fugu-cyber             Abre Fugu Cyber (acesso liberado sob formulário)
-  Fugu: -c model_reasoning_effort=xhigh; Ultra V1.1 também aceita max
+  Fugu V2/Max: -c model_reasoning_effort=high|xhigh|max
   gemini, g              Abre Gemini CLI
   kimi,     k              Abre Kimi Code CLI
   grok,    gr              Abre Grok CLI (xAI)
@@ -4950,14 +4954,15 @@ Exemplos:
   ai x                            Codex
   ai sol                          Codex GPT-5.6 Sol com janela de 1M de contexto
   ai sol "tarefa gigante"         (auto-compacta em 900k; aliases: x-1m, x1m)
-  ai fugu                         Codex via Sakana Fugu
+  ai fugu                         Codex via Fugu Ultra V2.0
   ai claude-fugu                  Claude Code via endpoint Anthropic da Sakana
   ai fugu -c model_reasoning_effort=xhigh
-  ai fugu-ultra "tarefa pesada"   Fugu Ultra (alias de V1.1)
+  ai fugu-ultra "tarefa pesada"   Fugu Ultra V2.0
   ai fugu-ultra -c model_reasoning_effort=max "tarefa máxima"
+  ai fugu-max "tarefa econômica"  Fugu Max V1.0
+  ai fugu-ultra-v2.0 "pesada"     Fugu Ultra V2.0
   ai fugu-ultra-v1.0 "compat"     Fugu Ultra V1.0
   ai fugu-ultra-v1.1 "pesada"     Fugu Ultra V1.1
-  ai fugu-cyber "audita isso"     Fugu Cyber (orquestração p/ segurança)
   ai x --via sakana               Codex via provider Sakana
   ai p add sakana                 Salva SAKANA_API_KEY para o Fugu
   ai g                            Gemini
@@ -5548,13 +5553,13 @@ elif [[ ${1:-} == "codex" || ${1:-} == "x" ]]; then
     if [[ -n "$_active_provider" ]]; then
         codex_provider_setup_env "$_active_provider" || exit 1
         case "$_active_provider" in
-            sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1|fugu-cyber|sakana-cyber)
+            sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v2.0|sakana-ultra-v2.0|fugu-max|sakana-max|fugu-max-v1.0|sakana-max-v1.0|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1)
                 fugu_model=$(sakana_resolve_fugu_model "$_active_provider") || {
                     echo -e "${RED}Modelo Sakana desconhecido: ${_active_provider}${RESET}"
                     exit 1
                 }
                 codex_add_profile_flag "fugu"
-                if [[ "$fugu_model" != "fugu" ]]; then
+                if [[ "$fugu_model" != "$SAKANA_DEFAULT_MODEL" ]]; then
                     codex_add_model_flag "$fugu_model"
                 fi
                 ;;
@@ -5606,6 +5611,14 @@ elif [[ ${1:-} == "sakana" || ${1:-} == "fugu" ]]; then
 elif [[ ${1:-} == "fugu-ultra" || ${1:-} == "sakana-ultra" ]]; then
     shift
     launch_sakana_fugu "fugu-ultra" "$@"
+elif [[ ${1:-} == "fugu-ultra-v2.0" || ${1:-} == "sakana-ultra-v2.0" ]]; then
+    requested_model="$1"
+    shift
+    launch_sakana_fugu "$requested_model" "$@"
+elif [[ ${1:-} == "fugu-max" || ${1:-} == "sakana-max" || ${1:-} == "fugu-max-v1.0" || ${1:-} == "sakana-max-v1.0" ]]; then
+    requested_model="$1"
+    shift
+    launch_sakana_fugu "$requested_model" "$@"
 elif [[ ${1:-} == "fugu-ultra-v1.0" || ${1:-} == "fugu-ultra-20260615" || ${1:-} == "sakana-ultra-v1.0" ]]; then
     requested_model="$1"
     shift
@@ -5614,9 +5627,6 @@ elif [[ ${1:-} == "fugu-ultra-v1.1" || ${1:-} == "sakana-ultra-v1.1" ]]; then
     requested_model="$1"
     shift
     launch_sakana_fugu "$requested_model" "$@"
-elif [[ ${1:-} == "fugu-cyber" || ${1:-} == "sakana-cyber" ]]; then
-    shift
-    launch_sakana_fugu "fugu-cyber" "$@"
 elif [[ ${1:-} == "gemini" || ${1:-} == "g" ]]; then
     shift
     parse_global_flags "$@"

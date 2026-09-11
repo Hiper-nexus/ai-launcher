@@ -29,14 +29,15 @@ ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai ds-v41       # DeepSeek V4.1 Flash — alias do ai ds
 ai x            # Codex direto
 ai sol          # Codex GPT-5.6 Sol com janela de 1M de contexto (aliases: x-1m, x1m)
-ai fugu         # Codex via Sakana Fugu
+ai fugu         # Codex via Sakana Fugu Ultra V2.0
 ai claude-fugu  # Claude Code via endpoint Anthropic-compatible da Sakana
-ai fugu -c model_reasoning_effort=xhigh  # Fugu com raciocínio profundo
-ai fugu-ultra   # Fugu Ultra (alias da versão atual: V1.1)
-ai fugu-ultra -c model_reasoning_effort=max  # máximo disponível no Ultra V1.1
+ai fugu -c model_reasoning_effort=xhigh  # Ultra V2.0 com raciocínio profundo
+ai fugu-ultra   # Fugu Ultra V2.0
+ai fugu-max     # Fugu Max V1.0
+ai fugu-ultra -c model_reasoning_effort=max  # máximo disponível no Ultra V2.0
+ai fugu-ultra-v2.0  # Fugu Ultra V2.0 explícito
 ai fugu-ultra-v1.0  # Fugu Ultra V1.0
 ai fugu-ultra-v1.1  # Fugu Ultra V1.1
-ai fugu-cyber   # Fugu Cyber — orquestração p/ segurança (acesso sob formulário)
 ai g            # Gemini direto
 ai k            # Kimi Code direto
 ai cu           # Cursor Agent direto
@@ -65,7 +66,7 @@ ai --help       # Ajuda
 | Muse Spark (Meta AI) | `ai ms` | CLI própria (REPL/one-shot) via `api.meta.ai`; `ai ms claude` abre no Claude Code (yolo); `ai ms model` escolhe o modelo para os dois caminhos |
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
 | Codex Sol 1M | `ai sol` | idem + `-m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` |
-| Sakana Fugu | `ai fugu`, `ai fugu-ultra[-v1.x]`, `ai fugu-cyber`, `ai claude-fugu` | Codex profile `fugu` ou endpoint Anthropic-compatible no Claude Code |
+| Sakana Fugu | `ai fugu`, `ai fugu-ultra`, `ai fugu-max`, `ai fugu-ultra-v1.x`, `ai claude-fugu` | Ultra V2.0 por padrão no perfil Codex `fugu` ou no endpoint Anthropic-compatible |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--auto` (never-ask; o `--yolo` do kimi ainda pede yes em ação arriscada/plano) |
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
@@ -532,35 +533,29 @@ Modelos suportados:
 
 | Model ID | Reasoning | Descrição |
 |---|---|---|
-| `fugu` | `high`, `xhigh` | Modelo Fugu padrão. |
+| `fugu-ultra-v2.0` | `high`, `xhigh`, `max` | Modelo padrão do launcher. `ai fugu` e `ai fugu-ultra` usam esta versão. |
+| `fugu-max-v1.0` | `high`, `xhigh`, `max` | Opção de melhor custo-benefício, disponível como `ai fugu-max`. |
 | `fugu-ultra-v1.0` | `high`, `xhigh` | Fugu Ultra V1.0, também conhecido como `fugu-ultra-20260615`. |
-| `fugu-ultra-v1.1` | `high`, `xhigh`, `max` | Fugu Ultra V1.1. O comando `ai fugu-ultra` resolve para esta versão. |
-| `fugu-cyber` | `high`, `xhigh` | Orquestração para segurança (21/07/2026). **Sem variante versionada** e com acesso liberado sob formulário. |
+| `fugu-ultra-v1.1` | `high`, `xhigh`, `max` | Fugu Ultra V1.1 mantido para compatibilidade. |
 
 ```bash
 ai p add sakana                 # salva a SAKANA_API_KEY e instala o perfil
-ai fugu                         # abre Codex com model fugu
+ai fugu                         # abre Codex com Fugu Ultra V2.0
 ai claude-fugu                  # abre Claude Code via Sakana
-ai fugu -c model_reasoning_effort=xhigh  # usa o novo nível xhigh
-ai fugu-ultra "tarefa pesada"   # alias -> fugu-ultra-v1.1
+ai fugu -c model_reasoning_effort=xhigh  # usa raciocínio profundo no Ultra V2.0
+ai fugu-ultra "tarefa pesada"   # alias -> fugu-ultra-v2.0
 ai fugu-ultra -c model_reasoning_effort=max "tarefa máxima"
+ai fugu-max "tarefa econômica"  # abre Fugu Max V1.0
+ai fugu-ultra-v2.0 "pesada"     # abre Fugu Ultra V2.0 explicitamente
 ai fugu-ultra-v1.0 "compat"     # abre Fugu Ultra V1.0
 ai fugu-ultra-v1.1 "pesada"     # abre Fugu Ultra V1.1
 ai fugu-ultra-20260615 "compat" # alias histórico -> fugu-ultra-v1.0
-ai fugu-cyber "audita isso"     # Fugu Cyber (alias: ai sakana-cyber)
 ai x --via sakana               # equivalente via Codex
-ai x --via fugu-ultra           # alias -> Fugu Ultra V1.1
+ai x --via fugu-ultra           # alias -> Fugu Ultra V2.0
+ai x --via fugu-max             # Codex via Fugu Max V1.0
 ai x --via fugu-ultra-v1.0      # Codex via Fugu Ultra V1.0
-ai x --via fugu-cyber           # Codex via Fugu Cyber
 codex-fugu                      # wrapper direto criado em ~/.local/bin
 ```
-
-**Fugu Cyber precisa de liberação manual.** Sem o formulário aprovado a API
-responde `403 permission_error` na primeira mensagem — já dentro do Codex, onde
-sai como erro solto. O launcher avisa antes de abrir e mostra o link do
-formulário. Atenção também ao nome: **não existe `fugu-cyber-v1.0`** — esse ID
-devolve `404 Model not found`. O Cyber é publicado sem variante versionada,
-diferente do Ultra.
 
 Arquivos criados pelo setup:
 
