@@ -78,6 +78,35 @@ if AI_PYTHON_CACHE="" PATH="${EMPTY_BIN}" ai_python >/dev/null 2>&1; then
     fail "ai_python aceitou o stub quando não havia Python real"
 fi
 
+# ── win_bin_path ─────────────────────────────────────────
+# cursor-agent instala só cursor-agent.cmd e cursor-agent.ps1; sem isto ele
+# fica invisível ao launcher para sempre, mesmo instalado e funcionando.
+WRAP_BIN="${TMP_DIR}/wrappers"
+mkdir -p "$WRAP_BIN"
+: > "${WRAP_BIN}/soh-cmd.cmd"
+: > "${WRAP_BIN}/soh-ps1.ps1"
+: > "${WRAP_BIN}/soh-exe.exe"
+
+for nome in soh-cmd soh-ps1 soh-exe; do
+    achado=$(PATH="${WRAP_BIN}" win_bin_path "$nome") ||
+        fail "win_bin_path não achou ${nome} pelo wrapper"
+    [[ "$achado" == "${WRAP_BIN}/${nome}."* ]] ||
+        fail "win_bin_path devolveu caminho inesperado para ${nome}: ${achado}"
+done
+
+if PATH="${WRAP_BIN}" win_bin_path nao-existe >/dev/null 2>&1; then
+    fail "win_bin_path inventou um binário inexistente"
+fi
+
+# Ordem de AI_WIN_BIN_EXTS importa: .exe é o executável de verdade e tem que
+# ganhar do wrapper quando os dois existem.
+: > "${WRAP_BIN}/ambos.ps1"
+: > "${WRAP_BIN}/ambos.exe"
+achado=$(PATH="${WRAP_BIN}" win_bin_path ambos) ||
+    fail "win_bin_path não achou 'ambos'"
+[[ "$achado" == *".exe" ]] ||
+    fail "win_bin_path preferiu o wrapper ao .exe: ${achado}"
+
 # ── secure_file ──────────────────────────────────────────
 secret="${TMP_DIR}/providers.conf"
 printf 'sakana=chave-de-teste\n' > "$secret"

@@ -197,6 +197,27 @@ ai_os() {
 
 ai_is_windows() { [[ "$(ai_os)" == "windows" ]]; }
 
+# Extensões que o Windows considera executável mas o Git Bash não resolve em
+# `command -v`. npm cria os três nomes (gemini, gemini.cmd, gemini.ps1), por
+# isso CLI instalada por npm sempre foi detectada; instalador próprio costuma
+# criar só o wrapper, e aí a CLI sumia do menu.
+AI_WIN_BIN_EXTS=(.exe .cmd .bat .ps1)
+
+win_bin_path() {
+    local name="$1" dir ext candidate
+    local IFS=:
+    for dir in $PATH; do
+        [[ -n "$dir" ]] || continue
+        for ext in "${AI_WIN_BIN_EXTS[@]}"; do
+            candidate="${dir}/${name}${ext}"
+            [[ -f "$candidate" ]] || continue
+            printf '%s\n' "$candidate"
+            return 0
+        done
+    done
+    return 1
+}
+
 # Fecha a ACL real de um caminho no Windows. chmod no NTFS é teatro: o Git Bash
 # aceita `chmod 600`, devolve 0, e o stat continua 644 — ou seja, toda key do
 # providers.conf ficava legível por qualquer conta local da máquina.
@@ -2716,6 +2737,14 @@ get_version() {
 
 # Versão crua (só o número), sem cache. Usada pelo preload paralelo e como
 # fallback do get_version() quando o cache está ausente/expirado.
+#
+# Assimetria PROPOSITAL com check_installed(): ele reconhece wrapper .cmd/.ps1
+# no Windows, isto aqui não. Buscar a versão de um wrapper exigiria cmd.exe ou
+# powershell.exe, e programa de console do Windows escreve direto no handle do
+# console — a redireção `>"$tmp.$c" 2>/dev/null` do preload não o alcança. Em
+# teste isso cuspiu no meio do TUI e embaralhou o menu inteiro. A CLI aparece
+# como instalada, só sem número de versão; não vale corromper a tela por um
+# dado cosmético.
 get_version_raw() {
     local cmd="$1" out
     if ! command -v "$cmd" &>/dev/null; then
@@ -2779,7 +2808,12 @@ preload_versions() {
 }
 
 check_installed() {
-    command -v "$1" &>/dev/null
+    command -v "$1" &>/dev/null && return 0
+    ai_is_windows || return 1
+    # O Git Bash só resolve executáveis POSIX e .exe. CLI que instala apenas
+    # wrapper .cmd/.ps1 — cursor-agent é o caso — ficava marcada como ausente
+    # no menu mesmo instalada e funcionando no PowerShell.
+    win_bin_path "$1" >/dev/null
 }
 
 # ── opencode ─────────────────────────────────────────────
