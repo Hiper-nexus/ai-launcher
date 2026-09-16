@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.52.2"
+AI_LAUNCHER_VERSION="1.52.3"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -630,6 +630,46 @@ GLM_FLASH_MODEL_LABEL="${GLM_FLASH_MODEL%%\[*}"
 # específico, exporte AI_DEEPSEEK_V41_MODEL=<model> que CLI e menu pegam.
 DEEPSEEK_V41_MODEL="${AI_DEEPSEEK_V41_MODEL:-deepseek-flash[1m]}"
 
+# O endpoint oficial da DeepSeek e o Token Plan da Alibaba nomeiam o mesmo
+# modelo diferente: deepseek-flash lá é deepseek-v4.1-flash cá. Sem este
+# mapeamento a rota pela Alibaba morre com 400 "Model not exist." — o id
+# oficial simplesmente não existe no catálogo do plano.
+deepseek_wire_model() {
+    local wanted="$1" suf=""
+    if [[ "$wanted" == *'[1m]' ]]; then
+        suf='[1m]'
+        wanted="${wanted%'[1m]'}"
+    fi
+    case "${ANTHROPIC_BASE_URL:-}" in
+        *maas.aliyuncs.com*)
+            case "$wanted" in
+                deepseek-flash|deepseek-v4.1-flash) wanted="deepseek-v4.1-flash" ;;
+                deepseek-v4-flash-0731)             wanted="deepseek-v4-flash-0731" ;;
+                deepseek-v4-pro|deepseek-pro)       wanted="deepseek-v4-pro" ;;
+            esac
+            ;;
+    esac
+    printf '%s%s' "$wanted" "$suf"
+}
+
+# Os tiers (haiku/sonnet/opus/subagent) vêm do PROVIDER_EXTRA_ENV com o id
+# oficial — na rota Alibaba eles morreriam igual ao modelo principal. Alinha
+# todos de uma vez; no endpoint oficial é no-op.
+deepseek_align_tiers() {
+    case "${ANTHROPIC_BASE_URL:-}" in
+        *maas.aliyuncs.com*) ;;
+        *) return 0 ;;
+    esac
+    local k v
+    for k in ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL \
+             ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL \
+             CLAUDE_CODE_SUBAGENT_MODEL; do
+        v="${!k:-}"
+        [[ -n "$v" ]] || continue
+        export "$k=$(deepseek_wire_model "$v")"
+    done
+}
+
 # IDs versionados confirmados no catálogo /v1/models da Sakana em 11/09/2026.
 # O launcher fixa a versão para uma atualização futura do alias remoto não
 # trocar o modelo silenciosamente.
@@ -930,6 +970,10 @@ provider_setup_env() {
     local model="${PROVIDER_MODELS[$provider]:-}"
     if [[ -n "$model" ]]; then
         export ANTHROPIC_MODEL="$model"
+    fi
+
+    if [[ "$provider" == "deepseek" ]]; then
+        deepseek_align_tiers
     fi
 
     echo -e "${CYAN}Provider:${RESET} ${provider} → ${base_url}"
@@ -5867,7 +5911,7 @@ elif [[ ${1:-} == "deepseek-pro" || ${1:-} == "dsp" || ${1:-} == "ds-pro" ]]; th
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     provider_setup_env "deepseek" || exit 1
-    export ANTHROPIC_MODEL="deepseek-v4-pro[1m]"
+    export ANTHROPIC_MODEL="$(deepseek_wire_model "deepseek-v4-pro[1m]")"
     enter_repo_if_needed
     launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "deepseek-v41" || ${1:-} == "ds-v41" || ${1:-} == "dsv41" \
@@ -5876,7 +5920,7 @@ elif [[ ${1:-} == "deepseek-v41" || ${1:-} == "ds-v41" || ${1:-} == "dsv41" \
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     provider_setup_env "deepseek" || exit 1
-    export ANTHROPIC_MODEL="$DEEPSEEK_V41_MODEL"
+    export ANTHROPIC_MODEL="$(deepseek_wire_model "$DEEPSEEK_V41_MODEL")"
     enter_repo_if_needed
     launch "DeepSeek V4.1 Flash" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "deepseek" || ${1:-} == "ds" ]]; then
@@ -5884,7 +5928,7 @@ elif [[ ${1:-} == "deepseek" || ${1:-} == "ds" ]]; then
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     provider_setup_env "deepseek" || exit 1
-    export ANTHROPIC_MODEL="$DEEPSEEK_V41_MODEL"
+    export ANTHROPIC_MODEL="$(deepseek_wire_model "$DEEPSEEK_V41_MODEL")"
     enter_repo_if_needed
     launch "DeepSeek V4.1" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "claude" || ${1:-} == "c" ]]; then
@@ -6589,7 +6633,7 @@ case $choice in
        enter_repo_if_needed
        launch "Muse Spark (Meta AI)" claude "$CLAUDE_PROMPT_FLAG" MUSE_FLAGS ;;
     4) provider_setup_env "deepseek" || continue
-       export ANTHROPIC_MODEL="$DEEPSEEK_V41_MODEL"
+       export ANTHROPIC_MODEL="$(deepseek_wire_model "$DEEPSEEK_V41_MODEL")"
        enter_repo_if_needed
        launch "DeepSeek V4.1" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     5) launch_sakana_fugu "fugu" ;;
@@ -6630,11 +6674,11 @@ case $choice in
    23) qwen_launch_claude || true ;;
    24) muse_dispatch || true ;;
    25) provider_setup_env "deepseek" || continue
-       export ANTHROPIC_MODEL="deepseek-v4-pro[1m]"
+       export ANTHROPIC_MODEL="$(deepseek_wire_model "deepseek-v4-pro[1m]")"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
    26) provider_setup_env "deepseek" || continue
-       export ANTHROPIC_MODEL="$DEEPSEEK_V41_MODEL"
+       export ANTHROPIC_MODEL="$(deepseek_wire_model "$DEEPSEEK_V41_MODEL")"
        enter_repo_if_needed
        launch "DeepSeek V4.1 Flash" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
    27) ab_dispatch || true ;;

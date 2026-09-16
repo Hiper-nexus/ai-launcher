@@ -95,4 +95,24 @@ env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "deepseek-flash[1m]"
 run_launcher ds-pro
 env_is ANTHROPIC_MODEL "deepseek-v4-pro[1m]"
 
+# ── Rota Alibaba Token Plan ──────────────────────────────
+# O plano hospeda os mesmos modelos com outros ids: deepseek-flash não existe
+# lá (400 "Model not exist."), o certo é deepseek-v4.1-flash. O mapeamento tem
+# que cobrir o modelo principal E os tiers, senão o subagent morre do mesmo
+# jeito. No endpoint oficial, tudo continua como acima.
+printf 'deepseek-base-url=https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic\n' \
+    >> "${TEST_HOME}/.local/share/ai-launcher/providers.conf"
+
+run_launcher ds-v41
+env_is ANTHROPIC_BASE_URL "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic"
+env_is ANTHROPIC_MODEL "deepseek-v4.1-flash[1m]"
+env_is ANTHROPIC_DEFAULT_SONNET_MODEL "deepseek-v4.1-flash[1m]"
+env_is CLAUDE_CODE_SUBAGENT_MODEL "deepseek-v4.1-flash"
+
+run_launcher ds-pro
+env_is ANTHROPIC_MODEL "deepseek-v4-pro[1m]"
+# O tier opus do extra env é o flash oficial; mapeado, vira o flash do plano.
+env_is ANTHROPIC_DEFAULT_OPUS_MODEL "deepseek-v4.1-flash[1m]"
+env_is ANTHROPIC_DEFAULT_FABLE_MODEL "deepseek-v4-pro[1m]"
+
 echo "PASS: dispatch do DeepSeek V4.1 Flash (GA)"
