@@ -13,16 +13,10 @@ fail() {
     exit 1
 }
 
-# O bloco é auto-contido de propósito: dá para exercitá-lo sem rodar o
-# dispatch do launcher, que abriria o menu interativo.
-PLATFORM_LIB="${TMP_DIR}/platform.sh"
-sed -n '/^# ── Camada de plataforma/,/^# ── Providers alternativos/p' "$ROOT/ai" \
-    | sed '$d' > "$PLATFORM_LIB"
-grep -q '^ai_python()' "$PLATFORM_LIB" ||
-    fail "não consegui extrair a camada de plataforma do ai"
-
-# shellcheck source=/dev/null
-source "$PLATFORM_LIB"
+# O bloco é exercitado sem rodar o dispatch do launcher, que abriria o menu
+# interativo.
+# shellcheck source=helpers/platform.sh
+source "${ROOT}/tests/helpers/platform.sh"
 
 # ── ai_os ────────────────────────────────────────────────
 case "$(ai_os)" in
@@ -57,13 +51,29 @@ chmod +x "${FAKE_BIN}/python3" "${FAKE_BIN}/python"
 
 resolved=$(AI_PYTHON_CACHE="" PATH="${FAKE_BIN}" ai_python) ||
     fail "ai_python não achou o python funcional ao lado do stub"
-[[ "$resolved" == "python" ]] ||
+[[ "$(basename "$resolved")" == "python" ]] ||
     fail "ai_python escolheu '$resolved'; o stub da Store deveria ser rejeitado"
 
-# Sem nenhum Python utilizável, tem que falhar — não devolver o stub.
+# O wrapper python3() tem que executar o interpretador resolvido, não o stub.
+# Sem isso os ~40 call sites continuariam caindo no alias da Store.
+cat > "${FAKE_BIN}/python" <<'SH'
+#!/bin/sh
+echo "python-real-ok"
+SH
+chmod +x "${FAKE_BIN}/python"
+saida=$(AI_PYTHON_CACHE="" PATH="${FAKE_BIN}" python3 -c 'qualquer coisa') ||
+    fail "wrapper python3() falhou onde o interpretador real funciona"
+[[ "$saida" == "python-real-ok" ]] ||
+    fail "wrapper python3() não usou o interpretador resolvido: '$saida'"
+
+# Só o stub no PATH: nem ai_python nem o wrapper podem aceitá-lo. O wrapper
+# precisa falhar explícito, não estourar um erro obscuro de heredoc adiante.
 EMPTY_BIN="${TMP_DIR}/empty"
 mkdir -p "$EMPTY_BIN"
 cp "${FAKE_BIN}/python3" "${EMPTY_BIN}/python3"
+if AI_PYTHON_CACHE="" PATH="${EMPTY_BIN}" python3 -c 'x' >/dev/null 2>&1; then
+    fail "wrapper python3() deveria falhar quando só há o stub da Store"
+fi
 if AI_PYTHON_CACHE="" PATH="${EMPTY_BIN}" ai_python >/dev/null 2>&1; then
     fail "ai_python aceitou o stub quando não havia Python real"
 fi
@@ -76,24 +86,18 @@ secure_file "$secret"
 grep -q '^sakana=chave-de-teste$' "$secret" ||
     fail "secure_file corrompeu o conteúdo"
 
+assert_secret_file "$secret" || fail "secure_file não restringiu o arquivo ao dono"
+
+# Contraprova: só `chmod 600` — o que o launcher fazia antes — tem que ser
+# REPROVADO no Windows. Sem isto o teste passaria mesmo se secure_file virasse
+# um no-op, que é exatamente o modo como o bug original passava despercebido.
+frouxo="${TMP_DIR}/frouxo.conf"
+printf 'k=v\n' > "$frouxo"
+chmod 600 "$frouxo"
 if [[ "$(ai_os)" == "windows" ]]; then
-    # No NTFS o bit POSIX é inútil; o que vale é a ACL. Só `chmod 600` deixa
-    # para trás tudo que foi herdado — numa máquina real isso incluía um grupo
-    # de sandbox com Modify sobre o arquivo de keys.
-    acl=$(icacls.exe "$(cygpath -w "$secret")" 2>/dev/null) ||
-        fail "icacls não conseguiu ler a ACL"
-    # Asserção forte: depois de /inheritance:r tem que sobrar UMA ACE, a do
-    # dono. Qualquer grupo herdado que sobreviva é key legível por quem não
-    # devia, e o nome do grupo varia por máquina e por idioma do Windows —
-    # contar ACEs é o que não depende disso.
-    mapfile -t aces < <(grep -oE '[^ ]+:\([^)]*\)' <<<"$acl" || true)
-    (( ${#aces[@]} == 1 )) ||
-        fail "esperada 1 ACE após secure_file, obtidas ${#aces[@]}: ${aces[*]-}"
-    grep -qi "${USERNAME}" <<<"${aces[0]}" ||
-        fail "a única ACE não é a do dono: ${aces[0]}"
-else
-    perms=$(stat -c '%a' "$secret" 2>/dev/null || stat -f '%Lp' "$secret")
-    [[ "$perms" == "600" ]] || fail "esperado 600, obtido $perms"
+    if assert_secret_file "$frouxo" 2>/dev/null; then
+        fail "assert_secret_file aprovou um arquivo protegido só por chmod"
+    fi
 fi
 
 # secure_file em caminho inexistente não pode abortar o launcher (set -e).

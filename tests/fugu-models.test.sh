@@ -3,6 +3,10 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# python3 aqui precisa ser um Python que EXECUTA: no Windows o nome resolve
+# para o alias da Microsoft Store, que passa no `command -v` e morre com 49.
+# shellcheck source=helpers/platform.sh
+source "${ROOT}/tests/helpers/platform.sh"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 

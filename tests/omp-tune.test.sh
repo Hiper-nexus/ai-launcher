@@ -8,6 +8,10 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# python3 aqui precisa ser um Python que EXECUTA: no Windows o nome resolve
+# para o alias da Microsoft Store, que passa no `command -v` e morre com 49.
+# shellcheck source=helpers/platform.sh
+source "${ROOT}/tests/helpers/platform.sh"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -176,9 +180,10 @@ assert_env META_API_KEY     key-muse-teste
 grep -q "^SAKANA_API_KEY=" "$ENV_FILE" &&
     fail "slot sakana não existe no providers.conf, não deveria virar variável"
 
-# O arquivo carrega API key: 0600, não mais.
-perms=$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE")
-[[ "$perms" == "600" ]] || fail ".env deveria ser 600, obtido ${perms}"
+# O arquivo carrega API key: só o dono enxerga. No NTFS o modo POSIX é
+# decorativo (stat devolve 644 mesmo após chmod), então quem sabe checar isso
+# em cada plataforma é o helper.
+assert_secret_file "$ENV_FILE" || fail ".env com API key não está restrito ao dono"
 
 # Nenhuma key pode vazar para stdout.
 out=$(run_ai omp tune env)

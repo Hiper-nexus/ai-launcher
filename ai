@@ -249,18 +249,33 @@ ai_python() {
         printf '%s\n' "$AI_PYTHON_CACHE"
         return 0
     fi
-    local candidate
+    local candidate path
     for candidate in python3 python py; do
-        command -v "$candidate" >/dev/null 2>&1 || continue
-        "$candidate" -c 'import sys' >/dev/null 2>&1 || continue
-        AI_PYTHON_CACHE="$candidate"
-        printf '%s\n' "$candidate"
+        # type -P olha só o PATH. `command -v` acharia a função python3()
+        # logo abaixo e a resolução entraria em recursão.
+        path=$(type -P "$candidate") || continue
+        [[ -n "$path" ]] || continue
+        "$path" -c 'import sys' >/dev/null 2>&1 || continue
+        AI_PYTHON_CACHE="$path"
+        printf '%s\n' "$path"
         return 0
     done
     return 1
 }
 
 ai_has_python() { ai_python >/dev/null 2>&1; }
+
+# São ~40 chamadas a `python3` espalhadas pelo script. Em vez de reescrever
+# cada uma, o nome é interceptado aqui e cai no interpretador que de fato
+# executa — no Windows quase sempre `python`, não `python3`.
+python3() {
+    local py
+    if ! py=$(ai_python); then
+        echo "Erro: nenhum Python utilizável no PATH (python3/python/py)." >&2
+        return 127
+    fi
+    command "$py" "$@"
+}
 
 # ── Providers alternativos ──────────────────────────────
 # Arquivo de credenciais (criado automaticamente)
@@ -524,7 +539,7 @@ provider_save_key() {
     grep -v "^${provider}=" "$PROVIDERS_FILE" > "$tmpfile" 2>/dev/null || true
     echo "${provider}=${key}" >> "$tmpfile"
     mv "$tmpfile" "$PROVIDERS_FILE"
-    chmod 600 "$PROVIDERS_FILE"
+    secure_file "$PROVIDERS_FILE"
     trap - RETURN
 }
 
@@ -876,7 +891,7 @@ sakana_remove_provider_config() {
         }
     ' "$config" > "$tmp_config"
     mv "$tmp_config" "$config"
-    chmod 600 "$config"
+    secure_file "$config"
     trap - RETURN
 }
 
@@ -949,13 +964,13 @@ PY
     fi
     if [[ "$force" == true || "$catalog_current" == false ]]; then
         sakana_write_fugu_catalog "$catalog"
-        chmod 600 "$catalog"
+        secure_file "$catalog"
         changed=true
     fi
 
     if [[ "$force" == true || ! -f "$profile" ]]; then
         sakana_write_fugu_profile "$profile" "$catalog"
-        chmod 600 "$profile"
+        secure_file "$profile"
         changed=true
     fi
 
@@ -971,7 +986,7 @@ PY
 
     if ! grep -q '^\[model_providers\.sakana\]' "$config" 2>/dev/null; then
         sakana_write_provider_config "$config"
-        chmod 600 "$config"
+        secure_file "$config"
         changed=true
     fi
 
@@ -1073,7 +1088,7 @@ _conta_require_deps() {
         echo -e "${RED}Erro: comando 'security' não encontrado (troca de contas é exclusiva do macOS).${RESET}"
         return 1
     fi
-    if ! command -v python3 >/dev/null 2>&1; then
+    if ! ai_has_python; then
         echo -e "${RED}Erro: python3 é necessário para gerenciar contas.${RESET}"
         return 1
     fi
@@ -1128,7 +1143,7 @@ conta_snapshot_to() {
         echo -e "${RED}Falha ao gravar backup '${nome}' no Keychain.${RESET}"
         return 1
     fi
-    mkdir -p "$ACCOUNTS_DIR" && chmod 700 "$ACCOUNTS_DIR"
+    mkdir -p "$ACCOUNTS_DIR" && secure_dir "$ACCOUNTS_DIR"
     CONTA_NOME="$nome" CONTA_DIR="$ACCOUNTS_DIR" python3 - <<'PY'
 import json, os, datetime
 home = os.path.expanduser('~')
@@ -1364,7 +1379,7 @@ PY
 
 _usage_cache_put() {
     # $1 = chave, $2 = linha, $3 = ttl opcional da entrada — escrita atômica
-    command -v python3 >/dev/null 2>&1 || return 0
+    ai_has_python || return 0
     UC_FILE="$USAGE_CACHE_FILE" UC_KEY="$1" UC_LINE="$2" UC_ENTRY_TTL="${3:-}" python3 - <<'PY' 2>/dev/null || true
 import os, json, time
 f = os.environ['UC_FILE']
@@ -1609,7 +1624,7 @@ conta_autoswitch_if_needed() {
     # threshold, troca para outra conta salva com quota. Fail-open: problema
     # de rede/API nunca bloqueia o launch.
     [[ "$CONTA_AUTO_SWITCH" == "true" ]] || return 0
-    command -v python3 >/dev/null 2>&1 || return 0
+    ai_has_python || return 0
     command -v security >/dev/null 2>&1 || return 0
     local f nomes=()
     for f in "$ACCOUNTS_DIR"/*.json; do
@@ -1852,7 +1867,7 @@ _xconta_write_active() {
     mkdir -p "$(dirname "$CODEX_AUTH_FILE")"
     tmp=$(mktemp "${CODEX_AUTH_FILE}.tmp.XXXXXX") || return 1
     printf '%s' "$blob" > "$tmp" || { rm -f "$tmp"; return 1; }
-    chmod 600 "$tmp"
+    secure_file "$tmp"
     mv "$tmp" "$CODEX_AUTH_FILE"
 }
 
@@ -1907,7 +1922,7 @@ xconta_snapshot_to() {
         echo -e "${RED}Falha ao gravar backup '${nome}' no Keychain.${RESET}"
         return 1
     fi
-    mkdir -p "$XACCOUNTS_DIR" && chmod 700 "$XACCOUNTS_DIR"
+    mkdir -p "$XACCOUNTS_DIR" && secure_dir "$XACCOUNTS_DIR"
     CONTA_NOME="$nome" CONTA_DIR="$XACCOUNTS_DIR" CONTA_EMAIL="$email" python3 - <<'PY'
 import json, os, datetime
 meta = {
@@ -2242,7 +2257,7 @@ xconta_status() {
 
 xconta_autoswitch_if_needed() {
     [[ "$CONTA_AUTO_SWITCH" == "true" ]] || return 0
-    command -v python3 >/dev/null 2>&1 || return 0
+    ai_has_python || return 0
     command -v security >/dev/null 2>&1 || return 0
     local f nomes=()
     for f in "$XACCOUNTS_DIR"/*.json; do
@@ -3006,7 +3021,7 @@ omp_env_sync() {
         echo -e "${RED}Erro: não consegui criar arquivo temporário em ${dest%/*}.${RESET}"
         return 1
     }
-    chmod 600 "$tmp"
+    secure_file "$tmp"
 
     local line k
     if [[ -f "$dest" ]]; then
@@ -3038,7 +3053,7 @@ omp_env_sync() {
         echo -e "${RED}Erro: falha ao gravar ${dest} — o arquivo anterior foi mantido.${RESET}"
         return 1
     fi
-    chmod 600 "$dest"
+    secure_file "$dest"
 
     echo -e "${BOLD}Credenciais do omp${RESET}"
     if (( found == 0 )); then
@@ -3241,7 +3256,7 @@ ollama_require_key() {
 
 # python3 é usado pelos clientes cloud (Ollama Cloud e HF Endpoint)
 require_python() {
-    if ! command -v python3 &>/dev/null; then
+    if ! ai_has_python; then
         echo -e "${RED}Erro: python3 é necessário para este comando.${RESET}" >&2
         return 1
     fi
@@ -4655,7 +4670,7 @@ run_with_timeout() {
         return $?
     fi
 
-    if command -v python3 >/dev/null 2>&1; then
+    if ai_has_python; then
         python3 - "$seconds" "$@" <<'PY'
 import os
 import signal
@@ -4727,7 +4742,7 @@ PY
 # ser 3.9. Devolve um interpretador compatível quando o do PATH não serve
 # (string vazia = o python3 do PATH já atende ou não há alternativa).
 codex_security_python() {
-    if command -v python3 &>/dev/null &&
+    if ai_has_python &&
        python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
         return 0
     fi
@@ -5341,7 +5356,7 @@ repo_register() {
     } | awk 'NF && !seen[$0]++' | head -30 > "$tmp"
 
     mv "$tmp" "$REPOS_FILE"
-    chmod 600 "$REPOS_FILE"
+    secure_file "$REPOS_FILE"
 }
 
 # Registra o repo atual (chamado automaticamente quando ai é lançado dentro de um)
@@ -6001,7 +6016,7 @@ elif [[ ${1:-} == "provider" || ${1:-} == "p" ]]; then
                 trap "rm -f '$_tmpfile'" EXIT
                 grep -v "^${pname}=" "$PROVIDERS_FILE" > "$_tmpfile" 2>/dev/null || true
                 mv "$_tmpfile" "$PROVIDERS_FILE"
-                chmod 600 "$PROVIDERS_FILE"
+                secure_file "$PROVIDERS_FILE"
                 trap - EXIT
                 echo -e "${GREEN}✔ Key removida para ${pname}${RESET}"
             fi
