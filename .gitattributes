@@ -1,0 +1,4 @@
+# Scripts bash precisam de LF mesmo em checkout Windows: com CRLF o bash
+# quebra terminador de heredoc e shebang.
+* text=auto eol=lf
+*.png binary
