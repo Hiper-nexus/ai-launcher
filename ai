@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.52.0"
+AI_LAUNCHER_VERSION="1.52.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -203,11 +203,43 @@ ai_is_windows() { [[ "$(ai_os)" == "windows" ]]; }
 # criar só o wrapper, e aí a CLI sumia do menu.
 AI_WIN_BIN_EXTS=(.exe .cmd .bat .ps1)
 
+# Diretórios que os instaladores usam fora do PATH. Uma janela aberta ANTES de
+# o instalador gravar o PATH no registro tem PATH velho — e sem este fallback
+# o menu jurava que a CLI não existia, mesmo com o binário no disco.
+AI_WIN_EXTRA_DIRS=()
+ai_win_extra_dirs() {
+    if (( ${#AI_WIN_EXTRA_DIRS[@]} > 0 )); then
+        printf '%s\n' "${AI_WIN_EXTRA_DIRS[@]}"
+        return 0
+    fi
+    local h="$HOME"
+    AI_WIN_EXTRA_DIRS=(
+        "$h/AppData/Local/agy/bin"
+        "$h/AppData/Local/devin/cli/bin"
+        "$h/AppData/Local/cursor-agent"
+        "$h/AppData/Local/Programs/muse"
+        "$h/.local/bin"
+    )
+    printf '%s\n' "${AI_WIN_EXTRA_DIRS[@]}"
+}
+
 win_bin_path() {
     local name="$1" dir ext candidate
     local IFS=:
     for dir in $PATH; do
         [[ -n "$dir" ]] || continue
+        for ext in "${AI_WIN_BIN_EXTS[@]}"; do
+            candidate="${dir}/${name}${ext}"
+            [[ -f "$candidate" ]] || continue
+            printf '%s\n' "$candidate"
+            return 0
+        done
+    done
+    ai_is_windows || return 1
+    local -a extras
+    mapfile -t extras < <(ai_win_extra_dirs)
+    for dir in "${extras[@]}"; do
+        [[ -n "$dir" && -d "$dir" ]] || continue
         for ext in "${AI_WIN_BIN_EXTS[@]}"; do
             candidate="${dir}/${name}${ext}"
             [[ -f "$candidate" ]] || continue

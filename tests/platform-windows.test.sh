@@ -107,6 +107,17 @@ achado=$(PATH="${WRAP_BIN}" win_bin_path ambos) ||
 [[ "$achado" == *".exe" ]] ||
     fail "win_bin_path preferiu o wrapper ao .exe: ${achado}"
 
+# Fallback de PATH velho: janela aberta antes de o instalador gravar o PATH no
+# registro não pode ver "não instalado" com o binário no disco.
+STALE_HOME="${TMP_DIR}/stale-home"
+mkdir -p "${STALE_HOME}/AppData/Local/agy/bin"
+: > "${STALE_HOME}/AppData/Local/agy/bin/agy.exe"
+AI_WIN_EXTRA_DIRS=()   # solta o cache: chamadas anteriores encheram com o HOME real
+achado=$(HOME="$STALE_HOME" PATH="/nonexistent" win_bin_path agy) ||
+    fail "win_bin_path não usou o fallback de diretório conhecido com PATH velho"
+[[ "$achado" == "${STALE_HOME}/AppData/Local/agy/bin/agy.exe" ]] ||
+    fail "fallback devolveu caminho inesperado: ${achado}"
+
 # ── secure_file ──────────────────────────────────────────
 secret="${TMP_DIR}/providers.conf"
 printf 'sakana=chave-de-teste\n' > "$secret"
