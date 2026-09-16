@@ -17,6 +17,21 @@ curl -fsSL https://raw.githubusercontent.com/Hiper-nexus/ai-launcher/main/ai -o 
 chmod +x ~/.local/bin/ai
 ```
 
+### Windows
+
+O launcher roda sobre o **Git Bash** (Git for Windows), que já traz Bash 5.x. No Git Bash, a instalação manual acima funciona igual. Depois crie o atalho para chamar `ai` do PowerShell e do CMD:
+
+```bat
+@echo off
+"C:\Program Files\Git\bin\bash.exe" "%USERPROFILE%\.local\bin\ai" %*
+```
+
+Salve como `%USERPROFILE%\.local\bin\ai.cmd` e garanta que essa pasta está no `PATH` do usuário.
+
+> **Não clone o repositório com `core.autocrlf=true`** (o padrão do Git for Windows) sem o `.gitattributes` deste repo. Com CRLF o Bash não reconhece o terminador de heredoc, e o `ai` usa dezenas deles.
+
+O que muda no Windows está descrito em [Windows: o que é diferente](#windows-o-que-é-diferente).
+
 ## Uso
 
 ```bash
@@ -452,9 +467,18 @@ model_context_window = 1000000
 model_auto_compact_token_limit = 900000
 ```
 
-## Contas Claude (multi-conta sem logout — macOS)
+## Contas Claude (multi-conta sem logout)
 
-Troque entre várias contas Claude (pessoal, trabalho, backup) sem o ciclo logout → browser → login. As credenciais OAuth de cada conta ficam salvas no **Keychain do macOS** (nunca em texto plano); metadados em `~/.local/share/ai-launcher/accounts/` com permissão `0600`.
+Troque entre várias contas Claude (pessoal, trabalho, backup) sem o ciclo logout → browser → login.
+
+Onde as credenciais OAuth ficam guardadas depende da plataforma:
+
+| | Cofre | Slot ativo |
+|---|---|---|
+| **macOS** | Keychain (nunca em texto plano) | item `Claude Code-credentials` no Keychain |
+| **Windows** | arquivo em `~/.local/share/ai-launcher/accounts/`, ACL restrita ao dono | `~/.claude/.credentials.json` |
+
+No Windows não existe cofre equivalente utilizável por linha de comando — o `cmdkey` guarda credencial mas não devolve o segredo em claro. A proteção é a ACL, que é a mesma que o próprio Claude Code usa lá: ele grava `~/.claude/.credentials.json` em texto puro (e, de fábrica, legível por outras contas da máquina).
 
 ```bash
 ai conta add pessoal     # cadastra conta NOVA: login guiado, com rollback automático
@@ -523,6 +547,33 @@ curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh  # Prime Ag
 curl -fsSL https://cli.devin.ai/install.sh | bash                     # Devin CLI
 ```
 
+No Windows os comandos são outros — nenhum `brew`, e os instaladores `curl | bash` resolvem binário de Linux. Rode no **PowerShell**:
+
+```powershell
+irm https://antigravity.google/cli/install.ps1 | iex            # Antigravity
+irm https://static.devin.ai/cli/setup.ps1 | iex                 # Devin CLI
+irm 'https://cursor.com/install?win32=true' | iex               # Cursor Agent
+winget install Ollama.Ollama                                    # Ollama
+```
+
+E no npm (igual nas três plataformas):
+
+```bash
+npm install -g @moonshot-ai/kimi-code        # Kimi Code
+npm install -g @xai-official/grok            # Grok
+npm install -g @qoder-ai/qodercli            # Qoder
+npm install -g @vegamo/deepcode-cli          # Deep Code
+npm install -g @oh-my-pi/pi-coding-agent     # omp (oh-my-pi)
+npm install -g opencode-ai                   # opencode
+```
+
+Não precisa decorar: quando uma CLI falta, o launcher imprime o comando certo **para a plataforma em que você está** (`cli_install_hint`).
+
+Duas CLIs não têm build nativo Windows:
+
+- **Prime Agent** — o release não publica binário Windows, mas o `.tgz` do mesmo release é Node puro: `npm install -g <tarball do release>` (veja [releases](https://github.com/PrimeIntellect-ai/prime-agent/releases)).
+- **Muse Code** — só macOS/Linux. No Windows é via WSL (`curl -fsSL https://dev.meta.ai/install.sh | bash` dentro do WSL) e, para o launcher enxergar, um `~/.local/bin/muse.cmd` que chama o `muse` do WSL.
+
 Depois, autentique cada ferramenta usando o fluxo nativo dela (`claude`, `codex` e `gemini`). O launcher não valida nem exige variáveis como `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` ou `GEMINI_API_KEY`.
 
 ## Sakana Fugu no Codex
@@ -563,6 +614,50 @@ Arquivos criados pelo setup:
 - `${CODEX_HOME:-~/.codex}/fugu.config.toml`
 - `${HOME}/.local/bin/codex-fugu`
 - bloco `[model_providers.sakana]` em `${CODEX_HOME:-~/.codex}/config.toml`
+
+## Windows: o que é diferente
+
+O launcher nasceu para macOS/Linux. No Git Bash, quatro suposições POSIX falham
+— e falhavam **em silêncio**, que é o pior modo: o comando retorna 0 e o efeito
+não acontece. A camada de plataforma (`ai_os`, `secure_file`, `ai_python`,
+`win_bin_path`, `secret_*`) existe para isso.
+
+**Permissão de arquivo.** `chmod 600` no NTFS é decorativo: o Git Bash aceita,
+devolve 0, e o `stat` continua 644 com a ACL herdada valendo. Numa máquina real
+isso deixava o `providers.conf` — o arquivo com todas as API keys — acessível a
+grupos que herdavam a pasta. `secure_file()` fecha a ACL com
+`icacls /inheritance:r` além do `chmod`.
+
+**Python.** `command -v python3` é verdadeiro mesmo sem Python instalado: o App
+Execution Alias da Microsoft Store fica no `PATH` e só falha ao executar (exit
+49). Os guards por presença aprovavam e o erro estourava depois, dentro do
+heredoc. `ai_python()` testa execução e aceita `python`/`py`, que é como o
+Python real costuma se chamar no Windows.
+
+**Detecção de CLI.** `command -v` só resolve executável POSIX e `.exe`. CLI cujo
+instalador cria apenas wrapper `.cmd`/`.ps1` — `cursor-agent` é o caso — ficava
+marcada como ausente no menu mesmo instalada e funcionando. As instaladas por
+npm escapavam por acidente, porque o npm cria os três nomes.
+
+A coluna de versão não acompanha: ler a versão de um `.cmd` exigiria
+`cmd.exe`/`powershell.exe`, e programa de console do Windows escreve direto no
+handle do console, fora do alcance da redireção que o preload paralelo usa —
+isso embaralha o menu inteiro. A CLI aparece instalada, só sem número de versão.
+É uma troca deliberada; não "conserte" chamando `cmd.exe` ali.
+
+**Cofre de credenciais.** Ver [Contas Claude](#contas-claude-multi-conta-sem-logout).
+
+### Rodando os testes
+
+```bash
+bash tests/platform-windows.test.sh
+bash tests/secret-store.test.sh
+```
+
+`tests/helpers/platform.sh` extrai a camada do próprio `ai` em vez de duplicá-la
+— o launcher é distribuído como arquivo único e não pode sourcear um `lib/`. Use
+`assert_secret_file` em vez de comparar `stat`: no NTFS o modo POSIX não diz nada
+sobre quem consegue ler o arquivo.
 
 ## Personalização
 

@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.50.0"
+AI_LAUNCHER_VERSION="1.51.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -264,6 +264,120 @@ secure_dir() {
 # 49). Um guard por presença aprova e o heredoc quebra depois. Aqui testamos
 # execução — e aceitamos python/py, porque no Windows o Python real quase
 # nunca atende por `python3`.
+# Comando de instalação por CLI, já formatado e indentado (uma ou mais linhas).
+#
+# Os hints do launcher eram todos macOS/Linux: `brew install` e `curl | bash`.
+# No Windows isso manda o usuário rodar algo que não existe — não há brew, e
+# `curl | bash` no Git Bash baixa instalador que resolve binário de Linux. Os
+# comandos Windows abaixo foram verificados um a um numa máquina real.
+cli_install_hint() {
+    local cmd="$1"
+    case "$cmd" in
+        # npm é idêntico nas três plataformas.
+        claude)   echo "  Instale: npm install -g @anthropic-ai/claude-code" ;;
+        codex)    echo "  Instale: npm install -g @openai/codex" ;;
+        deepcode) echo "  Instale: npm install -g @vegamo/deepcode-cli" ;;
+        qodercli) echo "  Instale: npm install -g @qoder-ai/qodercli" ;;
+        gemini)
+            if ai_is_windows; then
+                echo "  Instale: npm install -g @google/gemini-cli"
+            else
+                echo "  Instale: sudo npm install -g @google/gemini-cli"
+            fi
+            ;;
+        # Estas têm instalador próprio no Unix, mas publicam pacote npm que é o
+        # caminho limpo no Windows.
+        kimi)
+            if ai_is_windows; then
+                echo "  Instale: npm install -g @moonshot-ai/kimi-code"
+            else
+                echo "  Instale: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash"
+            fi
+            ;;
+        grok)
+            if ai_is_windows; then
+                echo "  Instale: npm install -g @xai-official/grok"
+            else
+                echo "  Instale: curl -fsSL https://x.ai/cli/install.sh | bash"
+            fi
+            ;;
+        opencode)
+            if ai_is_windows; then
+                echo "  Instale: npm install -g opencode-ai"
+            else
+                echo "  Instale: brew install anomalyco/tap/opencode"
+            fi
+            ;;
+        omp)
+            if ai_is_windows; then
+                echo "  Instale: npm install -g @oh-my-pi/pi-coding-agent"
+            else
+                echo "  Instale: brew install can1357/tap/omp"
+                echo "  Ou:      curl -fsSL https://omp.sh/install | sh"
+            fi
+            ;;
+        # Instalador próprio nas duas plataformas, script diferente.
+        agy)
+            if ai_is_windows; then
+                echo "  Instale: irm https://antigravity.google/cli/install.ps1 | iex"
+                echo "  (no PowerShell; depois reabra o terminal para o PATH valer)"
+            else
+                echo "  Instale: curl -fsSL https://antigravity.google/cli/install.sh | bash"
+            fi
+            ;;
+        devin)
+            if ai_is_windows; then
+                echo "  Instale: irm https://static.devin.ai/cli/setup.ps1 | iex"
+                echo "  Ou:      winget install --id CognitionAI.DevinCLI"
+            else
+                echo "  Instale: curl -fsSL https://cli.devin.ai/install.sh | bash"
+            fi
+            ;;
+        cursor-agent)
+            if ai_is_windows; then
+                echo "  Instale: irm 'https://cursor.com/install?win32=true' | iex"
+            else
+                echo "  Instale: curl https://cursor.com/install -fsS | bash"
+                echo -e "  ${YELLOW}Aviso:${RESET} o instalador sobrescreve ~/.local/bin/agent"
+                echo "  (que aqui aponta para o Grok). O launcher usa o symlink"
+                echo "  cursor-agent, então basta restaurar 'agent' depois:"
+                echo "    ln -sf ~/.grok/bin/agent ~/.local/bin/agent"
+            fi
+            ;;
+        prime-agent)
+            if ai_is_windows; then
+                # O release não publica binário Windows; o tarball npm do
+                # mesmo release é Node puro e roda.
+                echo "  Instale: npm install -g <tarball .tgz do release mais recente>"
+                echo "  (em github.com/PrimeIntellect-ai/prime-agent/releases —"
+                echo "   não há binário Windows, mas o .tgz é Node puro)"
+            else
+                echo "  Instale: curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh"
+            fi
+            ;;
+        muse)
+            if ai_is_windows; then
+                # O Meta só entrega macOS/Linux; no Windows o caminho é WSL.
+                echo "  Instale (no WSL): curl -fsSL https://dev.meta.ai/install.sh | bash"
+                echo "  Não há build nativo Windows. Para o launcher enxergar,"
+                echo "  crie ~/.local/bin/muse.cmd chamando o muse do WSL."
+            else
+                echo "  Instale: curl -fsSL https://api.meta.ai/muse-launcher.sh | bash"
+            fi
+            ;;
+        ollama)
+            if ai_is_windows; then
+                echo "  Instale: winget install Ollama.Ollama"
+            else
+                cli_install_hint ollama
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 AI_PYTHON_CACHE=""
 ai_python() {
     if [[ -n "$AI_PYTHON_CACHE" ]]; then
@@ -2906,7 +3020,7 @@ check_installed() {
 
 # ── opencode ─────────────────────────────────────────────
 opencode_install_hint() {
-    echo "  Instale: brew install anomalyco/tap/opencode"
+    cli_install_hint opencode
     echo "  Depois:  ai oc auth login"
 }
 
@@ -3036,8 +3150,7 @@ devin_launch() {
 # exec direto nos subcomandos (pulando launch()), então o aviso precisa
 # existir nos dois caminhos sem duplicar a URL.
 omp_install_hint() {
-    echo "  Instale: brew install can1357/tap/omp"
-    echo "  Ou:      curl -fsSL https://omp.sh/install | sh"
+    cli_install_hint omp
 }
 
 # Aplica OMP_TUNE via 'omp config set'. Idempotente: rodar de novo não muda
@@ -3287,28 +3400,9 @@ launch() {
 
     if ! check_installed "$cmd"; then
         echo -e "${RED}Erro: ${cmd} não está instalado.${RESET}"
-        case "$cmd" in
-            claude) echo "  Instale: npm install -g @anthropic-ai/claude-code" ;;
-            codex)  echo "  Instale: npm install -g @openai/codex" ;;
-            gemini) echo "  Instale: sudo npm install -g @google/gemini-cli" ;;
-            agy)    echo "  Instale: curl -fsSL https://antigravity.google/cli/install.sh | bash" ;;
-            kimi)   echo "  Instale: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash" ;;
-            grok)   echo "  Instale: curl -fsSL https://x.ai/cli/install.sh | bash" ;;
-            deepcode) echo "  Instale: npm install -g @vegamo/deepcode-cli" ;;
-            qodercli) echo "  Instale: npm install -g @qoder-ai/qodercli" ;;
-            omp)    omp_install_hint ;;
-            prime-agent)
-                echo "  Instale: curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh"
-                ;;
-            devin)  echo "  Instale: curl -fsSL https://cli.devin.ai/install.sh | bash" ;;
-            cursor-agent)
-                echo "  Instale: curl https://cursor.com/install -fsS | bash"
-                echo -e "  ${YELLOW}Aviso:${RESET} o instalador sobrescreve ~/.local/bin/agent"
-                echo "  (que aqui aponta para o Grok). O launcher usa o symlink"
-                echo "  cursor-agent, então basta restaurar 'agent' depois:"
-                echo "    ln -sf ~/.grok/bin/agent ~/.local/bin/agent"
-                ;;
-        esac
+        # `|| true`: CLI sem hint cadastrado não pode derrubar o set -e antes
+        # do exit 1, que é a mensagem que importa.
+        cli_install_hint "$cmd" || true
         exit 1
     fi
 
@@ -3553,8 +3647,7 @@ ollama_local_run() {
 
     if ! check_installed ollama; then
         echo -e "${RED}Erro: ollama não está instalado (necessário para o modo local).${RESET}"
-        echo "  Instale: brew install ollama"
-        echo "  Ou:      curl -fsSL https://ollama.com/install.sh | sh"
+        cli_install_hint ollama
         return 1
     fi
 
@@ -3603,7 +3696,7 @@ ollama_dispatch() {
         login|signin)
             if ! check_installed ollama; then
                 echo -e "${RED}Erro: ollama não está instalado.${RESET}"
-                echo "  Instale: brew install ollama"
+                cli_install_hint ollama
                 return 1
             fi
             echo -e "${DIM}Login por browser — habilita o REPL nativo 'ollama run' com modelos cloud.${RESET}"
@@ -5912,7 +6005,7 @@ elif [[ ${1:-} == "muse" || ${1:-} == "mu" || ${1:-} == "muse-code" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     if ! check_installed muse; then
         echo -e "${RED}Erro: Muse CLI não está instalada.${RESET}"
-        echo "  Instale: curl -fsSL https://api.meta.ai/muse-launcher.sh | bash"
+        cli_install_hint muse
         exit 1
     fi
     # Subcomandos verbatim do muse (login/logout/auth/update) passam direto
@@ -5928,7 +6021,7 @@ elif [[ ${1:-} == "devin" || ${1:-} == "dv" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     if ! check_installed devin; then
         echo -e "${RED}Erro: Devin CLI não está instalada.${RESET}"
-        echo "  Instale: curl -fsSL https://cli.devin.ai/install.sh | bash"
+        cli_install_hint devin
         exit 1
     fi
     # Subcomandos do devin (auth, mcp, models, doctor, update, cloud…) passam
@@ -6051,7 +6144,7 @@ elif [[ ${1:-} == "prime" || ${1:-} == "pa" || ${1:-} == "prime-agent" ]]; then
     shift
     if ! check_installed prime-agent; then
         echo -e "${RED}Erro: prime-agent não está instalado.${RESET}"
-        echo "  Instale: curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh"
+        cli_install_hint prime-agent
         exit 1
     fi
     # TUI de sessão persistente, sem prompt one-shot: subcomandos e flags
@@ -6441,10 +6534,10 @@ case $choice in
        launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
    16) enter_repo_if_needed
        opencode_launch ;;
-   17) if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; echo "  Instale: curl -fsSL https://api.meta.ai/muse-launcher.sh | bash"; continue; fi
+   17) if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; cli_install_hint muse; continue; fi
        enter_repo_if_needed
        launch "Muse Code" muse "" MUSE_CODE_FLAGS ;;
-   18) if ! check_installed devin; then echo -e "${RED}Erro: Devin CLI não instalada.${RESET}"; echo "  Instale: curl -fsSL https://cli.devin.ai/install.sh | bash"; continue; fi
+   18) if ! check_installed devin; then echo -e "${RED}Erro: Devin CLI não instalada.${RESET}"; cli_install_hint devin; continue; fi
        enter_repo_if_needed
        devin_launch ;;
    19) ollama_dispatch || true ;;
