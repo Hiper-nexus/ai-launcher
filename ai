@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.52.1"
+AI_LAUNCHER_VERSION="1.52.2"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -432,6 +432,46 @@ ai_python() {
 }
 
 ai_has_python() { ai_python >/dev/null 2>&1; }
+
+# Executa uma CLI pelo nome mesmo com o PATH da janela desatualizado.
+#
+# check_installed() e win_bin_path() encontram o binário pelos diretórios
+# conhecidos, mas `exec devin` pelo nome cru falha numa janela cujo PATH foi
+# gravado antes do instalador ("exec: devin: not found") — detecção e exec
+# têm que usar o MESMO caminho. Wrapper .cmd/.bat precisa do cmd.exe; .ps1,
+# do powershell.exe; .exe execa direto.
+exec_cli() {
+    local cmd="$1"
+    shift
+    if command -v "$cmd" >/dev/null 2>&1; then
+        exec "$cmd" "$@"
+    fi
+    local p
+    p=$(win_bin_path "$cmd" 2>/dev/null) || {
+        # :- porque este caminho roda antes de o launcher definir as cores
+        # (e em testes sob set -u).
+        echo -e "${RED:-}Erro: ${cmd} não está instalado.${RESET:-}" >&2
+        return 127
+    }
+    # cmd.exe/powershell.exe não entendem caminho POSIX (/c/...): com a barra
+    # na frente eles leem como switch e caem num prompt interativo — que, com
+    # o stdin herdado, espera para sempre. A conversão não pode depender de
+    # cygpath no PATH: este caminho roda justamente quando o PATH está ruim.
+    # E não dá para converter na mão: /tmp/... não é unidade, é mount do
+    # cygwin para o Temp do Windows.
+    local w="$p"
+    if [[ -x /usr/bin/cygpath ]]; then
+        w=$(/usr/bin/cygpath -w "$p" 2>/dev/null) || w="$p"
+    fi
+    case "$p" in
+        # //c e não /c: o runtime MSYS do Git Bash converte argumento começado
+        # em / para caminho Windows (/c vira "C:"), e o cmd.exe sem o switch
+        # abre prompt interativo. //c escapa a conversão e chega como /c.
+        *.cmd|*.bat) exec cmd.exe //c "$w" "$@" ;;
+        *.ps1)       exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$w" "$@" ;;
+        *)           exec "$p" "$@" ;;
+    esac
+}
 
 # São ~40 chamadas a `python3` espalhadas pelo script. Em vez de reescrever
 # cada uma, o nome é interceptado aqui e cai no interpretador que de fato
@@ -3181,11 +3221,11 @@ devin_launch() {
         local prompt="$*"
         echo -e "${GREEN}Iniciando Devin CLI:${RESET} devin ${flags[*]+"${flags[*]}"} -p -- \"${prompt}\""
         echo ""
-        exec devin ${flags[@]+"${flags[@]}"} -p -- "$prompt"
+        exec_cli devin ${flags[@]+"${flags[@]}"} -p -- "$prompt"
     else
         echo -e "${GREEN}Iniciando Devin CLI:${RESET} devin ${flags[*]+"${flags[*]}"}"
         echo ""
-        exec devin ${flags[@]+"${flags[@]}"}
+        exec_cli devin ${flags[@]+"${flags[@]}"}
     fi
 }
 
@@ -3470,15 +3510,15 @@ launch() {
         fi
         echo ""
         if [[ -n "$prompt_flag" ]]; then
-            exec "$cmd" ${prompt_flags[@]+"${prompt_flags[@]}"} "$prompt_flag" "$prompt"
+            exec_cli "$cmd" ${prompt_flags[@]+"${prompt_flags[@]}"} "$prompt_flag" "$prompt"
         else
-            exec "$cmd" ${prompt_flags[@]+"${prompt_flags[@]}"} -- "$prompt"
+            exec_cli "$cmd" ${prompt_flags[@]+"${prompt_flags[@]}"} -- "$prompt"
         fi
     else
         echo -e "${GREEN}Iniciando ${name}:${RESET} ${cmd} ${final_flags[*]+"${final_flags[*]}"}"
 
         echo ""
-        exec "$cmd" ${final_flags[@]+"${final_flags[@]}"}
+        exec_cli "$cmd" ${final_flags[@]+"${final_flags[@]}"}
     fi
 }
 
@@ -3710,7 +3750,7 @@ ollama_local_run() {
     save_history "Ollama local [${model}]"
     echo -e "${GREEN}Ollama local:${RESET} ${model}"
     echo ""
-    exec ollama run "$model" ${1+"$@"}
+    exec_cli ollama run "$model" ${1+"$@"}
 }
 
 ollama_status_icon() {
@@ -3743,7 +3783,7 @@ ollama_dispatch() {
                 return 1
             fi
             echo -e "${DIM}Login por browser — habilita o REPL nativo 'ollama run' com modelos cloud.${RESET}"
-            exec ollama signin
+            exec_cli ollama signin
             ;;
         local)
             shift || true
@@ -6054,7 +6094,7 @@ elif [[ ${1:-} == "muse" || ${1:-} == "mu" || ${1:-} == "muse-code" ]]; then
     # Subcomandos verbatim do muse (login/logout/auth/update) passam direto
     case "${1:-}" in
         login|logout|auth|update|--help|-h|--version|-v)
-            exec muse "$@" ;;
+            exec_cli muse "$@" ;;
     esac
     enter_repo_if_needed
     launch "Muse Code" muse "" MUSE_CODE_FLAGS "$@"
@@ -6076,7 +6116,7 @@ elif [[ ${1:-} == "devin" || ${1:-} == "dv" ]]; then
     case "${1:-}" in
         auth|mcp|models|doctor|rules|skills|plugins|cloud|desktop|list|ls|rm|ssh| \
         forward|update|version|migrate|sandbox|setup|uninstall|acp|help|--help|-h|--version|-V|-v)
-            exec devin "$@" ;;
+            exec_cli devin "$@" ;;
     esac
     # --via é do launcher (troca de provider), e o devin tem login e catálogo
     # próprios. Sem esta guarda o provider era ignorado em silêncio mas ia

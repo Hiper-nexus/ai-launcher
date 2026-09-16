@@ -118,6 +118,31 @@ achado=$(HOME="$STALE_HOME" PATH="/nonexistent" win_bin_path agy) ||
 [[ "$achado" == "${STALE_HOME}/AppData/Local/agy/bin/agy.exe" ]] ||
     fail "fallback devolveu caminho inesperado: ${achado}"
 
+# ── exec_cli ─────────────────────────────────────────────
+# O bug que este bloco trava: check_installed achava o binário pelo fallback,
+# mas o exec pelo nome cru morria com "devin: not found" em janela de PATH
+# velho. Detecção e exec têm que usar o mesmo caminho.
+# O fake mora num dos diretórios CONHECIDOS (o fallback não varre o disco
+# inteiro, só onde os instaladores costumam deixar o binário).
+EXEC_HOME="${TMP_DIR}/exec-home"
+mkdir -p "${EXEC_HOME}/AppData/Local/agy/bin"
+printf '@echo hi-from-cmd %%*\r\n' > "${EXEC_HOME}/AppData/Local/agy/bin/agy.cmd"
+
+AI_WIN_EXTRA_DIRS=()
+saida=$(HOME="$EXEC_HOME" PATH="/nonexistent:/c/WINDOWS/system32" exec_cli agy um dois </dev/null) ||
+    fail "exec_cli não resolveu wrapper .cmd fora do PATH"
+[[ "$saida" == "hi-from-cmd um dois" ]] ||
+    fail "exec_cli não passou argumentos pelo cmd.exe: '$saida'"
+
+# Nome no PATH continua executando direto, sem passar pelo fallback.
+saida=$(exec_cli printf 'alo') || fail "exec_cli falhou para comando no PATH"
+[[ "$saida" == "alo" ]] || fail "exec_cli corrompeu saída do comando no PATH"
+
+# CLI inexistente: 127 e mensagem, não um exec vazio.
+if ( exec_cli cli-fantasma >/dev/null 2>&1 ); then
+    fail "exec_cli executou CLI inexistente"
+fi
+
 # ── secure_file ──────────────────────────────────────────
 secret="${TMP_DIR}/providers.conf"
 printf 'sakana=chave-de-teste\n' > "$secret"
