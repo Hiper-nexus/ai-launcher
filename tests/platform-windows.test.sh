@@ -133,4 +133,31 @@ fi
 secure_file "${TMP_DIR}/nao-existe" || fail "secure_file falhou em caminho ausente"
 secure_dir "${TMP_DIR}/nao-existe-dir" || fail "secure_dir falhou em caminho ausente"
 
+# ── cli_install_hint ─────────────────────────────────────
+# Os hints eram todos macOS/Linux. No Windows mandavam rodar `brew`, que não
+# existe lá, ou `curl | bash`, que baixa instalador de binário Linux.
+: "${YELLOW:=}" "${RESET:=}"
+
+CLIS_COM_HINT=(claude codex gemini deepcode qodercli kimi grok opencode omp
+               agy devin cursor-agent prime-agent muse ollama)
+
+for cli in "${CLIS_COM_HINT[@]}"; do
+    hint=$(cli_install_hint "$cli") ||
+        fail "cli_install_hint não tem entrada para $cli"
+    [[ -n "$hint" ]] || fail "hint vazio para $cli"
+
+    if [[ "$(ai_os)" == "windows" ]]; then
+        if grep -q "brew " <<<"$hint"; then
+            fail "hint de $cli manda usar brew no Windows: $hint"
+        fi
+        if grep -qE "curl .*\| *(bash|sh)" <<<"$hint"; then
+            fail "hint de $cli manda usar curl | bash no Windows: $hint"
+        fi
+    fi
+done
+
+if cli_install_hint cli-que-nao-existe >/dev/null 2>&1; then
+    fail "cli_install_hint inventou hint para CLI desconhecida"
+fi
+
 echo "PASS: camada de plataforma"
