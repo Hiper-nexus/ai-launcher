@@ -78,3 +78,29 @@ assert_secret_file() {
     fi
     return 0
 }
+
+# Carrega o cofre de segredos (secret_has/get/set/delete) e as constantes de
+# conta que ele usa. Separado de ai_platform_load porque as constantes derivam
+# de $HOME: o teste define HOME primeiro para o cofre cair dentro do TMP_DIR.
+ai_secrets_load() {
+    local root="${1:-${ROOT:-}}"
+    [[ -n "$root" ]] || { echo "ai_secrets_load: ROOT não definido" >&2; return 1; }
+
+    local lib
+    lib=$(mktemp) || return 1
+    # O `q` fecha no PRIMEIRO fim de range. "# ── Contas Claude" aparece duas
+    # vezes no arquivo; sem ele o sed reabre o range na segunda ocorrência e
+    # despeja o launcher inteiro — e sourcear isso executa o dispatch.
+    sed -n '/^# ── Contas Claude/,/^# ── GLM (Z.ai)/p; /^# ── GLM (Z.ai)/q' "${root}/ai" \
+        | sed '$d' > "$lib"
+
+    if ! grep -q '^secret_set()' "$lib"; then
+        rm -f "$lib"
+        echo "ai_secrets_load: não achei o cofre de segredos em ${root}/ai" >&2
+        return 1
+    fi
+
+    # shellcheck source=/dev/null
+    source "$lib"
+    rm -f "$lib"
+}
