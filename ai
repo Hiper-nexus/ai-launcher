@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.51.0"
+AI_LAUNCHER_VERSION="1.52.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -357,10 +357,11 @@ cli_install_hint() {
             ;;
         muse)
             if ai_is_windows; then
-                # O Meta só entrega macOS/Linux; no Windows o caminho é WSL.
-                echo "  Instale (no WSL): curl -fsSL https://dev.meta.ai/install.sh | bash"
-                echo "  Não há build nativo Windows. Para o launcher enxergar,"
-                echo "  crie ~/.local/bin/muse.cmd chamando o muse do WSL."
+                # Nativo desde 09/2026 (x64 e ARM64, sem admin). Antes disso o
+                # único caminho era WSL — se encontrar doc antigo dizendo isso,
+                # venceu: o instalador PowerShell é o certo hoje.
+                echo "  Instale: irm https://dev.meta.ai/install.ps1 | iex"
+                echo "  (no PowerShell; depois reabra o terminal para o PATH valer)"
             else
                 echo "  Instale: curl -fsSL https://api.meta.ai/muse-launcher.sh | bash"
             fi
@@ -787,6 +788,16 @@ provider_setup_env() {
         echo -e "${RED}Provider desconhecido: ${provider}${RESET}"
         return 1
     fi
+
+    # Override de endpoint por provider: env AI_<PROVIDER>_BASE_URL → slot
+    # '<provider>-base-url' no providers.conf. Serve para rotear um provider
+    # por um plano que hospeda o modelo dele em endpoint próprio — o Token
+    # Plan da Alibaba, por exemplo, serve deepseek-v4-pro em
+    # <host>/apps/anthropic, aceitando a key do plano no lugar da key DeepSeek.
+    local override_var="AI_$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')_BASE_URL"
+    local override="${!override_var:-}"
+    [[ -z "$override" ]] && override=$(provider_load_key "${provider}-base-url" 2>/dev/null || true)
+    [[ -n "$override" ]] && base_url="$override"
 
     local api_key
     api_key=$(provider_load_key "$provider") || true

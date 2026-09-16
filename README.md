@@ -553,6 +553,7 @@ No Windows os comandos são outros — nenhum `brew`, e os instaladores `curl | 
 irm https://antigravity.google/cli/install.ps1 | iex            # Antigravity
 irm https://static.devin.ai/cli/setup.ps1 | iex                 # Devin CLI
 irm 'https://cursor.com/install?win32=true' | iex               # Cursor Agent
+irm https://dev.meta.ai/install.ps1 | iex                       # Muse Code (nativo)
 winget install Ollama.Ollama                                    # Ollama
 ```
 
@@ -572,7 +573,8 @@ Não precisa decorar: quando uma CLI falta, o launcher imprime o comando certo *
 Duas CLIs não têm build nativo Windows:
 
 - **Prime Agent** — o release não publica binário Windows, mas o `.tgz` do mesmo release é Node puro: `npm install -g <tarball do release>` (veja [releases](https://github.com/PrimeIntellect-ai/prime-agent/releases)).
-- **Muse Code** — só macOS/Linux. No Windows é via WSL (`curl -fsSL https://dev.meta.ai/install.sh | bash` dentro do WSL) e, para o launcher enxergar, um `~/.local/bin/muse.cmd` que chama o `muse` do WSL.
+
+Muse Code tinha essa limitação até 09/2026 e agora é nativo (x64 e ARM64, sem admin) — está no bloco PowerShell acima.
 
 Depois, autentique cada ferramenta usando o fluxo nativo dela (`claude`, `codex` e `gemini`). O launcher não valida nem exige variáveis como `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` ou `GEMINI_API_KEY`.
 
