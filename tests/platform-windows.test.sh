@@ -18,6 +18,19 @@ fail() {
 # shellcheck source=helpers/platform.sh
 source "${ROOT}/tests/helpers/platform.sh"
 
+# Arquivo Windows-only: o que ele exercita (wrapper .cmd via cmd.exe, icacls,
+# caminhos do perfil do Windows) não existe em macOS/Linux. Sem esta guarda,
+# essas asserções falham por AMBIENTE e não por regressão — o que fazia a
+# suíte reprovar fora do Windows e inutilizava o runner como sinal de CI.
+#
+# Rodar só no Windows é o escopo correto deste arquivo. Nota: as partes
+# independentes de plataforma (classificação do ai_os por OSTYPE, por
+# exemplo) ficam sem cobertura fora do Windows por causa desta guarda.
+if [[ "$(ai_os)" != "windows" ]]; then
+    echo "  (pulado: $(ai_os) não é Windows; este arquivo testa o Windows)"
+    exit 0
+fi
+
 # ── ai_os ────────────────────────────────────────────────
 case "$(ai_os)" in
     macos|windows|linux|wsl|unknown) ;;

@@ -1,0 +1,35 @@
+# ── Segredos ──────────────────────────────────────────────
+# Este repositório é PÚBLICO. O launcher guarda as API keys fora dele
+# (~/.local/share/ai-launcher/providers.conf, chmod 600), mas um `cp` acidental
+# para dentro do repo é exatamente o tipo de erro que não tem volta — uma key
+# commitada fica no histórico do git para sempre, mesmo depois de apagada.
+providers.conf
+*-providers.conf
+usage-cache.json
+
+# ── Credenciais e config local ────────────────────────────
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+credentials.json
+
+# ── Estado de ferramentas ─────────────────────────────────
+.impeccable/
+.agent/*
+!.agent/skills/
+!.agent/workflows/
+
+# ── Backups e temporários ─────────────────────────────────
+*.bak
+*.orig
+*.rej
+*~
+*.tmp
+*.swp
+
+# ── Sistema ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db

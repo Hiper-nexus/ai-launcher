@@ -7,7 +7,7 @@
 # Bash 4+ é necessário (declare -A). macOS vem com bash 3.2.
 # Se detectar versão antiga, tenta re-exec com bash do Homebrew.
 if (( BASH_VERSINFO[0] < 4 )); then
-    for _new_bash in /opt/homebrew/bin/bash /usr/local/bin/bash /opt/local/bin/bash; do
+    for _new_bash in "${HOME}/.local/bin/bash" /opt/homebrew/bin/bash /usr/local/bin/bash /opt/local/bin/bash; do
         if [[ -x "$_new_bash" ]] && "$_new_bash" -c '(( BASH_VERSINFO[0] >= 4 ))' 2>/dev/null; then
             exec "$_new_bash" "$0" "$@"
         fi
@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.52.3"
+AI_LAUNCHER_VERSION="1.53.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -3044,7 +3044,10 @@ menu_group() {
 # para a coluna do menu ficar legível.
 clean_version() {
     local raw="$1" num
-    num=$(printf '%s' "$raw" | grep -oE '[0-9]+\.[0-9]+[0-9A-Za-z.\-]*' | head -1)
+    # || true: sem match o grep sai 1 e, sob set -e, a atribuição aborta o
+    # script ANTES do fallback ${num:-$raw} — que existe justamente para o
+    # caso de não conseguir extrair. Ver get_version() para o mesmo padrão.
+    num=$(printf '%s' "$raw" | grep -oE '[0-9]+\.[0-9]+[0-9A-Za-z.\-]*' | head -1) || true
     printf '%s' "${num:-$raw}"
 }
 
@@ -3053,7 +3056,12 @@ get_version() {
     # Cache quente → não re-roda `--version` (caro: gemini ~4s, kimi ~3s).
     if [[ -f "$AI_VERSION_CACHE" ]] && \
        [[ -n "$(find "$AI_VERSION_CACHE" -mmin "-$AI_VERSION_TTL_MIN" 2>/dev/null)" ]]; then
-        cached=$(grep -E "^${cmd}=" "$AI_VERSION_CACHE" 2>/dev/null | head -1)
+        # || true: cache FRESCO sem a chave faz o grep sair 1 e, sob set -e,
+        # a atribuição derruba o script no meio da renderização do menu (sem
+        # mensagem). Acontece quando a lista de cmds e a do menu divergem —
+        # já aconteceu no caso do 'muse' — ou quando se edita o script e roda
+        # de novo dentro do TTL. Tem que cair no '-' da linha de baixo.
+        cached=$(grep -E "^${cmd}=" "$AI_VERSION_CACHE" 2>/dev/null | head -1) || true
         if [[ -n "$cached" ]]; then
             printf '%s' "${cached#*=}"
             return
@@ -5378,8 +5386,15 @@ Geral:
   --config         Abre este script para editar
   --history        Mostra histórico de uso
   timeout <s> -- <cmd>  Executa comando com timeout portátil
+  ask <frase>      Escolhe a CLI pela frase (Jev/TypeSafe) e lança
+  jev key          Salva a API key do TypeSafe
+  jev status       Mostra key, modelo e confiança mínima
 Exemplos:
   ai                              Menu interativo
+  ai ask "refatorar repo grande sem gastar"   Jev escolhe a CLI
+  ai ask --force "..."            Idem, ignorando o threshold de confiança
+  ai "revisar PR grande e barato" Frase solta também roteia (se houver key)
+  AI_JEV_MIN_CONFIDENCE=0.4 ai ask "..."   Baixa o rigor da decisão
   ai c                            Claude Code
   ai c fast                       Claude Sonnet rápido
   ai c full "refatora tudo"       Opus max effort com prompt
@@ -5884,7 +5899,312 @@ enter_repo_if_needed() {
     fi
 }
 
-if [[ ${1:-} == "timeout" ]]; then
+# ── Jev / TypeSafe (roteamento por linguagem natural) ────
+# POST https://api.typesafe.ai/v1/systemone com Bearer token.
+#
+# O Jev NÃO é um modelo de conversa: ele devolve julgamento tipado — `choice`
+# (escolhe 1 de um conjunto fechado, com distribuição de probabilidade e
+# confidence), `noul` (probabilidade de sim) e `score` (posição numa escala).
+# Por isso ele não entra como CLI de chat e sim como roteador: a decisão
+# "qual das 32 opções do menu servir para esta frase?" é um `choice` puro.
+#
+# Custo medido: ~$0,042/1M tokens de INPUT e output grátis. Uma rota manda
+# ~600 tokens de estado, ou seja ~$0,000025 por chamada.
+#
+# Perguntas independentes vão na MESMA requisição (a doc mede 12,2x mais
+# barato e 10x mais rápido que perguntar em sequência).
+JEV_HOST="${AI_JEV_HOST:-https://api.typesafe.ai}"
+JEV_MODEL="${AI_JEV_MODEL:-jev-latest}"
+# Abaixo disso o roteamento cai no menu numerado de sempre. O certo é calibrar
+# com uso real: a doc avisa que threshold se avalia nos SEUS dados.
+JEV_MIN_CONFIDENCE="${AI_JEV_MIN_CONFIDENCE:-0.55}"
+
+# Rótulos e rubricas do `choice`. O slug tem que casar com um alias do
+# dispatch (ex.: 'deepseek' → ai ds). 'nenhum' é a saída de não-correspondência
+# que a doc exige: sem ela o modelo é forçado a escolher entre opções que não
+# servem.
+JEV_ROUTE_CRITERIA='{
+  "claude":     "Tarefa genérica de programação no dia a dia, quando não há motivo para economizar: refatoração ampla, mexer em vários arquivos, raciocínio longo, trabalho que se beneficia do modelo mais forte e do contexto de 1M.",
+  "deepseek":   "Tarefa de programação de bom tamanho em que custo importa: contexto grande, muitos arquivos, trabalho repetitivo ou volumoso. Bom custo-benefício para o trabalho pesado do dia a dia.",
+  "glm":        "Tarefa de programação em que custo importa muito e o contexto é grande, ou quando o usuário pediu explicitamente algo barato/rápido para não gastar.",
+  "muse-spark": "Tarefa que exige raciocínio passo a passo mais longo e exploração de alternativas, ou quando o usuário citou Muse ou Meta.",
+  "sakana":     "Tarefa que o usuário associou a Fugu ou Sakana, ou quando pediu explicitamente o Codex/Fugu.",
+  "codex":      "Tarefa em que o usuário citou Codex, GPT, OpenAI, ou pediu explicitamente o Codex.",
+  "gemini":     "Tarefa em que o usuário citou Gemini, Google, ou pediu contexto muito longo com busca.",
+  "kimi":       "Tarefa em que o usuário citou Kimi ou Moonshot.",
+  "grok":       "Tarefa em que o usuário citou Grok ou xAI.",
+  "deepcode":   "Tarefa em que o usuário citou DeepCode.",
+  "agy":        "Tarefa em que o usuário citou Antigravity.",
+  "qoder":      "Tarefa em que o usuário citou Qoder.",
+  "cursor":     "Tarefa em que o usuário citou Cursor.",
+  "omp":        "Tarefa em que o usuário citou omp ou oh-my-pi.",
+  "prime":      "Tarefa em que o usuário citou prime-agent.",
+  "opencode":   "Tarefa em que o usuário citou opencode.",
+  "muse":       "Tarefa em que o usuário pediu a CLI do Muse Code (não o Muse Spark dentro do Claude Code).",
+  "devin":      "Tarefa delegada de ponta a ponta, que pode rodar sozinha e voltar depois com o resultado pronto — trabalho longo e autônomo, não conversa iterativa.",
+  "ollama":     "Tarefa local/offline, ou quando o usuário citou Ollama ou rodar na própria máquina.",
+  "hf":         "Tarefa em que o usuário pediu explicitamente o endpoint sem censura da Hugging Face, ou o modelo Qwen3.8 uncensored.",
+  "fl":         "Tarefa em que o usuário citou Featherless.",
+  "qwen":       "Tarefa em que o usuário citou Qwen ou Alibaba.",
+  "ab":         "Tarefa em que o usuário pediu explicitamente um modelo sem censura / abliterated (GLM-5.3 abliterated).",
+  "nenhum":     "A frase não descreve uma tarefa de programação a ser executada por uma CLI de agente, OU é vaga demais para escolher com segurança, OU não é pedido nenhum (saudação, agradecimento, pergunta sobre o próprio launcher)."
+}'
+
+jev_api_key() {
+    local k="${TYPESAFE_API_KEY:-}"
+    [[ -z "$k" ]] && k=$(provider_load_key typesafe 2>/dev/null || true)
+    printf '%s' "$k"
+}
+
+jev_require_key() {
+    local k; k=$(jev_api_key)
+    if [[ -z "$k" ]]; then
+        echo -e "${RED}Erro: nenhuma API key do TypeSafe (Jev).${RESET}" >&2
+        echo "  Pegue em: https://typesafe.ai (use a env TYPESAFE_API_KEY)" >&2
+        echo "  Depois:   ai jev key" >&2
+        return 1
+    fi
+    printf '%s' "$k"
+}
+
+jev_save_key() {
+    local key="${1:-}"
+    if [[ -z "$key" && -t 0 ]]; then
+        read -rsp "$(echo -e "  ${BOLD}API key do TypeSafe (Jev):${RESET} ")" key || true; echo ""
+    fi
+    [[ -z "$key" ]] && { echo -e "${RED}Erro: key vazia.${RESET}" >&2; return 1; }
+    provider_save_key typesafe "$key" || return 1
+    echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+}
+
+jev_status_icon() {
+    [[ -n "$(jev_api_key)" ]] && echo -e "${GREEN}✔${RESET}" || echo -e "${YELLOW}✗ sem key${RESET}"
+}
+
+# jev_route <frase> → imprime {"choice":..,"confidence":..,"probabilities":{..}}
+# e devolve 1 se a API falhar; a key vai por env (nunca argv, que aparece no ps).
+jev_route() {
+    local frase="$1"
+    local key; key=$(jev_require_key) || return 1
+    require_python || return 1
+
+    local pyfile; pyfile=$(mktemp -t ai-jev.XXXXXX) || return 1
+    trap "rm -f '$pyfile'" RETURN
+    cat > "$pyfile" <<'PY'
+import json, os, sys, time, urllib.request, urllib.error
+
+URL   = os.environ["JEV_URLV"].rstrip("/") + "/v1/systemone"
+KEY   = os.environ["JEV_KEY"]
+MODEL = os.environ["JEV_MODELV"]
+FRASE = os.environ["JEV_FRASE"]
+
+body = json.dumps({
+    "model": MODEL,
+    "state": {"pedido_do_usuario": FRASE},
+    "questions": {
+        "destino": {
+            "type": "choice",
+            "instructions": (
+                "O pedido do usuário deve ser executado por uma CLI de agente "
+                "de programação. Escolha a CLI mais adequada para ESTE pedido. "
+                "Pese: custo, tamanho de contexto necessário, profundidade de "
+                "raciocínio exigida, e se o trabalho é autônomo de ponta a "
+                "ponta ou uma conversa iterativa. Se o pedido já cita uma "
+                "ferramenta pelo nome, escolha a opção correspondente a ela."
+            ),
+            "criteria": json.loads(os.environ["JEV_CRITERIA"]),
+        }
+    },
+}).encode()
+
+req = urllib.request.Request(URL, data=body, headers={
+    "Authorization": "Bearer " + KEY,
+    "Content-Type": "application/json",
+})
+
+# A doc manda retentar 429/529 com backoff exponencial (os SDKs oficiais fazem
+# isso sozinhos). 503 model_unavailable entra junto: na prática o serviço
+# devolve ele e volta sozinho. Sem isto um pico de tráfego vira "não roteia".
+RETENTAVEIS = {429, 503, 529}
+TENTATIVAS  = int(os.environ.get("JEV_TENTATIVAS", "3"))
+ESPERA      = 0.8   # 0.8s, 1.6s → ~2,4s no pior caso
+
+d = None
+ultimo_erro = None
+for tentativa in range(TENTATIVAS):
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            d = json.load(r)
+        break
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:200].replace("\n", " ")
+        ultimo_erro = f"HTTP {e.code}: {detail}"
+        if e.code not in RETENTAVEIS or tentativa == TENTATIVAS - 1:
+            break
+        time.sleep(ESPERA * (2 ** tentativa))
+    except Exception as e:
+        ultimo_erro = str(e)
+        # erro de rede (DNS, refused, timeout) também vale uma retentativa
+        if tentativa == TENTATIVAS - 1:
+            break
+        time.sleep(ESPERA * (2 ** tentativa))
+
+if d is None:
+    print(f"Jev {ultimo_erro}", file=sys.stderr)
+    sys.exit(2)
+
+a = (d.get("answers") or {}).get("destino") or {}
+print(json.dumps({
+    "choice":        a.get("choice", ""),
+    "confidence":    a.get("confidence", 0.0),
+    "probabilities": a.get("probabilities", {}),
+    "model":         d.get("model", ""),
+}))
+PY
+    JEV_URLV="$JEV_HOST" JEV_KEY="$key" JEV_MODELV="$JEV_MODEL" \
+        JEV_FRASE="$frase" JEV_CRITERIA="$JEV_ROUTE_CRITERIA" \
+        python3 "$pyfile"
+}
+
+# Lê um campo da resposta do jev_route. Sem isso cada leitura viraria um
+# python3 novo; aqui ainda é um por campo, mas o parsing fica num lugar só.
+_jev_field() {
+    python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get(sys.argv[1], "") or "")
+except Exception:
+    print("")
+' "$1"
+}
+
+# jev_explain <frase>: roteia e MOSTRA a decisão, sem lançar nada.
+# É a ferramenta de calibragem do threshold — `ai ask` executa, isto inspeciona.
+jev_explain() {
+    local frase="${*:-}"
+    if [[ -z "$frase" ]]; then
+        echo -e "${RED}Uso: ai jev route \"<frase>\"${RESET}" >&2
+        return 1
+    fi
+    jev_require_key >/dev/null || { jev_require_key >/dev/null; return 1; }
+
+    local out; out=$(jev_route "$frase") || return 1
+
+    python3 -c '
+import json, os, sys
+d = json.loads(sys.argv[1])
+frase = sys.argv[2]
+limiar = float(sys.argv[3])
+
+choice = d.get("choice") or "nenhum"
+conf   = d.get("confidence")
+probs  = d.get("probabilities") or {}
+modelo = d.get("model") or "?"
+
+DIM, RESET, BOLD = "\033[2m", "\033[0m", "\033[1m"
+GREEN, YELLOW, RED = "\033[32m", "\033[33m", "\033[31m"
+
+print(f"{BOLD}{choice}{RESET}  {DIM}(modelo {modelo}){RESET}")
+if conf is None:
+    print(f"  {DIM}confidence: ausente na resposta{RESET}")
+else:
+    pct = float(conf) * 100
+    if choice == "nenhum":
+        veredito, cor = "nao lanca (nenhum destino)", YELLOW
+    elif float(conf) >= limiar:
+        veredito, cor = f"acima do limiar ({limiar}) -> LANCA", GREEN
+    else:
+        veredito, cor = f"abaixo do limiar ({limiar}) -> nao lanca", RED
+    print(f"  confianca: {BOLD}{pct:.0f}%{RESET}  {cor}{veredito}{RESET}")
+
+    opcoes = sorted(((v, k) for k, v in probs.items()), reverse=True)
+    if opcoes:
+        top = "  ".join(f"{k} {v*100:.1f}%" for v, k in opcoes[:5])
+        print(f"  {DIM}distribuicao: {top}{RESET}")
+print(f"  {DIM}frase: {frase}{RESET}")
+' "$out" "$frase" "$JEV_MIN_CONFIDENCE"
+}
+
+# ask_dispatch <frase>: roteia e lança. Cai no menu quando a confiança é baixa,
+# quando a resposta é "nenhum", ou quando a API falha — ou seja, o pior caso é
+# igual ao comportamento de sempre, nunca pior.
+ask_dispatch() {
+    local frase="${*:-}"
+    if [[ -z "$frase" ]]; then
+        echo -e "${RED}Uso: ai ask \"<o que você quer fazer>\"${RESET}" >&2
+        return 1
+    fi
+
+    local key; key=$(jev_require_key) || return 1
+
+    local out; out=$(jev_route "$frase") || {
+        echo -e "${YELLOW}Jev indisponível — seguindo sem roteamento.${RESET}" >&2
+        return 1
+    }
+
+    local destino conf
+    destino=$(printf '%s' "$out" | _jev_field choice) || true
+    conf=$(printf '%s' "$out" | _jev_field confidence) || true
+    [[ -z "$destino" ]] && destino="nenhum"
+
+    if [[ "$destino" == "nenhum" ]]; then
+        echo -e "${YELLOW}Não veio um destino claro dessa frase.${RESET}"
+        echo -e "  ${DIM}Reescreva dizendo o que fazer, ou use o menu: ai${RESET}"
+        return 1
+    fi
+
+    # Confiança baixa: mostra a decisão, mas não executa sozinho. A doc frisa
+    # que confidence resume a distribuição, não permissão para agir.
+    local ok
+    ok=$(python3 -c '
+import sys
+try:
+    sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)
+except Exception:
+    sys.exit(1)
+' "$conf" "$JEV_MIN_CONFIDENCE" && echo yes || echo no)
+
+    local pct
+    pct=$(python3 -c '
+import sys
+try: print(f"{float(sys.argv[1])*100:.0f}%")
+except Exception: print("?")
+' "$conf")
+
+    if [[ "$ok" != "yes" ]]; then
+        echo -e "${YELLOW}Destino incerto:${RESET} ${BOLD}${destino}${RESET} ${DIM}(confiança ${pct}, abaixo de ${JEV_MIN_CONFIDENCE})${RESET}"
+        echo -e "  ${DIM}Confirme com: ai ask --force <mesma frase>${RESET}"
+        return 1
+    fi
+
+    echo -e "${GREEN}Jev →${RESET} ${BOLD}${destino}${RESET} ${DIM}(confiança ${pct})${RESET}"
+    # Relança o launcher com o alias resolvido: reaproveita todo o dispatch
+    # existente em vez de duplicar a montagem de flags de cada provider.
+    exec "${BASH_SOURCE[0]}" "$destino"
+}
+
+if [[ ${1:-} == "ask" ]]; then
+    shift
+    # --force ignora o threshold de confiança (útil para calibrar o valor).
+    if [[ "${1:-}" == "--force" ]]; then
+        JEV_MIN_CONFIDENCE=0
+        shift
+    fi
+    ask_dispatch "$@"
+    exit $?
+elif [[ ${1:-} == "jev" ]]; then
+    shift
+    case "${1:-}" in
+        key)   jev_save_key "${2:-}"; exit $? ;;
+        route) shift; jev_explain "$@"; exit $? ;;
+        ""|status)
+            echo -e "Jev (TypeSafe): $(jev_status_icon)"
+            echo -e "  ${DIM}modelo: ${JEV_MODEL}   confiança mínima: ${JEV_MIN_CONFIDENCE}"
+            echo -e "  host: ${JEV_HOST}${RESET}"
+            exit 0 ;;
+        *) echo "Use: ai jev key [<key>] | ai jev route \"<frase>\" | ai jev status"; exit 1 ;;
+    esac
+elif [[ ${1:-} == "timeout" ]]; then
     shift
     run_with_timeout "$@"
     exit $?
@@ -6482,6 +6802,15 @@ elif [[ ${1:-} == "repo" || ${1:-} == "repos" || ${1:-} == "r" ]]; then
     esac
     exit 0
 elif [[ -n ${1:-} ]]; then
+    # Fallback por linguagem natural: nenhum alias casou, então a frase vira
+    # uma pergunta de `choice` para o Jev. Só dispara se houver key configurada
+    # (quem nunca configurou não paga latência) e se o argumento não parecer
+    # uma flag (typo de flag não deve virar chamada de rede).
+    if [[ "${1:0:1}" != "-" && -n "$(jev_api_key)" ]]; then
+        ask_dispatch "$@" || true
+        # ask_dispatch só retorna se NÃO roteou; se roteou, o exec já assumiu.
+        exit 1
+    fi
     echo "Opção desconhecida: $1"
     echo "Use: ai --help"
     exit 1

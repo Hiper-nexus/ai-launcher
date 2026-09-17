@@ -521,6 +521,49 @@ Avisos:
 - Se uma conta ficar semanas sem uso, o refresh token pode expirar no servidor — refaça `/login` nela e `ai conta save` de novo.
 - Mecanismo não-oficial (mesma técnica de apps como o Claude Switcher): se a Anthropic mudar o formato do Keychain, ajuste o script.
 
+## Roteamento por linguagem natural (Jev / TypeSafe)
+
+Escolhe a CLI a partir de uma frase, em vez de você lembrar do alias.
+
+```bash
+ai ask "refatorar um repo grande sem gastar muito"   # → deepseek, e já lança
+ai ask --force "..."        # ignora o threshold de confiança
+ai "revisar PR grande"      # frase solta também roteia (só com key configurada)
+ai jev key                  # salva a API key do TypeSafe
+ai jev status               # key, modelo e confiança mínima
+```
+
+Como funciona: o pedido é um `choice` — "qual destas 24 CLIs serve para esta
+frase?" — enviado ao [Jev](https://docs.typesafe.ai), o modelo System One da
+TypeSafe. Ele não gera texto: devolve a opção escolhida, a distribuição de
+probabilidade e um `confidence`.
+
+Três propriedades que valem saber:
+
+- **O pior caso é o comportamento antigo.** Se o Jev não responder, devolver
+  `nenhum`, ou vier com confiança abaixo de `AI_JEV_MIN_CONFIDENCE` (default
+  `0.55`), o launcher não lança nada e você segue no fluxo de sempre. O
+  fallback implícito só existe se houver key configurada — sem key, `ai ocde`
+  continua sendo "opção desconhecida".
+- **Argumento que começa com `-` nunca vira chamada de rede**, para typo de
+  flag não gastar requisição.
+- **É barato**: input a $0,042/1M e output grátis. Uma rota manda ~600 tokens
+  de estado, ou seja ~$0,000025 por chamada.
+
+Configuração:
+
+| Variável | Default | Para quê |
+|---|---|---|
+| `TYPESAFE_API_KEY` | — | key (ou use `ai jev key`, que grava em `providers.conf`) |
+| `AI_JEV_MIN_CONFIDENCE` | `0.55` | abaixo disso não lança |
+| `AI_JEV_MODEL` | `jev-latest` | fixe uma versão se calibrou threshold nela |
+| `AI_JEV_HOST` | `https://api.typesafe.ai` | endpoint |
+
+O threshold default é um chute conservador. O certo é calibrar com uso real —
+a documentação da TypeSafe é explícita que confidence resume a distribuição da
+resposta, não autoriza agir. Use `ai ask --force` para ver a decisão crua e
+ajustar `AI_JEV_MIN_CONFIDENCE`.
+
 ## Features
 
 - Menu interativo com versão e status de instalação
@@ -530,6 +573,7 @@ Avisos:
 - Flags configuráveis no topo do script
 - Contas Claude múltiplas com troca sem logout (Keychain, macOS)
 - Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Ollama, LM Studio, LiteLLM)
+- Roteamento por linguagem natural via Jev/TypeSafe (`ai ask`)
 - Picker de repos conhecidos quando lançado fora de um repo git
 - Funciona em Linux e no macOS padrão
 
