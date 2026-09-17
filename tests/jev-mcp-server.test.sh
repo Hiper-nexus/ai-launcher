@@ -28,8 +28,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-PY_BIN="$(command -v python3)"
-[[ -n "$PY_BIN" ]] || { echo "FAIL: python3 não encontrado" >&2; exit 1; }
+# ai_python e não `command -v python3`: no Windows o App Execution Alias da
+# Microsoft Store atende por esse nome mesmo sem Python instalado e só falha
+# ao executar (exit 49) — era assim que a suíte inteira morria aqui.
+# shellcheck source=helpers/platform.sh
+source "${ROOT}/tests/helpers/platform.sh"
+PY_BIN="$(ai_python)"
+[[ -n "$PY_BIN" ]] || { echo "FAIL: nenhum Python utilizável" >&2; exit 1; }
+
+# Todo Python chamado aqui escreve UTF-8: no Windows o default é o encoding da
+# locale (cp1252) e um print com "→" ou acento vira UnicodeEncodeError no meio
+# do teste. O launcher faz o mesmo no wrapper python3().
+export PYTHONIOENCODING=utf-8
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok()   { echo "  ok: $*"; }
@@ -56,7 +66,7 @@ with open(os.environ["MOCK_PORT"], "w") as f:
 srv.serve_forever()
 PY
     MOCK_RESP="${TMP_DIR}/resp.json" MOCK_PORT="${TMP_DIR}/port" \
-        python3 "${TMP_DIR}/mock.py" &
+        "$PY_BIN" "${TMP_DIR}/mock.py" &
     MOCK_PID=$!
     local i
     for i in $(seq 1 50); do
@@ -77,6 +87,7 @@ mcp() {
     local host="${1:-}"; shift
     env -i \
         PATH="/usr/bin:/bin" \
+        PYTHONIOENCODING=utf-8 \
         TYPESAFE_API_KEY="${MCP_KEY-ts-de-teste}" \
         AI_JEV_HOST="$host" \
         AI_LAUNCHER_PATH="${MCP_LAUNCHER:-$ROOT/ai}" \
@@ -85,7 +96,7 @@ mcp() {
 
 # Extrai o campo .result.content[0].text da N-ésima resposta do servidor.
 campo() {
-    python3 -c '
+    "$PY_BIN" -c '
 import json, sys
 alvo = int(sys.argv[1]); campo = sys.argv[2]
 for linha in sys.stdin:
@@ -106,7 +117,7 @@ for linha in sys.stdin:
 echo "── 1. handshake initialize"
 saida=$(printf '%s\n' \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | mcp)
-echo "$saida" | python3 -c '
+echo "$saida" | "$PY_BIN" -c '
 import json,sys
 d = [json.loads(l) for l in sys.stdin if l.strip().startswith("{")][0]
 r = d["result"]
@@ -120,7 +131,7 @@ echo
 echo "── 2. tools/list expõe exatamente UMA tool"
 saida=$(printf '%s\n' \
     '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | mcp)
-n=$(echo "$saida" | python3 -c '
+n=$(echo "$saida" | "$PY_BIN" -c '
 import json,sys
 d=[json.loads(l) for l in sys.stdin if l.strip().startswith("{")][0]
 t=d["result"]["tools"]
@@ -200,7 +211,7 @@ with open(os.environ["MOCK_PORT"], "w") as f: f.write(str(srv.server_port))
 srv.serve_forever()
 PY
 rm -f "${TMP_DIR}/port"
-MOCK_PORT="${TMP_DIR}/port" python3 "${TMP_DIR}/auth.py" &
+MOCK_PORT="${TMP_DIR}/port" "$PY_BIN" "${TMP_DIR}/auth.py" &
 MOCK_PID=$!
 for _ in $(seq 1 50); do [[ -s "${TMP_DIR}/port" ]] && break; sleep 0.1; done
 saida=$(printf '%s\n' \

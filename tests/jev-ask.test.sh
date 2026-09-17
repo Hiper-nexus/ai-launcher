@@ -29,6 +29,19 @@ trap cleanup EXIT
 BASH_BIN="$(command -v bash)"
 [[ -n "$BASH_BIN" ]] || { echo "FAIL: bash não encontrado" >&2; exit 1; }
 
+# A camada de plataforma dá o ai_python. `command -v python3` não serve no
+# Windows: o App Execution Alias da Microsoft Store atende por esse nome mesmo
+# sem Python instalado e só falha ao executar (exit 49) — com ele o mock subia
+# "ok" e o teste morria em "servidor de mock não subiu".
+# shellcheck source=helpers/platform.sh
+source "${ROOT}/tests/helpers/platform.sh"
+PY_BIN="$(ai_python)" || { echo "FAIL: nenhum Python utilizável" >&2; exit 1; }
+
+# Todo Python chamado aqui escreve UTF-8: no Windows o default é o encoding da
+# locale (cp1252) e um print com "→" ou acento vira UnicodeEncodeError no meio
+# do teste. O launcher faz o mesmo no wrapper python3().
+export PYTHONIOENCODING=utf-8
+
 TEST_HOME="${TMP_DIR}/home"
 FAKE_BIN="${TMP_DIR}/bin"
 CAPTURE="${TMP_DIR}/claude-env"
@@ -87,7 +100,7 @@ srv.serve_forever()
 PY
     MOCK_RESP="${TMP_DIR}/resp.json" MOCK_BODY="$REQ_BODY" \
     MOCK_PORT="${TMP_DIR}/port" \
-        python3 "${TMP_DIR}/mock.py" &
+        "$PY_BIN" "${TMP_DIR}/mock.py" &
     MOCK_PID=$!
     # espera a porta aparecer (até ~5s)
     local i
@@ -130,7 +143,7 @@ run_ai() {
     # `#!/usr/bin/env bash` achar um bash moderno.
     env -i \
         HOME="$TEST_HOME" \
-        PATH="${FAKE_BIN}:$(dirname "$BASH_BIN"):/usr/bin:/bin:/usr/sbin:/sbin" \
+        PATH="${FAKE_BIN}:$(dirname "$BASH_BIN"):$(dirname "$PY_BIN"):/usr/bin:/bin:/usr/sbin:/sbin" \
         TERM="${TERM:-xterm}" \
         CAPTURE_ENV="$CAPTURE" \
         AI_JEV_HOST="http://127.0.0.1:$(cat "${TMP_DIR}/port")" \
@@ -156,7 +169,7 @@ ok "roteou para deepseek e lançou com o modelo certo"
 
 # ── a requisição foi montada corretamente?
 [[ -f "$REQ_BODY" ]] || fail "o mock não recebeu requisição"
-python3 - "$REQ_BODY" <<'PY' || exit 1
+"$PY_BIN" - "$REQ_BODY" <<'PY' || exit 1
 import json, sys
 raw = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
 body, path, auth = raw.split("\n--PATH--\n")[0], None, None
@@ -274,9 +287,12 @@ echo "── 8. todo destino do criteria existe como alias no dispatch"
 # como escolher o Codex de 1M nem o DeepSeek V4-Pro. Um slug errado no criteria
 # é pior que a ausência: o Jev escolhe uma opção que o dispatch não conhece e
 # o exec falha depois.
-python3 - "${ROOT}/ai" <<'PY' || exit 1
+"$PY_BIN" - "${ROOT}/ai" <<'PY' || exit 1
 import json, re, sys
-src = open(sys.argv[1]).read()
+# encoding explícito: no Windows o default do open() é cp1252, e o `ai` é
+# UTF-8 (os comentários têm acento). Sem isto o teste morre em
+# UnicodeDecodeError antes de checar coisa alguma.
+src = open(sys.argv[1], encoding="utf-8").read()
 
 i = src.find("JEV_ROUTE_CRITERIA='")
 assert i >= 0, "JEV_ROUTE_CRITERIA não encontrado no script"
