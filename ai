@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.57.2"
+AI_LAUNCHER_VERSION="1.57.3"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -6344,12 +6344,28 @@ jev_browser_dispatch() {
     fi
     if [[ ! -d "$JEV_BROWSER_PROFILE" ]]; then
         mkdir -p "$JEV_BROWSER_PROFILE" || return 1
-        chmod 700 "$JEV_BROWSER_PROFILE" 2>/dev/null || true
     fi
     if [[ ! -O "$JEV_BROWSER_PROFILE" ]]; then
         echo -e "${RED}Erro: ${JEV_BROWSER_PROFILE} não é seu.${RESET}"
         return 1
     fi
+    # 700 em TODA execução, não só na criação. Um perfil do Chrome é um cofre
+    # de credenciais: cookies e tokens de sessão de todo site logado ali. Se o
+    # diretório já existir com permissão herdada do umask (755), limitar só na
+    # criação deixaria o cofre aberto para os outros usuários da máquina.
+    chmod 700 "$JEV_BROWSER_PROFILE" 2>/dev/null || {
+        echo -e "${RED}Erro: não consegui restringir ${JEV_BROWSER_PROFILE} para 700.${RESET}"
+        return 1
+    }
+    # O log do CDP guarda a linha "DevTools listening on ws://…/<uuid>", e
+    # aquele UUID é um TOKEN DE CAPACIDADE: quem lê o arquivo e alcança a porta
+    # controla o browser. Criado por `>>` ele nasceria 644 (umask). Mesmo padrão
+    # que o provider_save_key() já usa para o providers.conf.
+    local _jev_log="${JEV_BROWSER_PROFILE}/.jev-stderr"
+    if [[ ! -f "$_jev_log" ]]; then
+        install -m 600 /dev/null "$_jev_log" 2>/dev/null || : > "$_jev_log"
+    fi
+    chmod 600 "$_jev_log" 2>/dev/null || true
 
     # Sem command substitution: a função seta JEV_WS/JEV_WS_REUSADO e eles têm
     # que sobreviver até aqui (dentro de $( ) não sobreviveriam).

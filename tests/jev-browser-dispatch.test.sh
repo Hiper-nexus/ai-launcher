@@ -155,4 +155,52 @@ kill $IMPOSTOR 2>/dev/null; wait $IMPOSTOR 2>/dev/null || true
 rm -f "$FUNCS"
 
 echo
-echo "PASS: jev-browser-dispatch (9/9)"
+echo "── 10. permissão do perfil é forçada em TODA execução, não só na criação"
+# O perfil do Chrome é um COFRE DE CREDENCIAIS: cookies e tokens de sessão de
+# todo site logado ali. A versão anterior só rodava `chmod 700` quando o
+# diretório NÃO existia — um diretório pré-existente com 755 (umask de outro
+# dia, ou criado à mão) ficava aberto para os outros usuários da máquina.
+#
+# Este teste stuba o passo que lança o Chrome para poder exercitar o resto do
+# dispatch sem abrir janela nem gastar chamada.
+DIR_P="${TMP_DIR}/perfil-perms"
+mkdir -p "$DIR_P"
+chmod 755 "$DIR_P"          # estado inseguro de partida
+LOG_P="${DIR_P}/.jev-stderr"
+printf 'DevTools listening on ws://127.0.0.1:9/x\n' > "$LOG_P"
+chmod 644 "$LOG_P"          # idem: log com permissão de umask
+
+cat > "${TMP_DIR}/stub-uv" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "${TMP_DIR}/stub-uv"
+
+bash -c '
+set -uo pipefail
+DIR_P="$1"; ROOT="$2"; STUB="$3"
+# carrega o dispatch e a validação de perfil
+source <(sed -n "/^jev_browser_dispatch()/,/^}$/p" "$ROOT/ai")
+# substitui o passo que lança o Chrome por um stub
+_jev_ws_garantido() { JEV_WS="ws://127.0.0.1:9/x"; JEV_WS_REUSADO=false; return 0; }
+# JEV_BROWSER_* (não AI_JEV_BROWSER_*): o launcher resolve o AI_ no CARREGAMENTO,
+# então setar o AI_ depois do source não teria efeito e o teste usaria o
+# diretório real do usuário.
+JEV_BROWSER_DIR="$DIR_P"
+JEV_BROWSER_PROFILE="$DIR_P"
+mkdir -p "$DIR_P" && printf "TYPESAFE_API_KEY=x\n" > "$DIR_P/.env"
+PATH="$STUB:$PATH" jev_browser_dispatch
+' _ "$DIR_P" "$ROOT" "${TMP_DIR}" >/dev/null 2>&1 || true
+
+perms_dir=$(stat -f '%Sp' "$DIR_P" 2>/dev/null)
+[[ "$perms_dir" == "drwx------" ]] \
+    || fail "perfil pré-existente continuou com $perms_dir (esperado drwx------)"
+ok "perfil 755 pré-existente → forçado para 700"
+
+perms_log=$(stat -f '%Sp' "$LOG_P" 2>/dev/null)
+[[ "$perms_log" == "-rw-------" ]] \
+    || fail "log do CDP continuou com $perms_log (esperado -rw-------)"
+ok "log do CDP → 600 (guarda o UUID, que é token de capacidade do browser)"
+
+echo
+echo "PASS: jev-browser-dispatch (11/11)"
