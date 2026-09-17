@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.55.0"
+AI_LAUNCHER_VERSION="1.56.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -5924,7 +5924,7 @@ JEV_MIN_CONFIDENCE="${AI_JEV_MIN_CONFIDENCE:-0.55}"
 # que a doc exige: sem ela o modelo é forçado a escolher entre opções que não
 # servem.
 JEV_ROUTE_CRITERIA='{
-  "claude":       "Tarefa genérica de programação no dia a dia, quando não há motivo para economizar: refatoração ampla, mexer em vários arquivos, raciocínio longo, trabalho que se beneficia do modelo mais forte e do contexto de 1M. É a opção default de qualidade; a assinatura já está paga, então o custo marginal é zero.",
+  "claude":       "Tarefa genérica de programação no dia a dia, quando não há motivo para economizar: refatoração ampla, mexer em vários arquivos, raciocínio longo, trabalho que se beneficia do modelo mais forte e do contexto de 1M. É a opção default de qualidade; a assinatura já está paga, então o custo marginal é zero. Prefira esta também para trabalho VISUAL e de front-end: gerar ou ajustar HTML/CSS/SVG, animação, layout, e para tarefa que exige ABRIR NO NAVEGADOR e conferir o resultado na tela — o harness do Claude tem as ferramentas de navegador e é o mais forte nesse tipo de verificação visual.",
   "deepseek":     "Tarefa de programação de bom tamanho em que custo importa: contexto grande, muitos arquivos, trabalho repetitivo ou volumoso. Bom custo-benefício para o trabalho pesado do dia a dia. Escolha esta em vez de `deepseek-pro` quando o usuário reclamar de custo ou não exigir o mais forte.",
   "deepseek-pro": "Mesma linha do `deepseek`, mas no modelo mais forte (V4-Pro) em vez do V4.1: quando o usuário quer qualidade acima de custo DENTRO da linha DeepSeek, ou citou V4-Pro / ds-pro. Se ele não citou e não pediu o mais forte, prefira `deepseek`.",
   "glm":          "Tarefa de programação em que custo importa muito e o contexto é grande, ou quando o usuário pediu explicitamente algo barato/rápido para não gastar. Sessão começa no GLM 5.3, e o /model ainda oferece o Flash.",
@@ -5947,7 +5947,7 @@ JEV_ROUTE_CRITERIA='{
   "opencode":     "Tarefa em que o usuário citou opencode.",
   "muse":         "Tarefa em que o usuário pediu a CLI do Muse Code (não o Muse Spark dentro do Claude Code).",
   "devin":        "Tarefa delegada de ponta a ponta, que pode rodar sozinha e voltar depois com o resultado pronto — trabalho longo e autônomo, não conversa iterativa.",
-  "ollama":       "Tarefa local/offline, ou quando o usuário citou Ollama ou rodar na própria máquina.",
+  "ollama":       "Quando o que importa é ONDE O MODELO RODA: o usuário quer privacidade (não mandar o código para fora), trabalhar sem internet, ou citou Ollama explicitamente. NÃO escolha esta só porque a tarefa menciona algo local — um arquivo local, um servidor local de desenvolvimento, abrir no navegador local. O critério é onde a IA roda, não onde o código roda. Para tarefa normal de programação que só menciona algo local como cenário, prefira claude ou deepseek.",
   "hf":           "Tarefa em que o usuário pediu explicitamente o endpoint sem censura da Hugging Face, ou o modelo Qwen3.8 uncensored.",
   "fl":           "Tarefa em que o usuário citou Featherless.",
   "qwen":         "Tarefa em que o usuário citou Qwen ou Alibaba.",
