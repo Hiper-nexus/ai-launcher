@@ -268,4 +268,41 @@ echo "$out" | grep -q "indisponível" || fail "deveria avisar indisponibilidade.
 ok "529 persistente → avisou e não lançou"
 
 echo
-echo "PASS: jev-ask (7/7)"
+echo "── 8. todo destino do criteria existe como alias no dispatch"
+# Esta é a rede contra a lacuna que existia: eu declarei 23 destinos e deixei
+# 'sol', 'ds-pro', 'gf', 'claude-fugu' e 'fugu-max' de fora — o Jev não tinha
+# como escolher o Codex de 1M nem o DeepSeek V4-Pro. Um slug errado no criteria
+# é pior que a ausência: o Jev escolhe uma opção que o dispatch não conhece e
+# o exec falha depois.
+python3 - "${ROOT}/ai" <<'PY' || exit 1
+import json, re, sys
+src = open(sys.argv[1]).read()
+
+i = src.find("JEV_ROUTE_CRITERIA='")
+assert i >= 0, "JEV_ROUTE_CRITERIA não encontrado no script"
+j = src.find("'", i + len("JEV_ROUTE_CRITERIA='"))
+crit = json.loads(src[i + len("JEV_ROUTE_CRITERIA='"):j])
+
+# Aliases do dispatch: cobre as duas formas usadas no arquivo
+#   elif [[ ${1:-} == "a" || ${1:-} == "b" ]]; then
+#   elif [[ ${1:-} == "a" ]]; then
+aliases = set(re.findall(r'== "([^"]+)"', src))
+
+faltando = [k for k in crit if k != "nenhum" and k not in aliases]
+if faltando:
+    print(f"  destinos no criteria SEM alias no dispatch: {faltando}")
+    sys.exit(1)
+
+# Os que motivaram a correção: se algum sumir, o teste avisa pelo nome.
+obrigatorios = ["sol", "deepseek-pro", "glm-flash", "claude-fugu", "fugu-max"]
+perdidos = [k for k in obrigatorios if k not in crit]
+if perdidos:
+    print(f"  destinos que deveriam estar roteáveis e sumiram: {perdidos}")
+    sys.exit(1)
+
+print(f"  ok: {len(crit)} destinos, todos com alias real no dispatch")
+PY
+ok "criteria e dispatch consistentes (inclui sol, ds-pro, gf, claude-fugu, fugu-max)"
+
+echo
+echo "PASS: jev-ask (8/8)"

@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.53.0"
+AI_LAUNCHER_VERSION="1.54.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -5924,30 +5924,35 @@ JEV_MIN_CONFIDENCE="${AI_JEV_MIN_CONFIDENCE:-0.55}"
 # que a doc exige: sem ela o modelo é forçado a escolher entre opções que não
 # servem.
 JEV_ROUTE_CRITERIA='{
-  "claude":     "Tarefa genérica de programação no dia a dia, quando não há motivo para economizar: refatoração ampla, mexer em vários arquivos, raciocínio longo, trabalho que se beneficia do modelo mais forte e do contexto de 1M.",
-  "deepseek":   "Tarefa de programação de bom tamanho em que custo importa: contexto grande, muitos arquivos, trabalho repetitivo ou volumoso. Bom custo-benefício para o trabalho pesado do dia a dia.",
-  "glm":        "Tarefa de programação em que custo importa muito e o contexto é grande, ou quando o usuário pediu explicitamente algo barato/rápido para não gastar.",
-  "muse-spark": "Tarefa que exige raciocínio passo a passo mais longo e exploração de alternativas, ou quando o usuário citou Muse ou Meta.",
-  "sakana":     "Tarefa que o usuário associou a Fugu ou Sakana, ou quando pediu explicitamente o Codex/Fugu.",
-  "codex":      "Tarefa em que o usuário citou Codex, GPT, OpenAI, ou pediu explicitamente o Codex.",
-  "gemini":     "Tarefa em que o usuário citou Gemini, Google, ou pediu contexto muito longo com busca.",
-  "kimi":       "Tarefa em que o usuário citou Kimi ou Moonshot.",
-  "grok":       "Tarefa em que o usuário citou Grok ou xAI.",
-  "deepcode":   "Tarefa em que o usuário citou DeepCode.",
-  "agy":        "Tarefa em que o usuário citou Antigravity.",
-  "qoder":      "Tarefa em que o usuário citou Qoder.",
-  "cursor":     "Tarefa em que o usuário citou Cursor.",
-  "omp":        "Tarefa em que o usuário citou omp ou oh-my-pi.",
-  "prime":      "Tarefa em que o usuário citou prime-agent.",
-  "opencode":   "Tarefa em que o usuário citou opencode.",
-  "muse":       "Tarefa em que o usuário pediu a CLI do Muse Code (não o Muse Spark dentro do Claude Code).",
-  "devin":      "Tarefa delegada de ponta a ponta, que pode rodar sozinha e voltar depois com o resultado pronto — trabalho longo e autônomo, não conversa iterativa.",
-  "ollama":     "Tarefa local/offline, ou quando o usuário citou Ollama ou rodar na própria máquina.",
-  "hf":         "Tarefa em que o usuário pediu explicitamente o endpoint sem censura da Hugging Face, ou o modelo Qwen3.8 uncensored.",
-  "fl":         "Tarefa em que o usuário citou Featherless.",
-  "qwen":       "Tarefa em que o usuário citou Qwen ou Alibaba.",
-  "ab":         "Tarefa em que o usuário pediu explicitamente um modelo sem censura / abliterated (GLM-5.3 abliterated).",
-  "nenhum":     "A frase não descreve uma tarefa de programação a ser executada por uma CLI de agente, OU é vaga demais para escolher com segurança, OU não é pedido nenhum (saudação, agradecimento, pergunta sobre o próprio launcher)."
+  "claude":       "Tarefa genérica de programação no dia a dia, quando não há motivo para economizar: refatoração ampla, mexer em vários arquivos, raciocínio longo, trabalho que se beneficia do modelo mais forte e do contexto de 1M. É a opção default de qualidade; a assinatura já está paga, então o custo marginal é zero.",
+  "deepseek":     "Tarefa de programação de bom tamanho em que custo importa: contexto grande, muitos arquivos, trabalho repetitivo ou volumoso. Bom custo-benefício para o trabalho pesado do dia a dia. Escolha esta em vez de `deepseek-pro` quando o usuário reclamar de custo ou não exigir o mais forte.",
+  "deepseek-pro": "Mesma linha do `deepseek`, mas no modelo mais forte (V4-Pro) em vez do V4.1: quando o usuário quer qualidade acima de custo DENTRO da linha DeepSeek, ou citou V4-Pro / ds-pro. Se ele não citou e não pediu o mais forte, prefira `deepseek`.",
+  "glm":          "Tarefa de programação em que custo importa muito e o contexto é grande, ou quando o usuário pediu explicitamente algo barato/rápido para não gastar. Sessão começa no GLM 5.3, e o /model ainda oferece o Flash.",
+  "glm-flash":    "Tarefa barata e rápida em que o usuário quer o GLM Flash em TODA a sessão (sem trocar depois), ou citou glm-flash / gf / flash. Se ele só quer economizar sem citar o Flash, prefira `glm`.",
+  "muse-spark":   "Tarefa que exige raciocínio passo a passo mais longo e exploração de alternativas, ou quando o usuário citou Muse ou Meta.",
+  "sakana":       "Tarefa que o usuário associou a Fugu ou Sakana, ou quando pediu explicitamente o Codex/Fugu. Aqui é o Fugu Ultra V2.0 (o topo da linha).",
+  "fugu-max":     "Mesma linha do Fugu, mas a versão ECONÔMICA (Max V1.0) em vez do Ultra: quando o usuário quer Fugu/Sakana gastando menos, ou citou fugu-max. Se ele citou Fugu sem falar de custo, prefira `sakana`.",
+  "claude-fugu":  "O harness do Claude Code rodando por cima do endpoint Anthropic-compatible da Sakana: quando o usuário quer o Fugu mas dentro do Claude Code (ferramentas, skills e fluxo do Claude), ou citou claude-fugu. Diferente de `sakana`, que abre o Codex.",
+  "codex":        "Tarefa em que o usuário citou Codex, GPT, OpenAI, ou pediu explicitamente o Codex (janela padrão). Se ele precisa de contexto gigante no Codex, prefira `sol`.",
+  "sol":          "Codex com janela de 1M de contexto: tarefa longa demais para o Codex padrão, varredura de repositório inteiro, ou quando o usuário citou Sol, x-1m, ou pediu 1M de contexto no Codex.",
+  "gemini":       "Tarefa em que o usuário citou Gemini, Google, ou pediu contexto muito longo com busca.",
+  "kimi":         "Tarefa em que o usuário citou Kimi ou Moonshot.",
+  "grok":         "Tarefa em que o usuário citou Grok ou xAI.",
+  "deepcode":     "Tarefa em que o usuário citou DeepCode.",
+  "agy":          "Tarefa em que o usuário citou Antigravity.",
+  "qoder":        "Tarefa em que o usuário citou Qoder.",
+  "cursor":       "Tarefa em que o usuário citou Cursor.",
+  "omp":          "Tarefa em que o usuário citou omp ou oh-my-pi.",
+  "prime":        "Tarefa em que o usuário citou prime-agent.",
+  "opencode":     "Tarefa em que o usuário citou opencode.",
+  "muse":         "Tarefa em que o usuário pediu a CLI do Muse Code (não o Muse Spark dentro do Claude Code).",
+  "devin":        "Tarefa delegada de ponta a ponta, que pode rodar sozinha e voltar depois com o resultado pronto — trabalho longo e autônomo, não conversa iterativa.",
+  "ollama":       "Tarefa local/offline, ou quando o usuário citou Ollama ou rodar na própria máquina.",
+  "hf":           "Tarefa em que o usuário pediu explicitamente o endpoint sem censura da Hugging Face, ou o modelo Qwen3.8 uncensored.",
+  "fl":           "Tarefa em que o usuário citou Featherless.",
+  "qwen":         "Tarefa em que o usuário citou Qwen ou Alibaba.",
+  "ab":           "Tarefa em que o usuário pediu explicitamente um modelo sem censura / abliterated (GLM-5.3 abliterated).",
+  "nenhum":       "A frase não descreve uma tarefa de programação a ser executada por uma CLI de agente, OU é vaga demais para escolher com segurança, OU não é pedido nenhum (saudação, agradecimento, pergunta sobre o próprio launcher)."
 }'
 
 jev_api_key() {

@@ -564,6 +564,64 @@ a documentação da TypeSafe é explícita que confidence resume a distribuiçã
 resposta, não autoriza agir. Use `ai ask --force` para ver a decisão crua e
 ajustar `AI_JEV_MIN_CONFIDENCE`.
 
+### Jev como servidor MCP (para usar fora do `ai`)
+
+O `ai ask` vive no launcher — se você abrir o Cursor ou o Gemini direto, ele não
+existe lá. O `mcp/jev-server.py` resolve isso: expõe o mesmo roteamento como uma
+tool MCP, e aí **qualquer CLI que fale MCP** ganha a capacidade.
+
+```bash
+python3 /caminho/para/ai-launcher/mcp/jev-server.py    # o cliente MCP sobe isso
+```
+
+Sem dependências (só a stdlib — o repo já exige python3) e com **uma única
+tool**, de propósito: cada tool de MCP é carregada no contexto a cada turno.
+Uma tool custa ~300 tokens por sessão; oito custariam ~4 mil.
+
+> ⚠️ **Isto adiciona ~300 tokens de contexto por sessão em CADA CLI onde for
+> configurado.** Configure só onde você de fato usa a CLI fora do `ai`.
+
+O servidor **lê o criteria de destinos do próprio script `ai`** em runtime
+(`AI_LAUNCHER_PATH`, default `~/.local/bin/ai`). Não existe segunda lista para
+sair de sincronia: mexeu no `ai`, o MCP acompanha. Se o launcher sumir ou for
+antigo demais, ele falha com mensagem explícita em vez de rotear com lista vazia.
+
+Config por CLI:
+
+**Claude Code** — `claude mcp add jev -- python3 /caminho/mcp/jev-server.py`, ou no `~/.claude.json`:
+
+```json
+{ "mcpServers": { "jev": {
+    "command": "python3",
+    "args": ["/caminho/para/ai-launcher/mcp/jev-server.py"],
+    "env": { "TYPESAFE_API_KEY": "sua-key" } } } }
+```
+
+**Cursor** — o mesmo formato, em `~/.cursor/mcp.json`.
+
+**Gemini CLI** — o mesmo formato, em `~/.gemini/settings.json` (chave `mcpServers`).
+
+**opencode** — em `~/.config/opencode/opencode.json`, com `command` como array e `environment` no lugar de `env`:
+
+```json
+{ "mcp": { "jev": {
+    "type": "local",
+    "command": ["python3", "/caminho/para/ai-launcher/mcp/jev-server.py"],
+    "environment": { "TYPESAFE_API_KEY": "sua-key" },
+    "enabled": true } } }
+```
+
+**Codex** — em `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.jev]
+command = "python3"
+args = ["/caminho/para/ai-launcher/mcp/jev-server.py"]
+
+[mcp_servers.jev.env]
+TYPESAFE_API_KEY = "sua-key"
+```
+
 ## Features
 
 - Menu interativo com versão e status de instalação
