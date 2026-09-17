@@ -164,14 +164,56 @@ ok "'nenhum' vem com a instrução de não decidir pelo usuário"
 
 echo
 echo "── 5. sem key → erro claro (não crash)"
+# HOME falso + AI_PROVIDERS_FILE apontando para lugar nenhum: nem env nem arquivo.
 saida=$(printf '%s\n' \
     '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"jev_route","arguments":{"pedido":"x"}}}' \
-    | MCP_KEY="" env -i PATH="/usr/bin:/bin" \
+    | env -i PATH="/usr/bin:/bin" HOME="${TMP_DIR}/vazio" \
+        AI_PROVIDERS_FILE="${TMP_DIR}/nao-existe.conf" \
         AI_LAUNCHER_PATH="$ROOT/ai" "$PY_BIN" "$ROOT/mcp/jev-server.py" 2>&1)
 erro=$(printf '%s\n' "$saida" | campo 4 erro)
-echo "$erro" | grep -qi "TYPESAFE_API_KEY" \
-    || fail "deveria reclamar da key. Erro: $erro"
-ok "sem key: mensagem explícita"
+echo "$erro" | grep -qi "ai jev key" \
+    || fail "deveria dizer como resolver. Erro: $erro"
+ok "sem key: mensagem explícita com o comando que resolve"
+
+echo
+echo "── 5b. key lida do providers.conf (sem key no config da CLI)"
+# É o que permite configurar 5 CLIs sem gravar a key em 5 arquivos.
+printf 'glm=x\ntypesafe=ts-do-arquivo\n' > "${TMP_DIR}/providers.conf"
+chmod 600 "${TMP_DIR}/providers.conf"
+# servidor fake que devolve o Authorization recebido, para provar de onde veio
+cat > "${TMP_DIR}/auth.py" <<'PY'
+import http.server, json, os
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        auth = self.headers.get("Authorization") or ""
+        body = json.dumps({"answers": {"destino": {
+            "type": "choice", "choice": auth, "confidence": 0.9}}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+with open(os.environ["MOCK_PORT"], "w") as f: f.write(str(srv.server_port))
+srv.serve_forever()
+PY
+rm -f "${TMP_DIR}/port"
+MOCK_PORT="${TMP_DIR}/port" python3 "${TMP_DIR}/auth.py" &
+MOCK_PID=$!
+for _ in $(seq 1 50); do [[ -s "${TMP_DIR}/port" ]] && break; sleep 0.1; done
+saida=$(printf '%s\n' \
+    '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"jev_route","arguments":{"pedido":"x"}}}' \
+    | env -i PATH="/usr/bin:/bin" HOME="${TMP_DIR}/vazio" \
+        AI_PROVIDERS_FILE="${TMP_DIR}/providers.conf" \
+        AI_JEV_HOST="http://127.0.0.1:$(cat "${TMP_DIR}/port")" \
+        AI_LAUNCHER_PATH="$ROOT/ai" "$PY_BIN" "$ROOT/mcp/jev-server.py" 2>&1)
+stop_jev_mock
+txt=$(printf '%s\n' "$saida" | campo 10 text)
+echo "$txt" | grep -q "Bearer ts-do-arquivo" \
+    || fail "não leu a key do providers.conf. Texto: $txt"
+ok "key sai do providers.conf — nenhuma CLI precisa dela no config"
 
 echo
 echo "── 6. pedido vazio → erro de argumento"
@@ -230,4 +272,4 @@ echo "$txt" | grep -q "AI_LAUNCHER_PATH" \
 ok "launcher ausente: erro explícito com a variável que resolve"
 
 echo
-echo "PASS: jev-mcp-server (9/9)"
+echo "PASS: jev-mcp-server (10/10)"

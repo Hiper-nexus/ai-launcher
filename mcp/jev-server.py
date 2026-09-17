@@ -86,7 +86,33 @@ def carregar_criteria():
 
 
 def api_key():
-    return os.environ.get("TYPESAFE_API_KEY", "").strip()
+    """Key do TypeSafe, em ordem de precedência.
+
+    1. TYPESAFE_API_KEY no ambiente (útil para testar)
+    2. slot `typesafe` do providers.conf do launcher (chmod 600)
+
+    O passo 2 existe para NÃO gravar a key em cada config de CLI. Configurar o
+    Jev em cinco CLIs com a key inline criaria cinco cópias em texto plano do
+    mesmo segredo — o problema que o próprio launcher já resolve guardando as
+    keys num arquivo 600. Configure as CLIs sem key nenhuma no config; ela sai
+    daqui. Grave a sua uma vez com:  ai jev key
+    """
+    do_env = os.environ.get("TYPESAFE_API_KEY", "").strip()
+    if do_env:
+        return do_env
+
+    conf = os.environ.get(
+        "AI_PROVIDERS_FILE",
+        os.path.expanduser("~/.local/share/ai-launcher/providers.conf"),
+    )
+    try:
+        with open(conf, "r", encoding="utf-8", errors="replace") as fh:
+            for linha in fh:
+                if linha.startswith("typesafe="):
+                    return linha.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
 
 
 # ── Roteamento ───────────────────────────────────────────
@@ -218,8 +244,10 @@ def tratar(msg):
             responder(msg_id, error={
                 "code": -32000,
                 "message": (
-                    "TYPESAFE_API_KEY não definida. O Jev precisa da key do "
-                    "TypeSafe para rotear. Configure no env do servidor MCP."
+                    "Nenhuma key do TypeSafe encontrada. Rode `ai jev key` uma "
+                    "vez para gravar em providers.conf (chmod 600), ou defina "
+                    "TYPESAFE_API_KEY no env DESTE servidor MCP. A key NÃO vai "
+                    "no config da CLI — o servidor lê do providers.conf."
                 ),
             })
             return

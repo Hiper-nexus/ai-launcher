@@ -586,28 +586,45 @@ O servidor **lê o criteria de destinos do próprio script `ai`** em runtime
 sair de sincronia: mexeu no `ai`, o MCP acompanha. Se o launcher sumir ou for
 antigo demais, ele falha com mensagem explícita em vez de rotear com lista vazia.
 
-Config por CLI:
+### A key NÃO vai no config da CLI
 
-**Claude Code** — `claude mcp add jev -- python3 /caminho/mcp/jev-server.py`, ou no `~/.claude.json`:
+O servidor resolve a key em duas etapas: `TYPESAFE_API_KEY` no ambiente (útil
+para testar) e, se não houver, o slot `typesafe` do `providers.conf` do launcher
+(`chmod 600`). Grave a sua uma única vez:
+
+```bash
+ai jev key
+```
+
+Isso importa porque configurar o Jev em cinco CLIs com a key inline criaria
+**cinco cópias em texto plano** do mesmo segredo. Já existe um lugar para ela,
+com permissão restrita — o mesmo problema que o launcher resolveu para os
+outros providers. Sem key nenhuma no config, funciona inclusive quando a CLI é
+aberta por uma GUI que não herda o ambiente do shell (Cursor, por exemplo).
+
+Config por CLI — **nada de `env` com a key**:
+
+**Claude Code**
+
+```bash
+claude mcp add jev -s user -- python3 /caminho/para/ai-launcher/mcp/jev-server.py
+```
+
+**Cursor** — em `~/.cursor/mcp.json`; **Gemini CLI** — em `~/.gemini/settings.json`;
+**Qoder** — em `~/.qoder/settings.json`. Os três usam a mesma forma:
 
 ```json
 { "mcpServers": { "jev": {
     "command": "python3",
-    "args": ["/caminho/para/ai-launcher/mcp/jev-server.py"],
-    "env": { "TYPESAFE_API_KEY": "sua-key" } } } }
+    "args": ["/caminho/para/ai-launcher/mcp/jev-server.py"] } } }
 ```
 
-**Cursor** — o mesmo formato, em `~/.cursor/mcp.json`.
-
-**Gemini CLI** — o mesmo formato, em `~/.gemini/settings.json` (chave `mcpServers`).
-
-**opencode** — em `~/.config/opencode/opencode.json`, com `command` como array e `environment` no lugar de `env`:
+**opencode** — em `~/.config/opencode/opencode.json`, com `command` como array:
 
 ```json
 { "mcp": { "jev": {
     "type": "local",
     "command": ["python3", "/caminho/para/ai-launcher/mcp/jev-server.py"],
-    "environment": { "TYPESAFE_API_KEY": "sua-key" },
     "enabled": true } } }
 ```
 
@@ -617,9 +634,6 @@ Config por CLI:
 [mcp_servers.jev]
 command = "python3"
 args = ["/caminho/para/ai-launcher/mcp/jev-server.py"]
-
-[mcp_servers.jev.env]
-TYPESAFE_API_KEY = "sua-key"
 ```
 
 ## Features
