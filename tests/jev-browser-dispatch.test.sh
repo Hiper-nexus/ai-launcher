@@ -101,15 +101,21 @@ case "$default_profile" in
 esac
 
 echo
-echo "── 8. endpoint impostor é rejeitado (não confia em quem ocupa a porta)"
-# Sem esta validação, um processo local que pegasse a porta antes devolvia a
-# URL dele e o agente passava a dirigir um browser de terceiro.
+echo "── 8. impostor que se declara Chrome é rejeitado"
+# A primeira versão AUTENTICAVA O BROWSER PELA RESPOSTA DELE: perguntava na
+# porta "você é o Chrome?" e acreditava na string. Qualquer processo local
+# escreve "Browser: Chrome" — passava. O conserto não é validar melhor a
+# resposta, é não confiar em quem não se conhece: a identidade tem que vir do
+# PROCESSO que escuta a porta (argv com o nosso --user-data-dir, dono = nós).
+#
+# Este teste sobe exatamente o impostor: um servidor que responde /json/version
+# se declarando Chrome. Depois prova que _jev_pid_confiavel NÃO o aceita.
 python3 - <<'PY' &
 import http.server, json
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         body = json.dumps({"Browser": "Chrome/999",
-                           "webSocketDebuggerUrl": "ws://evil.example.com:9999/x"}).encode()
+                           "webSocketDebuggerUrl": "ws://127.0.0.1:9455/x"}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -120,14 +126,33 @@ http.server.HTTPServer(("127.0.0.1", 9455), H).serve_forever()
 PY
 IMPOSTOR=$!
 sleep 1.5
-validator=$(sed -n '/^_jev_cdp_ws()/,/^}/p' "$ROOT/ai")
-if resultado=$(bash -c "source /dev/stdin <<< '$validator'
-_jev_cdp_ws 9455" 2>/dev/null); then
-    kill $IMPOSTOR 2>/dev/null || true
-    fail "aceitou endpoint com ws apontando para host externo: $resultado"
+
+FUNCS=$(mktemp)
+sed -n '/^_jev_ws_do_log()/,/^}/p;/^_jev_pid_confiavel()/,/^}/p;/^_jev_porta_do_ws()/,/^}/p;/^_jev_ws_garantido()/,/^}$/p' "$ROOT/ai" > "$FUNCS"
+
+# O PID do impostor: escuta a porta mas o argv NÃO tem --user-data-dir nosso.
+PID_IMPOSTOR=$(lsof -nP -iTCP:9455 -sTCP:LISTEN -t 2>/dev/null | head -1)
+if bash -c "source '$FUNCS'; _jev_pid_confiavel '$PID_IMPOSTOR' '${TMP_DIR}/perfil'" 2>/dev/null; then
+    kill $IMPOSTOR 2>/dev/null || true; rm -f "$FUNCS"
+    fail "confiou no impostor: PID $PID_IMPOSTOR foi aceito como Chrome nosso"
 fi
-kill $IMPOSTOR 2>/dev/null; wait $IMPOSTOR 2>/dev/null || true
-ok "endpoint impostor: rejeitado"
+ok "impostor que se diz Chrome: rejeitado (argv não tem nosso perfil)"
 
 echo
-echo "PASS: jev-browser-dispatch (8/8)"
+echo "── 9. o parser do anúncio do Chrome"
+ws_ok=$(bash -c "source '$FUNCS'
+_jev_ws_do_log /dev/stdin" <<< 'DevTools listening on ws://127.0.0.1:61157/devtools/browser/abc-123' 2>/dev/null)
+[[ "$ws_ok" == "ws://127.0.0.1:61157/devtools/browser/abc-123" ]] \
+    || fail "não parseou a linha do Chrome: '$ws_ok'"
+porta_ok=$(bash -c "source '$FUNCS'; _jev_porta_do_ws '$ws_ok'" 2>/dev/null)
+[[ "$porta_ok" == "61157" ]] || fail "não extraiu a porta: '$porta_ok'"
+# linha de outro formato não pode virar porta
+porta_ruim=$(bash -c "source '$FUNCS'; _jev_porta_do_ws 'ws://evil.example.com:9/x'" 2>/dev/null)
+[[ -z "$porta_ruim" ]] || fail "aceitou host não-loopback: '$porta_ruim'"
+ok "parser do anúncio: linha certa vira ws+porta, host externo é descartado"
+
+kill $IMPOSTOR 2>/dev/null; wait $IMPOSTOR 2>/dev/null || true
+rm -f "$FUNCS"
+
+echo
+echo "PASS: jev-browser-dispatch (9/9)"

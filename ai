@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.57.1"
+AI_LAUNCHER_VERSION="1.57.2"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -6198,10 +6198,6 @@ except Exception: print("?")
 # O launcher NÃO instala nada aqui: só orquestra o que já está no disco e falha
 # com as instruções se não estiver. Instalar código de terceiros é decisão sua.
 JEV_BROWSER_DIR="${AI_JEV_BROWSER_DIR:-${HOME}/dev/jev-ultrafast}"
-# Porta 0 = escolhe uma livre. Porta FIXA era um problema: qualquer processo
-# local podia ocupá-la antes e, pior, o script confiava em quem respondesse
-# (ver a validação do endpoint abaixo).
-JEV_BROWSER_PORT="${AI_JEV_BROWSER_PORT:-0}"
 # Perfil SOB $HOME, não em /tmp: /tmp é compartilhado e previsível, então outro
 # usuário local pode plantar um symlink no caminho antes de você rodar e o
 # Chrome escreveria o perfil inteiro (cookies, sessões) no alvo dele. Do $HOME
@@ -6209,37 +6205,96 @@ JEV_BROWSER_PORT="${AI_JEV_BROWSER_PORT:-0}"
 # descartável, mas logar de novo a cada run seria inútil.
 JEV_BROWSER_PROFILE="${AI_JEV_BROWSER_PROFILE:-${HOME}/.cache/jev-chrome-profile}"
 
-# Devolve uma porta TCP livre em 127.0.0.1.
-_jev_porta_livre() {
-    python3 -c 'import socket
-s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null
+# ── Cadeia de confiança do CDP ───────────────────────────
+# O erro da primeira versão era AUTENTICAR O BROWSER PELA RESPOSTA DELE: o
+# script perguntava na porta "você é o Chrome?" e acreditava na string. Qualquer
+# processo local escreve "Browser: Chrome" e aponta o ws para o próprio
+# loopback — passava. E aí o agente dirigia um browser do atacante, lendo
+# conteúdo de página forjado por ele.
+#
+# O conserto não é validar melhor a resposta, é NÃO perguntar para quem não se
+# conhece. A confiança vem de dois fatos que o atacante não fabrica:
+#   1. nós lançamos o processo, e ele diz na PRÓPRIA stderr qual URL serve
+#   2. quem escuta aquela porta é aquele PID, e o argv dele tem o NOSSO perfil
+
+# Extrai o ws do log de stderr que NÓS escrevemos ao lançar o Chrome.
+_jev_ws_do_log() {
+    sed -n 's/^DevTools listening on \(ws:\/\/[^ ]*\)$/\1/p' "$1" 2>/dev/null | head -1
 }
 
-# Lê o webSocketDebuggerUrl de um endpoint CDP, CONFERINDO que é o Chrome local.
-# Sem isso o script confiava em qualquer coisa que respondesse na porta: um
-# processo local que chegasse antes devolvia a URL dele e o agente passava a
-# dirigir um browser controlado por terceiro.
-_jev_cdp_ws() {
-    local porta="$1" json
-    json=$(curl -sf --max-time 3 "http://127.0.0.1:${porta}/json/version" 2>/dev/null) || return 1
-    printf '%s' "$json" | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    sys.exit(1)
-ws = d.get("webSocketDebuggerUrl") or ""
-br = d.get("Browser") or ""
-# 1) tem que ser Chrome de verdade
-if "Chrome" not in br:
-    sys.exit(1)
-# 2) o ws tem que apontar para loopback — nunca para outro host
-from urllib.parse import urlparse
-h = urlparse(ws).hostname or ""
-if h not in ("127.0.0.1", "localhost", "::1"):
-    sys.exit(1)
-print(ws)
-'
+# Confia num PID só se: está vivo, o argv tem exatamente o nosso perfil, e o
+# dono é o usuário atual.
+_jev_pid_confiavel() {
+    local pid="$1" perfil="$2" argv dono
+    [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    argv=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
+    [[ "$argv" == *"--user-data-dir=$perfil"* ]] || return 1
+    dono=$(ps -p "$pid" -o user= 2>/dev/null | tr -d ' ')
+    [[ "$dono" == "$(id -un)" ]] || return 1
+    return 0
+}
+
+# Porta que o ws aponta, e o PID que a escuta. Vazio se não bater.
+_jev_porta_do_ws() {
+    printf '%s' "$1" | sed -n 's|^ws://127\.0\.0\.1:\([0-9]\{1,5\}\)/.*|\1|p'
+}
+
+# Garante um endpoint CDP confiável. Seta JEV_WS e JEV_WS_REUSADO.
+#
+# NÃO usa command substitution (`ws=$(f)`) de propósito: aquilo roda em subshell
+# e as variáveis setadas lá dentro não voltam para o chamador — foi um bug real,
+# o aviso de "reusando" nunca aparecia. O chamador lê $JEV_WS depois do return.
+#
+# Também não usa pidfile. A validação é auto-contida e não tem estado para
+# ficar velho: quem escuta a porta anunciada tem que ser um processo do usuário
+# atual cujo argv carrega o NOSSO --user-data-dir (caminho sob $HOME, 700).
+_jev_ws_garantido() {
+    # ATENÇÃO: em `local a="$1" b="$a/x"` o bash expande TODOS os lados direitos
+    # antes de atribuir qualquer um, então $a ainda está vazio no segundo. Os
+    # caminhos derivados têm que vir num `local` SEPARADO (ou o b vira "/x").
+    local chrome_bin="$1" perfil="$2"
+    local log="$perfil/.jev-stderr"
+
+    # Confere um candidato: a porta do ws é escutada por um processo confiável?
+    # Devolve 0 e seta JEV_WS se sim.
+    _jev_candidato_ok() {
+        local ws="$1" porta pid
+        porta=$(_jev_porta_do_ws "$ws")
+        [[ -n "$porta" ]] || return 1
+        pid=$(lsof -nP -iTCP:"$porta" -sTCP:LISTEN -t 2>/dev/null | head -1)
+        [[ -n "$pid" ]] || return 1
+        _jev_pid_confiavel "$pid" "$perfil" || return 1
+        JEV_WS="$ws"
+        return 0
+    }
+
+    # 1) já existe um anúncio válido no log que NÓS escrevemos?
+    if [[ -f "$log" ]]; then
+        local ws_existente
+        ws_existente=$(_jev_ws_do_log "$log")
+        if [[ -n "$ws_existente" ]] && _jev_candidato_ok "$ws_existente"; then
+            JEV_WS_REUSADO=true
+            return 0
+        fi
+    fi
+
+    # 2) lança. APPEND no log, não truncar: se o Chrome fizer handoff para uma
+    # instância viva do mesmo perfil, ele sai sem anunciar nada — e a linha
+    # antiga (ainda válida e verificável) continua sendo a última do arquivo.
+    "$chrome_bin" --remote-debugging-port=0 --user-data-dir="$perfil" \
+        --no-first-run --no-default-browser-check about:blank >>"$log" 2>&1 &
+
+    local i ws_atual
+    for i in $(seq 1 80); do
+        ws_atual=$(_jev_ws_do_log "$log")
+        if [[ -n "$ws_atual" ]] && _jev_candidato_ok "$ws_atual"; then
+            JEV_WS_REUSADO=false
+            return 0
+        fi
+        sleep 0.25
+    done
+    return 1
 }
 
 jev_browser_dispatch() {
@@ -6296,31 +6351,21 @@ jev_browser_dispatch() {
         return 1
     fi
 
-    local porta="$JEV_BROWSER_PORT"
-    [[ "$porta" == "0" || -z "$porta" ]] && porta="$(_jev_porta_livre)"
-    if [[ -z "$porta" ]]; then
-        echo -e "${RED}Não consegui escolher uma porta livre.${RESET}"
+    # Sem command substitution: a função seta JEV_WS/JEV_WS_REUSADO e eles têm
+    # que sobreviver até aqui (dentro de $( ) não sobreviveriam).
+    JEV_WS=""
+    JEV_WS_REUSADO=false
+    echo -e "${GREEN}Chrome isolado${RESET} ${DIM}(perfil ${JEV_BROWSER_PROFILE})${RESET}"
+    if ! _jev_ws_garantido "$chrome_bin" "$JEV_BROWSER_PROFILE"; then
+        echo -e "${RED}O Chrome isolado não subiu, ou não passou na verificação de identidade.${RESET}"
+        echo -e "  Log: ${DIM}${JEV_BROWSER_PROFILE}/.jev-stderr${RESET}"
         return 1
     fi
-
-    local ws
-    if ws=$(_jev_cdp_ws "$porta"); then
-        echo -e "${DIM}Reusando o Chrome isolado já aberto na porta ${porta}.${RESET}"
+    local ws="$JEV_WS"
+    if [[ "$JEV_WS_REUSADO" == "true" ]]; then
+        echo -e "  ${DIM}reusando o que já estava aberto${RESET}"
     else
-        save_history "Jev browser (Chrome isolado :${porta})"
-        echo -e "${GREEN}Subindo Chrome isolado${RESET} ${DIM}(perfil ${JEV_BROWSER_PROFILE}, porta ${porta})${RESET}"
-        "$chrome_bin" --remote-debugging-port="$porta" \
-            --user-data-dir="$JEV_BROWSER_PROFILE" \
-            --no-first-run --no-default-browser-check about:blank >/dev/null 2>&1 &
-        local i
-        for i in $(seq 1 60); do
-            ws=$(_jev_cdp_ws "$porta") && break
-            sleep 0.25
-        done
-        if [[ -z "$ws" ]]; then
-            echo -e "${RED}O Chrome isolado não subiu (ou não passou na validação) na porta ${porta}.${RESET}"
-            return 1
-        fi
+        save_history "Jev browser (Chrome isolado)"
     fi
 
     echo -e "${GREEN}Jev browser${RESET} ${DIM}— inspetor em http://127.0.0.1:8766${RESET}"
