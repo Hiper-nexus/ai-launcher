@@ -653,17 +653,33 @@ o que já está no disco e, se não estiver, imprime as instruções de instala�
 
 ### Por que um Chrome separado
 
-O `ai jb` sobe um Chrome **com perfil descartável** (`/tmp/jev-chrome-profile`,
-porta 9333) em vez de usar o seu navegador do dia a dia. Isso é deliberado:
-habilitar depuração remota no seu Chrome normal expõe todas as sessões logadas
-— email, GitHub, banco — a qualquer processo que alcance aquela porta. Um
-perfil novo não tem login nenhum, então o agente não tem o que vazar.
+O `ai jb` sobe um Chrome **com perfil descartável** em vez de usar o seu
+navegador do dia a dia. Isso é deliberado: habilitar depuração remota no seu
+Chrome normal expõe todas as sessões logadas — email, GitHub, banco — a
+qualquer processo que alcance aquela porta. Um perfil novo não tem login
+nenhum, então o agente não tem o que vazar.
+
+Três cuidados que a primeira versão não tinha, e que valem o registro porque
+são a mesma classe de erro que o launcher já cometeu no cache de versões:
+
+- **O perfil fica sob `$HOME`, não em `/tmp`.** `/tmp` é compartilhado e
+  previsível: outro usuário local podia plantar um symlink no caminho e o
+  Chrome escreveria o perfil inteiro no alvo do link. Um caminho fixo em
+  diretório world-writable é o mesmo defeito que o cache de versões tinha.
+  O caminho é recusado se for symlink ou se não for seu.
+- **A porta é sorteada, não fixa.** Antes era 9333, o que deixava qualquer
+  processo local prever e ocupar.
+- **O endpoint é validado antes de ser usado.** O script confiava em quem
+  respondesse na porta; agora exige que o `Browser` seja Chrome e que o
+  `webSocketDebuggerUrl` aponte para loopback. Sem isso, um processo que
+  chegasse primeiro devolvia a URL dele e o agente passava a dirigir um
+  browser de terceiro.
 
 | Variável | Default | Para quê |
 |---|---|---|
 | `AI_JEV_BROWSER_DIR` | `~/dev/jev-ultrafast` | onde o projeto está clonado |
-| `AI_JEV_BROWSER_PORT` | `9333` | porta CDP do Chrome isolado |
-| `AI_JEV_BROWSER_PROFILE` | `/tmp/jev-chrome-profile` | perfil descartável |
+| `AI_JEV_BROWSER_PORT` | `0` (sorteia uma livre) | porta CDP do Chrome isolado |
+| `AI_JEV_BROWSER_PROFILE` | `~/.cache/jev-chrome-profile` | perfil descartável |
 
 ### Limitações (do próprio projeto, é MVP)
 

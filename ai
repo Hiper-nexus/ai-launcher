@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.57.0"
+AI_LAUNCHER_VERSION="1.57.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -6198,8 +6198,49 @@ except Exception: print("?")
 # O launcher NÃO instala nada aqui: só orquestra o que já está no disco e falha
 # com as instruções se não estiver. Instalar código de terceiros é decisão sua.
 JEV_BROWSER_DIR="${AI_JEV_BROWSER_DIR:-${HOME}/dev/jev-ultrafast}"
-JEV_BROWSER_PORT="${AI_JEV_BROWSER_PORT:-9333}"
-JEV_BROWSER_PROFILE="${AI_JEV_BROWSER_PROFILE:-/tmp/jev-chrome-profile}"
+# Porta 0 = escolhe uma livre. Porta FIXA era um problema: qualquer processo
+# local podia ocupá-la antes e, pior, o script confiava em quem respondesse
+# (ver a validação do endpoint abaixo).
+JEV_BROWSER_PORT="${AI_JEV_BROWSER_PORT:-0}"
+# Perfil SOB $HOME, não em /tmp: /tmp é compartilhado e previsível, então outro
+# usuário local pode plantar um symlink no caminho antes de você rodar e o
+# Chrome escreveria o perfil inteiro (cookies, sessões) no alvo dele. Do $HOME
+# ninguém de fora escreve. Mantém o perfil entre execuções de propósito: é
+# descartável, mas logar de novo a cada run seria inútil.
+JEV_BROWSER_PROFILE="${AI_JEV_BROWSER_PROFILE:-${HOME}/.cache/jev-chrome-profile}"
+
+# Devolve uma porta TCP livre em 127.0.0.1.
+_jev_porta_livre() {
+    python3 -c 'import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null
+}
+
+# Lê o webSocketDebuggerUrl de um endpoint CDP, CONFERINDO que é o Chrome local.
+# Sem isso o script confiava em qualquer coisa que respondesse na porta: um
+# processo local que chegasse antes devolvia a URL dele e o agente passava a
+# dirigir um browser controlado por terceiro.
+_jev_cdp_ws() {
+    local porta="$1" json
+    json=$(curl -sf --max-time 3 "http://127.0.0.1:${porta}/json/version" 2>/dev/null) || return 1
+    printf '%s' "$json" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+ws = d.get("webSocketDebuggerUrl") or ""
+br = d.get("Browser") or ""
+# 1) tem que ser Chrome de verdade
+if "Chrome" not in br:
+    sys.exit(1)
+# 2) o ws tem que apontar para loopback — nunca para outro host
+from urllib.parse import urlparse
+h = urlparse(ws).hostname or ""
+if h not in ("127.0.0.1", "localhost", "::1"):
+    sys.exit(1)
+print(ws)
+'
+}
 
 jev_browser_dispatch() {
     if [[ ! -d "$JEV_BROWSER_DIR" ]]; then
@@ -6237,30 +6278,50 @@ jev_browser_dispatch() {
         echo -e "${RED}Erro: Google Chrome não encontrado em /Applications.${RESET}"
         return 1
     fi
-    if ! curl -sf "http://127.0.0.1:${JEV_BROWSER_PORT}/json/version" >/dev/null 2>&1; then
-        save_history "Jev browser (Chrome isolado :${JEV_BROWSER_PORT})"
-        echo -e "${GREEN}Subindo Chrome isolado${RESET} ${DIM}(perfil ${JEV_BROWSER_PROFILE}, porta ${JEV_BROWSER_PORT})${RESET}"
-        mkdir -p "$JEV_BROWSER_PROFILE"
-        "$chrome_bin" --remote-debugging-port="$JEV_BROWSER_PORT" \
-            --user-data-dir="$JEV_BROWSER_PROFILE" \
-            --no-first-run --no-default-browser-check about:blank >/dev/null 2>&1 &
-        local i
-        for i in $(seq 1 40); do
-            curl -sf "http://127.0.0.1:${JEV_BROWSER_PORT}/json/version" >/dev/null 2>&1 && break
-            sleep 0.25
-        done
-        if ! curl -sf "http://127.0.0.1:${JEV_BROWSER_PORT}/json/version" >/dev/null 2>&1; then
-            echo -e "${RED}O Chrome isolado não subiu na porta ${JEV_BROWSER_PORT}.${RESET}"
-            return 1
-        fi
+
+    # O perfil tem que existir e NÃO ser symlink — senão o Chrome escreveria o
+    # perfil inteiro no alvo do link.
+    if [[ -L "$JEV_BROWSER_PROFILE" ]]; then
+        echo -e "${RED}Erro: ${JEV_BROWSER_PROFILE} é um symlink.${RESET}"
+        echo "  Recusando usar: o Chrome escreveria o perfil no alvo do link."
+        echo "  Remova ou aponte AI_JEV_BROWSER_PROFILE para outro lugar."
+        return 1
+    fi
+    if [[ ! -d "$JEV_BROWSER_PROFILE" ]]; then
+        mkdir -p "$JEV_BROWSER_PROFILE" || return 1
+        chmod 700 "$JEV_BROWSER_PROFILE" 2>/dev/null || true
+    fi
+    if [[ ! -O "$JEV_BROWSER_PROFILE" ]]; then
+        echo -e "${RED}Erro: ${JEV_BROWSER_PROFILE} não é seu.${RESET}"
+        return 1
+    fi
+
+    local porta="$JEV_BROWSER_PORT"
+    [[ "$porta" == "0" || -z "$porta" ]] && porta="$(_jev_porta_livre)"
+    if [[ -z "$porta" ]]; then
+        echo -e "${RED}Não consegui escolher uma porta livre.${RESET}"
+        return 1
     fi
 
     local ws
-    ws=$(curl -sf "http://127.0.0.1:${JEV_BROWSER_PORT}/json/version" \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin)["webSocketDebuggerUrl"])') || {
-        echo -e "${RED}Não consegui ler o webSocketDebuggerUrl do Chrome.${RESET}"
-        return 1
-    }
+    if ws=$(_jev_cdp_ws "$porta"); then
+        echo -e "${DIM}Reusando o Chrome isolado já aberto na porta ${porta}.${RESET}"
+    else
+        save_history "Jev browser (Chrome isolado :${porta})"
+        echo -e "${GREEN}Subindo Chrome isolado${RESET} ${DIM}(perfil ${JEV_BROWSER_PROFILE}, porta ${porta})${RESET}"
+        "$chrome_bin" --remote-debugging-port="$porta" \
+            --user-data-dir="$JEV_BROWSER_PROFILE" \
+            --no-first-run --no-default-browser-check about:blank >/dev/null 2>&1 &
+        local i
+        for i in $(seq 1 60); do
+            ws=$(_jev_cdp_ws "$porta") && break
+            sleep 0.25
+        done
+        if [[ -z "$ws" ]]; then
+            echo -e "${RED}O Chrome isolado não subiu (ou não passou na validação) na porta ${porta}.${RESET}"
+            return 1
+        fi
+    fi
 
     echo -e "${GREEN}Jev browser${RESET} ${DIM}— inspetor em http://127.0.0.1:8766${RESET}"
     echo -e "  ${DIM}CDP: ${ws}${RESET}"

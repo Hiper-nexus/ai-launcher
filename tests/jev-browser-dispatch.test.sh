@@ -73,4 +73,61 @@ fi
 ok "nenhuma chave na saída"
 
 echo
-echo "PASS: jev-browser-dispatch (5/5)"
+echo "── 6. perfil symlinkado é RECUSADO (exfiltração via /tmp)"
+# O perfil já foi /tmp/jev-chrome-profile: /tmp é compartilhado e previsível,
+# então outro usuário local podia plantar um symlink no caminho e o Chrome
+# escreveria o perfil inteiro (cookies, sessões) no alvo do link.
+DIR_OK="${TMP_DIR}/agente"
+mkdir -p "$DIR_OK" && printf 'TYPESAFE_API_KEY=x\n' > "${DIR_OK}/.env"
+LINK="${TMP_DIR}/perfil-symlink"
+ALVO="${TMP_DIR}/alvo-do-atacante"
+mkdir -p "$ALVO"
+ln -s "$ALVO" "$LINK"
+out=$(env -i HOME="$TEST_HOME" PATH="$(dirname "$BASH_BIN"):/usr/bin:/bin" \
+        AI_JEV_BROWSER_DIR="$DIR_OK" AI_JEV_BROWSER_PROFILE="$LINK" \
+        "$BASH_BIN" "$ROOT/ai" jb 2>&1) || true
+echo "$out" | grep -qi "symlink" || fail "deveria recusar perfil symlinkado. Saída: $out"
+[[ -z "$(ls -A "$ALVO" 2>/dev/null)" ]] || fail "escreveu no alvo do symlink!"
+ok "perfil symlinkado: recusado, nada escrito no alvo"
+
+echo
+echo "── 7. o perfil default NÃO fica em /tmp"
+# Regressão direta: o default já foi /tmp/jev-chrome-profile.
+default_profile=$(sed -n 's/.*AI_JEV_BROWSER_PROFILE:-\([^}]*\).*/\1/p' "$ROOT/ai" | head -1)
+case "$default_profile" in
+    *'/tmp/'*) fail "perfil default voltou para /tmp: $default_profile" ;;
+    *'HOME'*)  ok "perfil default sob \$HOME ($default_profile)" ;;
+    *)         fail "perfil default inesperado: $default_profile" ;;
+esac
+
+echo
+echo "── 8. endpoint impostor é rejeitado (não confia em quem ocupa a porta)"
+# Sem esta validação, um processo local que pegasse a porta antes devolvia a
+# URL dele e o agente passava a dirigir um browser de terceiro.
+python3 - <<'PY' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"Browser": "Chrome/999",
+                           "webSocketDebuggerUrl": "ws://evil.example.com:9999/x"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", 9455), H).serve_forever()
+PY
+IMPOSTOR=$!
+sleep 1.5
+validator=$(sed -n '/^_jev_cdp_ws()/,/^}/p' "$ROOT/ai")
+if resultado=$(bash -c "source /dev/stdin <<< '$validator'
+_jev_cdp_ws 9455" 2>/dev/null); then
+    kill $IMPOSTOR 2>/dev/null || true
+    fail "aceitou endpoint com ws apontando para host externo: $resultado"
+fi
+kill $IMPOSTOR 2>/dev/null; wait $IMPOSTOR 2>/dev/null || true
+ok "endpoint impostor: rejeitado"
+
+echo
+echo "PASS: jev-browser-dispatch (8/8)"
