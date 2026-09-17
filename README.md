@@ -636,6 +636,42 @@ command = "python3"
 args = ["/caminho/para/ai-launcher/mcp/jev-server.py"]
 ```
 
+## Agente de browser com Jev (`ai jb`)
+
+O `ai ask` usa o Jev para **escolher** uma CLI. Este usa o Jev para **decidir
+cada passo dentro de um navegador**: qual elemento clicar, qual operação, qual
+valor, e done/blocked/erro/irreversível — tudo numa requisição só. Quem clica é
+o Playwright; o Jev decide o que clicar.
+
+```bash
+ai jb              # sobe o Chrome isolado e abre o inspetor em http://127.0.0.1:8766
+```
+
+É a integração do [browser-use/jev-ultrafast](https://github.com/browser-use/jev-ultrafast)
+(MIT, projeto de terceiros). **O launcher não instala nada** — ele só orquestra
+o que já está no disco e, se não estiver, imprime as instruções de instalação.
+
+### Por que um Chrome separado
+
+O `ai jb` sobe um Chrome **com perfil descartável** (`/tmp/jev-chrome-profile`,
+porta 9333) em vez de usar o seu navegador do dia a dia. Isso é deliberado:
+habilitar depuração remota no seu Chrome normal expõe todas as sessões logadas
+— email, GitHub, banco — a qualquer processo que alcance aquela porta. Um
+perfil novo não tem login nenhum, então o agente não tem o que vazar.
+
+| Variável | Default | Para quê |
+|---|---|---|
+| `AI_JEV_BROWSER_DIR` | `~/dev/jev-ultrafast` | onde o projeto está clonado |
+| `AI_JEV_BROWSER_PORT` | `9333` | porta CDP do Chrome isolado |
+| `AI_JEV_BROWSER_PROFILE` | `/tmp/jev-chrome-profile` | perfil descartável |
+
+### Limitações (do próprio projeto, é MVP)
+
+Shadow roots, iframes, canvas, uploads, abas em pop-up e scroll aninhado ficam
+de fora. Escolher `DONE` **não verifica** o resultado — precisa de conferência
+independente. E numa página lenta (Wikipedia, por exemplo) a recuperação de
+`StalePage` pode estourar em vez de retentar.
+
 ## Features
 
 - Menu interativo com versão e status de instalação

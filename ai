@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.56.0"
+AI_LAUNCHER_VERSION="1.57.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -5389,6 +5389,7 @@ Geral:
   ask <frase>      Escolhe a CLI pela frase (Jev/TypeSafe) e lança
   jev key          Salva a API key do TypeSafe
   jev status       Mostra key, modelo e confiança mínima
+  jb               Agente de browser com Jev (inspetor em :8766)
 Exemplos:
   ai                              Menu interativo
   ai ask "refatorar repo grande sem gastar"   Jev escolhe a CLI
@@ -6188,6 +6189,86 @@ except Exception: print("?")
     exec "${BASH_SOURCE[0]}" "$destino"
 }
 
+# ── Agente de browser com Jev (jev-ultrafast) ────────────
+# O Jev decide, o navegador executa: a cada passo ele responde qual elemento,
+# qual operação, qual valor, e done/blocked/erro/irreversível — numa requisição
+# só. O clique é do Playwright. Projeto de terceiros (browser-use/jev-ultrafast,
+# MIT), roda a partir do código-fonte, NÃO do npm.
+#
+# O launcher NÃO instala nada aqui: só orquestra o que já está no disco e falha
+# com as instruções se não estiver. Instalar código de terceiros é decisão sua.
+JEV_BROWSER_DIR="${AI_JEV_BROWSER_DIR:-${HOME}/dev/jev-ultrafast}"
+JEV_BROWSER_PORT="${AI_JEV_BROWSER_PORT:-9333}"
+JEV_BROWSER_PROFILE="${AI_JEV_BROWSER_PROFILE:-/tmp/jev-chrome-profile}"
+
+jev_browser_dispatch() {
+    if [[ ! -d "$JEV_BROWSER_DIR" ]]; then
+        echo -e "${RED}Agente de browser não está instalado.${RESET}"
+        echo -e "  Esperado em: ${DIM}${JEV_BROWSER_DIR}${RESET}"
+        echo ""
+        echo -e "  ${BOLD}Instalar${RESET} (código-fonte, 2 dependências, MIT):"
+        echo "    git clone https://github.com/browser-use/jev-ultrafast.git $JEV_BROWSER_DIR"
+        echo "    cd $JEV_BROWSER_DIR && uv sync && cp .env.example .env"
+        echo "    # edite o .env: TYPESAFE_API_KEY e TEXT_MODEL_API_KEY"
+        echo ""
+        echo -e "  ${DIM}Depois: ai jb${RESET}"
+        echo -e "  ${DIM}Ou aponte para outro lugar: AI_JEV_BROWSER_DIR=/caminho ai jb${RESET}"
+        return 1
+    fi
+
+    local pyfile="$JEV_BROWSER_DIR/.env"
+    if [[ ! -f "$pyfile" ]]; then
+        echo -e "${RED}Falta o .env em ${JEV_BROWSER_DIR}.${RESET}"
+        echo "  Crie a partir do .env.example e preencha TYPESAFE_API_KEY e TEXT_MODEL_API_KEY."
+        return 1
+    fi
+    if ! command -v uv >/dev/null 2>&1; then
+        echo -e "${RED}Erro: 'uv' não encontrado (o agente roda sobre ele).${RESET}"
+        echo "  Instale: brew install uv"
+        return 1
+    fi
+
+    # Chrome SEPARADO, com perfil descartável. NÃO usamos o Chrome do dia a dia
+    # de propósito: habilitar depuração remota lá expõe todas as sessões logadas
+    # (email, GitHub, banco) a qualquer processo que alcance a porta. Um perfil
+    # novo não tem login nenhum — o agente não tem o que vazar.
+    local chrome_bin="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    if [[ ! -x "$chrome_bin" ]]; then
+        echo -e "${RED}Erro: Google Chrome não encontrado em /Applications.${RESET}"
+        return 1
+    fi
+    if ! curl -sf "http://127.0.0.1:${JEV_BROWSER_PORT}/json/version" >/dev/null 2>&1; then
+        save_history "Jev browser (Chrome isolado :${JEV_BROWSER_PORT})"
+        echo -e "${GREEN}Subindo Chrome isolado${RESET} ${DIM}(perfil ${JEV_BROWSER_PROFILE}, porta ${JEV_BROWSER_PORT})${RESET}"
+        mkdir -p "$JEV_BROWSER_PROFILE"
+        "$chrome_bin" --remote-debugging-port="$JEV_BROWSER_PORT" \
+            --user-data-dir="$JEV_BROWSER_PROFILE" \
+            --no-first-run --no-default-browser-check about:blank >/dev/null 2>&1 &
+        local i
+        for i in $(seq 1 40); do
+            curl -sf "http://127.0.0.1:${JEV_BROWSER_PORT}/json/version" >/dev/null 2>&1 && break
+            sleep 0.25
+        done
+        if ! curl -sf "http://127.0.0.1:${JEV_BROWSER_PORT}/json/version" >/dev/null 2>&1; then
+            echo -e "${RED}O Chrome isolado não subiu na porta ${JEV_BROWSER_PORT}.${RESET}"
+            return 1
+        fi
+    fi
+
+    local ws
+    ws=$(curl -sf "http://127.0.0.1:${JEV_BROWSER_PORT}/json/version" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["webSocketDebuggerUrl"])') || {
+        echo -e "${RED}Não consegui ler o webSocketDebuggerUrl do Chrome.${RESET}"
+        return 1
+    }
+
+    echo -e "${GREEN}Jev browser${RESET} ${DIM}— inspetor em http://127.0.0.1:8766${RESET}"
+    echo -e "  ${DIM}CDP: ${ws}${RESET}"
+    echo ""
+    cd "$JEV_BROWSER_DIR" || return 1
+    BU_CDP_WS="$ws" exec uv run --env-file .env jev "$@"
+}
+
 if [[ ${1:-} == "ask" ]]; then
     shift
     # --force ignora o threshold de confiança (útil para calibrar o valor).
@@ -6202,6 +6283,7 @@ elif [[ ${1:-} == "jev" ]]; then
     case "${1:-}" in
         key)   jev_save_key "${2:-}"; exit $? ;;
         route) shift; jev_explain "$@"; exit $? ;;
+        browser|jb) shift; jev_browser_dispatch "$@"; exit $? ;;
         ""|status)
             echo -e "Jev (TypeSafe): $(jev_status_icon)"
             echo -e "  ${DIM}modelo: ${JEV_MODEL}   confiança mínima: ${JEV_MIN_CONFIDENCE}"
@@ -6209,6 +6291,10 @@ elif [[ ${1:-} == "jev" ]]; then
             exit 0 ;;
         *) echo "Use: ai jev key [<key>] | ai jev route \"<frase>\" | ai jev status"; exit 1 ;;
     esac
+elif [[ ${1:-} == "jb" || ${1:-} == "jev-browser" ]]; then
+    shift
+    jev_browser_dispatch "$@"
+    exit $?
 elif [[ ${1:-} == "timeout" ]]; then
     shift
     run_with_timeout "$@"
