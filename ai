@@ -723,8 +723,17 @@ GLM_MODEL="${AI_GLM_MODEL:-glm-5.3[1m]}"
 # com resposta mais rápida e barata — papel de slot barato (antes glm-4.7).
 # Por isso mora no haiku do provider glm: quem abre 'ai glm' troca para o Flash
 # no /model sem sair da sessão; 'ai gf' abre a sessão inteira nele.
-# Na hora: AI_GLM_FLASH_MODEL=.
-GLM_FLASH_MODEL="${AI_GLM_FLASH_MODEL:-glm-5.3-flash[1m]}"
+# Na hora: AI_GLM_FLASH_MODEL=. Salvo: slot 'glm-flash-model' no
+# providers.conf (ex.: glm-5.3-flashx[1m]). Precedência igual à do
+# muse-model: env → slot → padrão. O grep é inline (e não provider_load_key)
+# porque este bloco roda no carregamento, antes da definição da função — e o
+# PROVIDER_EXTRA_ENV[glm] abaixo já expande o valor na mesma hora.
+_gf_slot=""
+[[ -z "${AI_GLM_FLASH_MODEL:-}" ]] && {
+    _gf_slot=$(grep -F "glm-flash-model=" "$PROVIDERS_FILE" 2>/dev/null | grep "^glm-flash-model=" | cut -d= -f2- || true)
+}
+GLM_FLASH_MODEL="${AI_GLM_FLASH_MODEL:-${_gf_slot:-glm-5.3-flash[1m]}}"
+unset _gf_slot
 # Versões sem o sufixo, para rótulos de menu/launch ("5.3", não "5.3[1m]").
 GLM_MODEL_LABEL="${GLM_MODEL%%\[*}"
 GLM_FLASH_MODEL_LABEL="${GLM_FLASH_MODEL%%\[*}"
