@@ -242,7 +242,7 @@ echo "$out" | grep -q "AI_JEV_CHROME" || fail "deveria ensinar a apontar o biná
 ok "Chrome ausente: erro explícito e a env que resolve"
 
 echo
-echo "── 11. o caminho do perfil é comparado como CAMINHO, não como texto"
+echo "── 12. o caminho do perfil é comparado como CAMINHO, não como texto"
 # Windows-only: lá o argv traz o caminho do Windows (barra invertida, o case
 # que o Chrome resolveu, às vezes entre aspas) e o nosso perfil nasceu POSIX.
 # Comparar as duas strings cruas reprovaria o nosso PRÓPRIO Chrome — e a falha
@@ -287,6 +287,86 @@ PY
     kill "$NOSSO" 2>/dev/null || true
     wait "$NOSSO" 2>/dev/null || true
 fi
+
+echo
+echo "── 11. permissão do perfil é forçada em TODA execução, não só na criação"
+# O perfil do Chrome é um COFRE DE CREDENCIAIS: cookies e tokens de sessão de
+# todo site logado ali. A versão anterior só rodava `chmod 700` quando o
+# diretório NÃO existia — um diretório pré-existente com 755 (umask de outro
+# dia, ou criado à mão) ficava aberto para os outros usuários da máquina.
+#
+# Este teste stuba o passo que lança o Chrome para poder exercitar o resto do
+# dispatch sem abrir janela nem gastar chamada.
+DIR_P="${TMP_DIR}/perfil-perms"
+mkdir -p "$DIR_P"
+chmod 755 "$DIR_P"          # estado inseguro de partida
+LOG_P="${DIR_P}/.jev-stderr"
+printf 'DevTools listening on ws://127.0.0.1:9/x\n' > "$LOG_P"
+chmod 644 "$LOG_P"          # idem: log com permissão de umask
+
+cat > "${TMP_DIR}/stub-uv" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "${TMP_DIR}/stub-uv"
+# Chrome falso: o dispatch só precisa que _jev_chrome_bin resolva; com o
+# _jev_ws_garantido stubado abaixo, o binário nunca é executado.
+printf '#!/usr/bin/env bash\nexit 0\n' > "${TMP_DIR}/chrome-falso"
+chmod +x "${TMP_DIR}/chrome-falso"
+
+bash -c '
+set -uo pipefail
+DIR_P="$1"; ROOT="$2"; STUB="$3"
+export ROOT
+# camada de plataforma (ai_os) + o dispatch e TUDO que ele chama até o
+# ponto exercitado. Só jev_browser_dispatch não basta: sem _jev_chrome_bin
+# e sem as cores, ele morre antes do secure_dir e o teste aprovaria sem
+# testar nada (foi o que o `|| true` engoliu na primeira versão).
+# shellcheck source=/dev/null
+source "$ROOT/tests/helpers/platform.sh"
+source <(sed -n "/^jev_browser_dispatch()/,/^}/p
+        /^_jev_chrome_bin()/,/^}/p
+        /^secure_dir()/,/^}/p
+        /^secure_file()/,/^}/p
+        /^_ai_lock_acl()/,/^}/p
+        /^ai_win_path()/,/^}/p" "$ROOT/ai")
+# cores vazias: ninguém lê saída colorida aqui, e sem elas o set -u aborta
+RED="" GREEN="" DIM="" BOLD="" RESET="" YELLOW=""
+# fora do alvo do teste: sem escrita no histórico real e sem exec
+save_history() { return 0; }
+exec_cli() { return 0; }
+# substitui o passo que lança o Chrome por um stub
+_jev_ws_garantido() { JEV_WS="ws://127.0.0.1:9/x"; JEV_WS_REUSADO=false; return 0; }
+# JEV_BROWSER_* (não AI_JEV_BROWSER_*): o launcher resolve o AI_ no CARREGAMENTO,
+# então setar o AI_ depois do source não teria efeito e o teste usaria o
+# diretório real do usuário.
+JEV_BROWSER_DIR="$DIR_P"
+JEV_BROWSER_PROFILE="$DIR_P"
+AI_JEV_CHROME="$STUB/chrome-falso"
+mkdir -p "$DIR_P" && printf "TYPESAFE_API_KEY=x\n" > "$DIR_P/.env"
+PATH="$STUB:$PATH" jev_browser_dispatch
+' _ "$DIR_P" "$ROOT" "${TMP_DIR}" >/dev/null 2>&1 || true
+
+if [[ "$(ai_os)" != "windows" ]]; then
+    perms_dir=$(stat -c '%a' "$DIR_P" 2>/dev/null || stat -f '%Lp' "$DIR_P")
+    [[ "$perms_dir" == "700" ]] \
+        || fail "perfil pré-existente continuou com $perms_dir (esperado 700)"
+else
+    # No NTFS o modo POSIX é decorativo: o que fecha é a ACL de dono
+    # (secure_dir). Mesma leitura que assert_secret_file faz para arquivo.
+    acl_dir=$(icacls.exe "$(cygpath -w "$DIR_P")" 2>/dev/null) \
+        || fail "icacls não leu a ACL de $DIR_P"
+    n_aces=$(grep -oE '[^ ]+:\([^)]*\)' <<<"$acl_dir" | wc -l | tr -d ' ')
+    [[ "$n_aces" -eq 1 ]] \
+        || fail "perfil com $n_aces ACEs (esperada 1, a do dono)"
+    grep -qi "${USERNAME}" <<<"$acl_dir" \
+        || fail "a ACE de $DIR_P não é a do dono"
+fi
+ok "perfil 755 pré-existente → forçado para 700"
+
+assert_secret_file "$LOG_P" \
+    || fail "log do CDP sem proteção de dono (guarda o UUID, que é token de capacidade do browser)"
+ok "log do CDP → só o dono lê"
 
 echo
 echo "PASS: jev-browser-dispatch"
