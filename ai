@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.57.3"
+AI_LAUNCHER_VERSION="1.58.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -250,14 +250,51 @@ win_bin_path() {
     return 1
 }
 
+# Caminho POSIX → caminho do Windows, e o contrário. Programa nativo
+# (chrome.exe, icacls.exe, cmd.exe) não entende /c/Users/...: com a barra na
+# frente ele lê o argumento como switch. E não dá para converter na mão —
+# /tmp não é unidade, é um mount do MSYS para o Temp do Windows.
+#
+# O cygpath é tentado pelo caminho absoluto ANTES do PATH de propósito: quem
+# mais precisa desta conversão é o exec_cli, que roda justamente quando o PATH
+# da janela está velho. Sem cygpath a entrada volta intacta e o retorno é 1 —
+# assim o chamador escolhe entre seguir com o palpite ou desistir.
+ai_win_path() {
+    local p="$1" c w
+    for c in /usr/bin/cygpath "$(type -P cygpath 2>/dev/null)"; do
+        [[ -n "$c" && -x "$c" ]] || continue
+        w=$("$c" -w "$p" 2>/dev/null) || continue
+        [[ -n "$w" ]] || continue
+        printf '%s\n' "$w"
+        return 0
+    done
+    printf '%s\n' "$p"
+    return 1
+}
+
+# O inverso: C:\Users\... → /c/Users/... . Serve para as envs do Windows
+# (LOCALAPPDATA, PROGRAMFILES), que chegam ao Git Bash em formato nativo e não
+# passam num teste `-x` sem conversão.
+ai_posix_path() {
+    local p="$1" c u
+    for c in /usr/bin/cygpath "$(type -P cygpath 2>/dev/null)"; do
+        [[ -n "$c" && -x "$c" ]] || continue
+        u=$("$c" -u "$p" 2>/dev/null) || continue
+        [[ -n "$u" ]] || continue
+        printf '%s\n' "$u"
+        return 0
+    done
+    printf '%s\n' "$p"
+    return 1
+}
+
 # Fecha a ACL real de um caminho no Windows. chmod no NTFS é teatro: o Git Bash
 # aceita `chmod 600`, devolve 0, e o stat continua 644 — ou seja, toda key do
 # providers.conf ficava legível por qualquer conta local da máquina.
 _ai_lock_acl() {
     local target="$1" grant="$2" win_path principal
     command -v icacls.exe >/dev/null 2>&1 || return 0
-    command -v cygpath   >/dev/null 2>&1 || return 0
-    win_path=$(cygpath -w "$target" 2>/dev/null) || return 0
+    win_path=$(ai_win_path "$target") || return 0
     [[ -n "$win_path" ]] || return 0
     principal="${USERNAME:-}"
     [[ -n "$principal" ]] || return 0
@@ -402,7 +439,21 @@ cli_install_hint() {
             if ai_is_windows; then
                 echo "  Instale: winget install Ollama.Ollama"
             else
-                cli_install_hint ollama
+                # Este ramo já chamou `cli_install_hint ollama` — ou seja, ele
+                # mesmo — e recursava até estourar a pilha em macOS/Linux.
+                echo "  Instale: curl -fsSL https://ollama.com/install.sh | sh"
+            fi
+            ;;
+        # Não é CLI de agente: é o runner do agente de browser (`ai jb`).
+        # Entra aqui porque o hint dele era `brew install uv` fixo.
+        uv)
+            if ai_is_windows; then
+                echo "  Instale: winget install --id=astral-sh.uv"
+                echo "  Ou:      irm https://astral.sh/uv/install.ps1 | iex"
+                echo "  (depois reabra o terminal para o PATH valer)"
+            else
+                echo "  Instale: brew install uv"
+                echo "  Ou:      curl -LsSf https://astral.sh/uv/install.sh | sh"
             fi
             ;;
         *)
@@ -455,14 +506,10 @@ exec_cli() {
     }
     # cmd.exe/powershell.exe não entendem caminho POSIX (/c/...): com a barra
     # na frente eles leem como switch e caem num prompt interativo — que, com
-    # o stdin herdado, espera para sempre. A conversão não pode depender de
-    # cygpath no PATH: este caminho roda justamente quando o PATH está ruim.
-    # E não dá para converter na mão: /tmp/... não é unidade, é mount do
-    # cygwin para o Temp do Windows.
-    local w="$p"
-    if [[ -x /usr/bin/cygpath ]]; then
-        w=$(/usr/bin/cygpath -w "$p" 2>/dev/null) || w="$p"
-    fi
+    # o stdin herdado, espera para sempre. Sem cygpath ai_win_path devolve a
+    # entrada intacta; seguimos com ela porque é melhor que não executar.
+    local w
+    w=$(ai_win_path "$p") || true
     case "$p" in
         # //c e não /c: o runtime MSYS do Git Bash converte argumento começado
         # em / para caminho Windows (/c vira "C:"), e o cmd.exe sem o switch
@@ -471,6 +518,60 @@ exec_cli() {
         *.ps1)       exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$w" "$@" ;;
         *)           exec "$p" "$@" ;;
     esac
+}
+
+# PID que escuta uma porta em loopback, ou nada. Usado pela cadeia de confiança
+# do `ai jb`: saber QUEM atende a porta é o que separa o nosso browser de um
+# impostor que respondesse no lugar dele.
+#
+# lsof não existe no Git Bash e nem vem com o Windows, então lá a fonte é o
+# netstat do próprio sistema. O -ano é o que imprime o PID.
+ai_pid_na_porta() {
+    local porta="$1"
+    [[ "$porta" =~ ^[0-9]{1,5}$ ]] || return 1
+    if ai_is_windows; then
+        command -v netstat.exe >/dev/null 2>&1 || return 1
+        # O tr não é frescura: a saída do netstat.exe termina em \r, e sem
+        # tirá-lo o PID sai com o \r colado — nenhuma comparação bate depois.
+        # O estado do TCP não é traduzido nem em Windows localizado, mas o
+        # toupper custa nada e cobre a exceção que eu não conheço.
+        netstat.exe -ano | tr -d '\r' | awk -v p=":${porta}" '
+            $1 == "TCP" && substr($2, length($2) - length(p) + 1) == p &&
+            toupper($4) == "LISTENING" { print $5; exit }'
+        return 0
+    fi
+    command -v lsof >/dev/null 2>&1 || return 1
+    lsof -nP -iTCP:"$porta" -sTCP:LISTEN -t 2>/dev/null | head -1
+}
+
+# Dono e linha de comando de um processo do Windows:
+#   linha 1 → DOMINIO|usuario
+#   linha 2 → argv completo
+#
+# O `ps` do Git Bash não serve para isto: ele enxerga só os processos MSYS, e
+# o PID que o netstat devolve é o do Windows — outra numeração. `kill -0` tem
+# o mesmo problema. Quem fala das duas coisas é o CIM.
+ai_win_proc_info() {
+    local pid="$1" out
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    command -v powershell.exe >/dev/null 2>&1 || return 1
+    # O PID vai por ENV, não interpolado no -Command: assim nada que chegue
+    # aqui pode virar PowerShell. As aspas simples impedem o bash de tocar
+    # nos $ do script.
+    out=$(AI_PROC_PID="$pid" powershell.exe -NoProfile -NonInteractive -Command '
+$id = [int]$env:AI_PROC_PID
+$p = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue
+if ($null -eq $p) { exit 1 }
+$o = Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction SilentlyContinue
+Write-Output ("{0}|{1}" -f $o.Domain, $o.User)
+Write-Output $p.CommandLine
+' 2>/dev/null | tr -d '\r')
+    # O rc do comando acima é o do `tr` (fim do pipe), nunca o do PowerShell.
+    # Quem atesta que o processo existe é a saída ter as DUAS linhas: processo
+    # morto sai antes de imprimir, e processo protegido devolve CommandLine
+    # vazio — os dois casos caem aqui e viram "não sei", que é o certo.
+    [[ $(printf '%s\n' "$out" | wc -l) -ge 2 ]] || return 1
+    printf '%s\n' "$out"
 }
 
 # São ~40 chamadas a `python3` espalhadas pelo script. Em vez de reescrever
@@ -482,7 +583,13 @@ python3() {
         echo "Erro: nenhum Python utilizável no PATH (python3/python/py)." >&2
         return 127
     fi
-    command "$py" "$@"
+    # PYTHONIOENCODING não é preferência de estilo: no Windows o Python escreve
+    # no encoding da locale (cp1252 aqui), e QUALQUER print com acento ou seta
+    # — "réplicas:", "confiança →", "comando não encontrado" — morre com
+    # UnicodeEncodeError no meio do comando. São ~40 call sites; travar o
+    # encoding aqui conserta todos de uma vez. No Unix já era utf-8, então a
+    # linha não muda nada lá.
+    PYTHONIOENCODING=utf-8 command "$py" "$@"
 }
 
 # ── Providers alternativos ──────────────────────────────
@@ -616,8 +723,17 @@ GLM_MODEL="${AI_GLM_MODEL:-glm-5.3[1m]}"
 # com resposta mais rápida e barata — papel de slot barato (antes glm-4.7).
 # Por isso mora no haiku do provider glm: quem abre 'ai glm' troca para o Flash
 # no /model sem sair da sessão; 'ai gf' abre a sessão inteira nele.
-# Na hora: AI_GLM_FLASH_MODEL=.
-GLM_FLASH_MODEL="${AI_GLM_FLASH_MODEL:-glm-5.3-flash[1m]}"
+# Na hora: AI_GLM_FLASH_MODEL=. Salvo: slot 'glm-flash-model' no
+# providers.conf (ex.: glm-5.3-flashx[1m]). Precedência igual à do
+# muse-model: env → slot → padrão. O grep é inline (e não provider_load_key)
+# porque este bloco roda no carregamento, antes da definição da função — e o
+# PROVIDER_EXTRA_ENV[glm] abaixo já expande o valor na mesma hora.
+_gf_slot=""
+[[ -z "${AI_GLM_FLASH_MODEL:-}" ]] && {
+    _gf_slot=$(grep -F "glm-flash-model=" "$PROVIDERS_FILE" 2>/dev/null | grep "^glm-flash-model=" | cut -d= -f2- || true)
+}
+GLM_FLASH_MODEL="${AI_GLM_FLASH_MODEL:-${_gf_slot:-glm-5.3-flash[1m]}}"
+unset _gf_slot
 # Versões sem o sufixo, para rótulos de menu/launch ("5.3", não "5.3[1m]").
 GLM_MODEL_LABEL="${GLM_MODEL%%\[*}"
 GLM_FLASH_MODEL_LABEL="${GLM_FLASH_MODEL%%\[*}"
@@ -6222,16 +6338,98 @@ _jev_ws_do_log() {
     sed -n 's/^DevTools listening on \(ws:\/\/[^ ]*\)$/\1/p' "$1" 2>/dev/null | head -1
 }
 
+# Onde está o Chrome. O agente precisa de um que aceite --remote-debugging-port;
+# abaixo estão os lugares onde os instaladores oficiais deixam o binário.
+#
+# AI_JEV_CHROME tem a palavra final: quem usa canal beta, outro drive ou um
+# Chromium próprio aponta o caminho e pronto.
+_jev_chrome_bin() {
+    local c
+    if [[ -n "${AI_JEV_CHROME:-}" ]]; then
+        [[ -x "$AI_JEV_CHROME" ]] || return 1
+        printf '%s\n' "$AI_JEV_CHROME"
+        return 0
+    fi
+    case "$(ai_os)" in
+        macos)
+            for c in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+                     "${HOME}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+                [[ -x "$c" ]] && { printf '%s\n' "$c"; return 0; }
+            done
+            ;;
+        windows)
+            # LOCALAPPDATA e PROGRAMFILES chegam em formato Windows (C:\...);
+            # o teste -x precisa da forma POSIX. O per-user vem primeiro
+            # porque instalar sem admin é o caminho comum no Windows.
+            local base
+            for base in "${LOCALAPPDATA:-}" "${PROGRAMFILES:-C:\\Program Files}" \
+                        "${PROGRAMFILES:-C:\\Program Files} (x86)"; do
+                [[ -n "$base" ]] || continue
+                c="$(ai_posix_path "$base")/Google/Chrome/Application/chrome.exe"
+                [[ -x "$c" ]] && { printf '%s\n' "$c"; return 0; }
+            done
+            # Última tentativa: PATH e diretórios conhecidos, como as CLIs.
+            c=$(win_bin_path chrome 2>/dev/null) && [[ -n "$c" ]] && {
+                printf '%s\n' "$c"; return 0
+            }
+            ;;
+        *)
+            # Linux/WSL: o pacote oficial instala google-chrome-stable, as
+            # distros empacotam chromium com dois nomes diferentes.
+            for c in google-chrome google-chrome-stable chromium chromium-browser; do
+                c=$(type -P "$c" 2>/dev/null) && [[ -n "$c" ]] && {
+                    printf '%s\n' "$c"; return 0
+                }
+            done
+            ;;
+    esac
+    return 1
+}
+
+# Compara caminho do Windows sem depender de grafia: o argv traz barra
+# invertida, o case que o Chrome resolveu e às vezes aspas; o nosso perfil
+# nasceu POSIX e passou pelo cygpath. Sem normalizar, a comparação seria sobre
+# ortografia e não sobre o diretório.
+_jev_norm_path() {
+    local s="${1//\\//}"
+    s="${s//\"/}"
+    printf '%s' "${s,,}"
+}
+
 # Confia num PID só se: está vivo, o argv tem exatamente o nosso perfil, e o
 # dono é o usuário atual.
 _jev_pid_confiavel() {
     local pid="$1" perfil="$2" argv dono
     [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || return 1
+    if ai_is_windows; then
+        _jev_pid_confiavel_win "$pid" "$perfil"
+        return $?
+    fi
     kill -0 "$pid" 2>/dev/null || return 1
     argv=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
     [[ "$argv" == *"--user-data-dir=$perfil"* ]] || return 1
     dono=$(ps -p "$pid" -o user= 2>/dev/null | tr -d ' ')
     [[ "$dono" == "$(id -un)" ]] || return 1
+    return 0
+}
+
+# A MESMA cadeia de confiança no Windows, com as fontes que existem lá.
+#
+# Nada de `kill -0` + `ps`: o PID veio do netstat, é do Windows, e o ps do Git
+# Bash só enxerga processo MSYS — a verificação passaria a aprovar por engano
+# ou a reprovar sempre, e as duas falhas são piores que não ter verificação
+# nenhuma, porque parecem uma. Aqui vida, argv e dono saem todos do CIM.
+_jev_pid_confiavel_win() {
+    local pid="$1" perfil="$2" info dono argv esperado
+    info=$(ai_win_proc_info "$pid") || return 1
+    dono=$(printf '%s\n' "$info" | sed -n '1p')
+    argv=$(printf '%s\n' "$info" | sed -n '2p')
+    # Compara só a conta: o domínio que o CIM reporta é o nome da máquina, e
+    # ele diverge do USERDOMAIN da sessão em conta Microsoft ou máquina
+    # renomeada — fazer a comparação com ele reprovaria o nosso próprio Chrome.
+    [[ -n "${USERNAME:-}" && "${dono#*|}" == "${USERNAME}" ]] || return 1
+    esperado=$(ai_win_path "$perfil") || esperado="$perfil"
+    [[ "$(_jev_norm_path "$argv")" == *"--user-data-dir=$(_jev_norm_path "$esperado")"* ]] || return 1
     return 0
 }
 
@@ -6262,7 +6460,7 @@ _jev_ws_garantido() {
         local ws="$1" porta pid
         porta=$(_jev_porta_do_ws "$ws")
         [[ -n "$porta" ]] || return 1
-        pid=$(lsof -nP -iTCP:"$porta" -sTCP:LISTEN -t 2>/dev/null | head -1)
+        pid=$(ai_pid_na_porta "$porta") || return 1
         [[ -n "$pid" ]] || return 1
         _jev_pid_confiavel "$pid" "$perfil" || return 1
         JEV_WS="$ws"
@@ -6279,10 +6477,16 @@ _jev_ws_garantido() {
         fi
     fi
 
+    # O chrome.exe é programa nativo: recebe o perfil em caminho do Windows,
+    # nunca em /c/... . E é ESTA string que aparece depois no argv — por isso
+    # a verificação converte o perfil do mesmo jeito antes de comparar.
+    local perfil_arg="$perfil"
+    ai_is_windows && perfil_arg=$(ai_win_path "$perfil")
+
     # 2) lança. APPEND no log, não truncar: se o Chrome fizer handoff para uma
     # instância viva do mesmo perfil, ele sai sem anunciar nada — e a linha
     # antiga (ainda válida e verificável) continua sendo a última do arquivo.
-    "$chrome_bin" --remote-debugging-port=0 --user-data-dir="$perfil" \
+    "$chrome_bin" --remote-debugging-port=0 --user-data-dir="$perfil_arg" \
         --no-first-run --no-default-browser-check about:blank >>"$log" 2>&1 &
 
     local i ws_atual
@@ -6318,9 +6522,12 @@ jev_browser_dispatch() {
         echo "  Crie a partir do .env.example e preencha TYPESAFE_API_KEY e TEXT_MODEL_API_KEY."
         return 1
     fi
-    if ! command -v uv >/dev/null 2>&1; then
+    # Resolve o uv UMA vez e usa este caminho no exec lá embaixo: no Windows o
+    # instalador grava o PATH no registro, e numa janela aberta antes disso o
+    # `command -v` não acha nada embora o binário esteja no disco.
+    if ! command -v uv >/dev/null 2>&1 && ! win_bin_path uv >/dev/null 2>&1; then
         echo -e "${RED}Erro: 'uv' não encontrado (o agente roda sobre ele).${RESET}"
-        echo "  Instale: brew install uv"
+        cli_install_hint uv
         return 1
     fi
 
@@ -6328,9 +6535,15 @@ jev_browser_dispatch() {
     # de propósito: habilitar depuração remota lá expõe todas as sessões logadas
     # (email, GitHub, banco) a qualquer processo que alcance a porta. Um perfil
     # novo não tem login nenhum — o agente não tem o que vazar.
-    local chrome_bin="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    if [[ ! -x "$chrome_bin" ]]; then
-        echo -e "${RED}Erro: Google Chrome não encontrado em /Applications.${RESET}"
+    local chrome_bin
+    if ! chrome_bin=$(_jev_chrome_bin); then
+        echo -e "${RED}Erro: Google Chrome não encontrado.${RESET}"
+        case "$(ai_os)" in
+            macos)   echo "  Procurei em /Applications e ~/Applications." ;;
+            windows) echo "  Procurei em %LOCALAPPDATA% e Program Files (Google\\Chrome\\Application)." ;;
+            *)       echo "  Procurei por google-chrome, google-chrome-stable, chromium e chromium-browser no PATH." ;;
+        esac
+        echo "  Aponte o binário: AI_JEV_CHROME=/caminho/do/chrome ai jb"
         return 1
     fi
 
@@ -6345,6 +6558,10 @@ jev_browser_dispatch() {
     if [[ ! -d "$JEV_BROWSER_PROFILE" ]]; then
         mkdir -p "$JEV_BROWSER_PROFILE" || return 1
     fi
+    # secure_dir e não chmod: no NTFS o modo é decorativo (o chmod devolve 0 e
+    # não muda nada), e aqui dentro ficam os cookies e as sessões que o agente
+    # abrir. Quem fecha de verdade é a ACL.
+    secure_dir "$JEV_BROWSER_PROFILE"
     if [[ ! -O "$JEV_BROWSER_PROFILE" ]]; then
         echo -e "${RED}Erro: ${JEV_BROWSER_PROFILE} não é seu.${RESET}"
         return 1
@@ -6388,7 +6605,10 @@ jev_browser_dispatch() {
     echo -e "  ${DIM}CDP: ${ws}${RESET}"
     echo ""
     cd "$JEV_BROWSER_DIR" || return 1
-    BU_CDP_WS="$ws" exec uv run --env-file .env jev "$@"
+    # exec_cli e não `exec uv`: no Windows o uv pode ser um wrapper .cmd/.ps1,
+    # que precisa do cmd.exe/powershell.exe para rodar, e pode estar fora do
+    # PATH desta janela. A env sobrevive ao exec de dentro da função.
+    BU_CDP_WS="$ws" exec_cli uv run --env-file .env jev "$@"
 }
 
 if [[ ${1:-} == "ask" ]]; then

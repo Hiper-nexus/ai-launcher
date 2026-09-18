@@ -306,6 +306,18 @@ def tratar(msg):
 
 
 def main():
+    # O protocolo é JSON UTF-8, mas no Windows o Python abre stdin/stdout no
+    # encoding da locale (cp1252). Um pedido com acento — "refatorar a
+    # autenticação" — chegava como UnicodeDecodeError e derrubava o servidor
+    # na primeira frase em português. reconfigure existe desde o 3.7; em
+    # stream que não aceite (stdin redirecionado de forma exótica) seguimos
+    # com o que havia em vez de não subir.
+    for stream in (sys.stdin, sys.stdout):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
     for linha in sys.stdin:
         linha = linha.strip()
         if not linha:

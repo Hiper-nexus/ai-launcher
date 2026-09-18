@@ -156,6 +156,98 @@ if ( exec_cli cli-fantasma >/dev/null 2>&1 ); then
     fail "exec_cli executou CLI inexistente"
 fi
 
+# ── ai_win_path / ai_posix_path ──────────────────────────
+# Programa nativo não entende /c/Users/... e o Git Bash não entende C:\... .
+# Quem converte é o cygpath; a conversão à mão não serve porque /tmp não é
+# unidade, é um mount do MSYS para o Temp do Windows.
+convertido=$(ai_win_path "$TMP_DIR") || fail "ai_win_path falhou em $TMP_DIR"
+[[ "$convertido" == ?:'\'* ]] || fail "ai_win_path não devolveu caminho do Windows: $convertido"
+de_volta=$(ai_posix_path "$convertido") || fail "ai_posix_path falhou em $convertido"
+[[ "$de_volta" == /* ]] || fail "ai_posix_path não devolveu caminho POSIX: $de_volta"
+[[ -d "$de_volta" ]] || fail "a ida e volta perdeu o diretório: $TMP_DIR → $de_volta"
+
+# As envs do Windows chegam em formato nativo; sem conversão nenhum teste -x
+# passa nelas, e era assim que o Chrome ficava "não instalado" com o binário
+# no disco.
+if [[ -n "${LOCALAPPDATA:-}" ]]; then
+    lad=$(ai_posix_path "$LOCALAPPDATA")
+    [[ -d "$lad" ]] || fail "ai_posix_path não resolveu LOCALAPPDATA: $lad"
+fi
+
+# ── ai_pid_na_porta / ai_win_proc_info ───────────────────
+# A cadeia de confiança do `ai jb` se apoia nas duas: quem escuta a porta, e
+# qual é o argv desse processo. No Windows nenhuma das fontes POSIX serve —
+# não há lsof, e o `ps` do Git Bash só enxerga processo MSYS enquanto o PID
+# vem do netstat, que é do Windows.
+PY_BIN="$(ai_python)" || fail "nenhum Python utilizável"
+# Porta EFÊMERA anunciada em arquivo, e não um número fixo: porta fixa colide
+# com processo vivo de uma execução anterior, e aí a inspeção cai no processo
+# errado. O >/dev/null é o que impede o processo de fundo de segurar o stdout
+# do teste — com ele aberto, a suíte trava em vez de falhar.
+cat > "${TMP_DIR}/listener.py" <<'PY'
+import http.server, os
+srv = http.server.HTTPServer(("127.0.0.1", 0),
+                             http.server.BaseHTTPRequestHandler)
+with open(os.environ["PORT_FILE"], "w") as fh:
+    fh.write(str(srv.server_address[1]))
+srv.serve_forever()
+PY
+PORT_FILE="${TMP_DIR}/porta" PYTHONIOENCODING=utf-8 \
+    "$PY_BIN" "${TMP_DIR}/listener.py" --marca-do-teste=xyz >/dev/null 2>&1 &
+LISTENER=$!
+trap 'kill "$LISTENER" 2>/dev/null || true; rm -rf "$TMP_DIR"' EXIT
+
+PORTA_TESTE=""
+for _ in $(seq 1 60); do
+    [[ -s "${TMP_DIR}/porta" ]] && { PORTA_TESTE=$(cat "${TMP_DIR}/porta"); break; }
+    sleep 0.2
+done
+[[ -n "$PORTA_TESTE" ]] || fail "o listener de teste não subiu"
+
+pid_achado=$(ai_pid_na_porta "$PORTA_TESTE" || true)
+if [[ -z "$pid_achado" ]]; then
+    kill "$LISTENER" 2>/dev/null || true
+    fail "ai_pid_na_porta não achou quem escuta a ${PORTA_TESTE}"
+fi
+[[ "$pid_achado" =~ ^[0-9]+$ ]] || { kill "$LISTENER" 2>/dev/null; fail "PID inválido: '$pid_achado'"; }
+
+info=$(ai_win_proc_info "$pid_achado") || {
+    kill "$LISTENER" 2>/dev/null || true
+    fail "ai_win_proc_info não leu o processo $pid_achado"
+}
+dono=$(printf '%s\n' "$info" | sed -n '1p')
+argv=$(printf '%s\n' "$info" | sed -n '2p')
+[[ "${dono#*|}" == "${USERNAME}" ]] || { kill "$LISTENER" 2>/dev/null; fail "dono veio '$dono', esperado ${USERNAME}"; }
+[[ "$argv" == *"--marca-do-teste=xyz"* ]] || {
+    kill "$LISTENER" 2>/dev/null || true
+    fail "o argv não veio completo (é nele que a verificação do perfil se apoia): $argv"
+}
+
+kill "$LISTENER" 2>/dev/null || true
+wait "$LISTENER" 2>/dev/null || true
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+# Porta que ninguém escuta não pode inventar PID, e PID inexistente não pode
+# virar "processo confiável". A porta livre é a que acabou de ser liberada:
+# qualquer número fixo aqui pode estar em uso por outro programa da máquina.
+sleep 0.5
+[[ -z "$(ai_pid_na_porta "$PORTA_TESTE" || true)" ]] ||
+    fail "ai_pid_na_porta inventou dono para porta livre"
+if ai_win_proc_info 4294967000 >/dev/null 2>&1; then
+    fail "ai_win_proc_info aprovou um PID inexistente"
+fi
+if ai_pid_na_porta "nao-e-porta" >/dev/null 2>&1; then
+    fail "ai_pid_na_porta aceitou porta não numérica"
+fi
+
+# ── python3(): encoding travado em UTF-8 ─────────────────
+# O Python do Windows escreve no encoding da locale (cp1252) e morria com
+# UnicodeEncodeError em qualquer print com acento — "réplicas:", "confiança →".
+saida=$(python3 -c 'print("confiança → ok")') ||
+    fail "wrapper python3() falhou ao imprimir texto com acento"
+[[ "$saida" == "confiança → ok" ]] ||
+    fail "wrapper python3() corrompeu o texto: '$saida'"
+
 # ── secure_file ──────────────────────────────────────────
 secret="${TMP_DIR}/providers.conf"
 printf 'sakana=chave-de-teste\n' > "$secret"
@@ -187,8 +279,10 @@ secure_dir "${TMP_DIR}/nao-existe-dir" || fail "secure_dir falhou em caminho aus
 # existe lá, ou `curl | bash`, que baixa instalador de binário Linux.
 : "${YELLOW:=}" "${RESET:=}"
 
+# uv não é CLI de agente: é o runner do `ai jb`. Está aqui porque o hint dele
+# também era `brew install` fixo.
 CLIS_COM_HINT=(claude codex gemini deepcode qodercli kimi grok opencode omp
-               agy devin cursor-agent prime-agent muse ollama)
+               agy devin cursor-agent prime-agent muse ollama uv)
 
 for cli in "${CLIS_COM_HINT[@]}"; do
     hint=$(cli_install_hint "$cli") ||

@@ -20,13 +20,46 @@
 #      match abortava o shell e o job de background morria — deixando a célula
 #      de versão VAZIA no menu até o TTL expirar. O assert 4 é o que pega isso.
 #
-# O menu exige TTY, então o teste roda sob `script(1)`, que aloca um pty.
+# O menu exige TTY (`[[ ! -t 0 ]]` aborta na entrada), então o teste roda sob
+# um alocador de pty. Qual existe depende da plataforma, e nenhum é universal:
+# o `script` do macOS e o do util-linux têm sintaxes diferentes, e o Windows
+# não tem `script` nenhum — no Git Bash quem aloca pty é o winpty.
+#
+# PTY_MODO abaixo é escolhido por PROBE, não por palpite de plataforma: cada
+# candidato é executado e só entra se de fato entregar um stdin que passa no
+# `test -t 0`. Sem nenhum candidato funcional o arquivo se pula — winpty, por
+# exemplo, não consegue criar pty quando não há console anexado (CI, ou uma
+# sessão tocada por ferramenta), e ali o teste não teria como rodar.
 
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
+
+PTY_MODO=""
+pty_probe() {
+    local saida
+    # macOS/BSD: script -q <arquivo> <programa> [args]
+    if command -v script >/dev/null 2>&1; then
+        saida=$(printf '' | script -q /dev/null bash -c 'test -t 0 && echo PTY-OK' 2>/dev/null | tr -d '\r')
+        [[ "$saida" == *PTY-OK* ]] && { PTY_MODO="script-bsd"; return 0; }
+        # util-linux: o programa vai em -c, e o arquivo é o último argumento
+        saida=$(printf '' | script -qc 'test -t 0 && echo PTY-OK' /dev/null 2>/dev/null | tr -d '\r')
+        [[ "$saida" == *PTY-OK* ]] && { PTY_MODO="script-linux"; return 0; }
+    fi
+    if command -v winpty >/dev/null 2>&1; then
+        saida=$(printf '' | winpty bash -c 'test -t 0 && echo PTY-OK' 2>/dev/null | tr -d '\r')
+        [[ "$saida" == *PTY-OK* ]] && { PTY_MODO="winpty"; return 0; }
+    fi
+    return 1
+}
+
+if ! pty_probe; then
+    echo "  (pulado: nenhum alocador de pty utilizável — script(1)/winpty)"
+    echo "  o menu exige TTY e não há como dar um a ele aqui"
+    exit 0
+fi
 
 BASH_BIN="$(command -v bash)"
 [[ -n "$BASH_BIN" ]] || { echo "FAIL: bash não encontrado" >&2; exit 1; }
@@ -75,8 +108,18 @@ run_menu() {
         TMPDIR="$TMPDIR_TEST" \
         PATH="${EXTRA_PATH:+${EXTRA_PATH}:}$(dirname "$BASH_BIN"):/usr/bin:/bin:/usr/sbin:/sbin" \
         TERM="${TERM:-xterm}" \
-        script -q /dev/null "$BASH_BIN" "$ROOT/ai" 2>&1 || true
+        SYSTEMROOT="${SYSTEMROOT:-}" \
+        "${PTY_CMD[@]}" 2>&1 || true
 }
+
+# A linha de comando do alocador, montada a partir do modo que passou no probe.
+# SYSTEMROOT acima entra por causa do winpty: ele é binário do Windows e não
+# sobe sem essa env, que o `env -i` teria levado embora.
+case "$PTY_MODO" in
+    script-bsd)   PTY_CMD=(script -q /dev/null "$BASH_BIN" "$ROOT/ai") ;;
+    script-linux) PTY_CMD=(script -qc "$BASH_BIN $ROOT/ai" /dev/null) ;;
+    winpty)       PTY_CMD=(winpty "$BASH_BIN" "$ROOT/ai") ;;
+esac
 
 echo "── menu com cache fresco faltando chaves"
 out=$(run_menu)
