@@ -42,6 +42,7 @@ ai gf           # sessão inteira no GLM 5.3 Flash (aliases: glm-flash, zf, flas
 ai ds           # DeepSeek V4.1 Flash (GA, model ID: deepseek-flash) via Claude Code
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai ds-v41       # DeepSeek V4.1 Flash — alias do ai ds
+ai step         # Step Plan step-5-preview (StepFun, janela de 1M) via Claude Code
 ai x            # Codex direto
 ai sol          # Codex GPT-5.6 Sol com janela de 1M de contexto (aliases: x-1m, x1m)
 ai fugu         # Codex via Sakana Fugu Ultra V2.0
@@ -702,7 +703,7 @@ independente. E numa página lenta (Wikipedia, por exemplo) a recuperação de
 - Passagem de prompt direto via linha de comando
 - Flags configuráveis no topo do script
 - Contas Claude múltiplas com troca sem logout (Keychain, macOS)
-- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Ollama, LM Studio, LiteLLM)
+- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Step Plan/StepFun, Ollama, LM Studio, LiteLLM)
 - Roteamento por linguagem natural via Jev/TypeSafe (`ai ask`)
 - Picker de repos conhecidos quando lançado fora de um repo git
 - Funciona em Linux e no macOS padrão

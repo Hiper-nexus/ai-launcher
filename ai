@@ -630,6 +630,17 @@ GLM_FLASH_MODEL_LABEL="${GLM_FLASH_MODEL%%\[*}"
 # específico, exporte AI_DEEPSEEK_V41_MODEL=<model> que CLI e menu pegam.
 DEEPSEEK_V41_MODEL="${AI_DEEPSEEK_V41_MODEL:-deepseek-flash[1m]}"
 
+# Step Plan (StepFun): step-5-preview é o flagship de teste — 1M de input
+# (max_input_tokens 1024000 no /v1/models), visão e reasoning; step-3.7-flash
+# (262k, também com visão) cobre o tier barato de Haiku/subagent. Diferente
+# do GLM/DeepSeek, o endpoint REJEITA o sufixo [1m] no nome (testado direto:
+# 400 model_invalid) — o sufixo aqui só sobrevive porque o Claude Code faz
+# o strip antes do wire; é ele que faz o client enxergar a janela de 1M em
+# vez de assumir ~200k para modelo desconhecido.
+STEP_MODEL="${AI_STEP_MODEL:-step-5-preview[1m]}"
+STEP_FLASH_MODEL="${AI_STEP_FLASH_MODEL:-step-3.7-flash}"
+STEP_MODEL_LABEL="${STEP_MODEL%%\[*}"
+
 # O endpoint oficial da DeepSeek e o Token Plan da Alibaba nomeiam o mesmo
 # modelo diferente: deepseek-flash lá é deepseek-v4.1-flash cá. Sem este
 # mapeamento a rota pela Alibaba morre com 400 "Model not exist." — o id
@@ -683,6 +694,7 @@ declare -A PROVIDER_URLS=(
     [sakana]="https://api.sakana.ai/v1"
     [openrouter]="https://openrouter.ai/api"
     [deepseek]="https://api.deepseek.com/anthropic"
+    [step]="https://api.stepfun.ai/step_plan"
     [ollama]="http://localhost:11434"
     [lmstudio]="http://localhost:1234"
     [litellm]="http://localhost:4000"
@@ -696,6 +708,7 @@ declare -A PROVIDER_MODELS=(
     [sakana]="${SAKANA_DEFAULT_MODEL}"
     [openrouter]="anthropic/claude-sonnet-4"
     [deepseek]="deepseek-flash"
+    [step]="${STEP_MODEL}"
     [ollama]="qwen2.5-coder:32b"
     [lmstudio]="loaded-model"
     [litellm]="gpt-4o"
@@ -716,6 +729,10 @@ declare -A PROVIDER_EXTRA_ENV=(
     # (o Pro oficial segue pelo 'ai ds-pro'). NÃO vale pro omp, que lê o
     # PROVIDER_MODELS (nome limpo, sem sufixo).
     [deepseek]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432 CLAUDE_CODE_EFFORT_LEVEL=max CLAUDE_CODE_SUBAGENT_MODEL=deepseek-flash ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-flash ANTHROPIC_DEFAULT_SONNET_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${DEEPSEEK_V41_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=deepseek-v4-pro[1m]"
+    # Step Plan (StepFun): Sonnet/Opus/Fable no step-5-preview [1m] (janela
+    # de 1M via sufixo — o client faz o strip antes do wire), Haiku e
+    # subagentes no step-3.7-flash (262k, com visão).
+    [step]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 CLAUDE_CODE_SUBAGENT_MODEL=${STEP_FLASH_MODEL} ANTHROPIC_DEFAULT_HAIKU_MODEL=${STEP_FLASH_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${STEP_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${STEP_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=${STEP_MODEL}"
     [ollama]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [lmstudio]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
@@ -2924,6 +2941,7 @@ C_DEVIN=$(_fg    99 102 241  63 34)  # índigo Devin (Cognition)
 C_OLLAMA=$(_fg  245 245 245 255 37)  # branco Ollama
 C_HF=$(_fg      255 214  10 220 33)  # amarelo Hugging Face
 C_FL=$(_fg      132 204  22 148 32)  # lima Featherless
+C_STEP=$(_fg      0 191 165  79 36)  # turquesa StepFun (Step Plan)
 C_AB=$(_fg      239  68  68 196 31)  # vermelho Abliteration (sem censura)
 C_SEC=$(_fg     244  63  94 203 31)  # vermelho segurança
 C_TOOL=$(_fg    250 204  21 220 33)  # âmbar ferramentas
@@ -5253,6 +5271,7 @@ CLIs de IA:
   deepseek, ds           Abre Claude Code usando DeepSeek (V4.1 Flash)
   deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
   deepseek-v41, ds-v41   Abre Claude Code usando DeepSeek V4.1 Flash (GA)
+  step, sp, stepfun      Abre Claude Code usando Step Plan (step-5-preview 1M)
   codex,  x              Abre Codex CLI
   sakana, fugu           Abre Codex com Fugu Ultra V2.0
   claude-fugu, cfugu     Abre Claude Code com o endpoint Anthropic da Sakana
@@ -5417,6 +5436,7 @@ Exemplos:
   ai ds                           Claude via DeepSeek V4.1 Flash
   ai ds-pro                       Claude via DeepSeek V4-Pro
   ai ds-v41                       Claude via DeepSeek V4.1 Flash (beta)
+  ai step                         Claude via Step Plan step-5-preview (1M)
   ai x                            Codex
   ai sol                          Codex GPT-5.6 Sol com janela de 1M de contexto
   ai sol "tarefa gigante"         (auto-compacta em 900k; aliases: x-1m, x1m)
@@ -6439,6 +6459,13 @@ elif [[ ${1:-} == "muse-spark" || ${1:-} == "ms" || ${1:-} == "meta" ]]; then
     shift
     muse_dispatch "$@"
     exit $?
+elif [[ ${1:-} == "step" || ${1:-} == "sp" || ${1:-} == "stepfun" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    provider_setup_env "step" || exit 1
+    enter_repo_if_needed
+    launch "Step Plan (${STEP_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "deepseek-pro" || ${1:-} == "dsp" || ${1:-} == "ds-pro" ]]; then
     shift
     parse_global_flags "$@"
@@ -7047,6 +7074,7 @@ glm_status=$(provider_cli_status_icon glm claude)
 muse_spark_status=$(provider_cli_status_icon muse-spark claude)
 muse_cli_status=$(muse_status_icon)   # CLI própria: só depende da key
 deepseek_status=$(provider_cli_status_icon deepseek claude)
+step_status=$(provider_cli_status_icon step claude)
 sakana_status=$(provider_cli_status_icon sakana codex)
 codex_status=$(status_icon codex)
 gemini_status=$(status_icon gemini)
@@ -7131,12 +7159,13 @@ menu_row 25 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_statu
 menu_row 26 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
 menu_row 27 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
 menu_row 28 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
+menu_row 29 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 29 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 30 "$C_TOOL" "🔌 Providers"
-menu_tool 31 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 32 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 30 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 31 "$C_TOOL" "🔌 Providers"
+menu_tool 32 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 33 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -7160,7 +7189,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-32/0]: " choice
+read -rp "Escolha [1-33/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -7225,10 +7254,13 @@ case $choice in
        launch "DeepSeek V4.1 Flash" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
    27) ab_dispatch || true ;;
    28) ab_launch_claude ;;
-   29) enter_repo_if_needed
+   29) provider_setup_env "step" || continue
+       enter_repo_if_needed
+       launch "Step Plan (${STEP_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+   30) enter_repo_if_needed
        launch_codex_security ;;
-   30) provider_list ;;
-   31) flags_menu
+   31) provider_list ;;
+   32) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -7248,7 +7280,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   32) conta_menu ;;
+   33) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
