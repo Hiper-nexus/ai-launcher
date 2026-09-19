@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.57.3"
+AI_LAUNCHER_VERSION="1.58.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -618,9 +618,19 @@ GLM_MODEL="${AI_GLM_MODEL:-glm-5.3[1m]}"
 # no /model sem sair da sessão; 'ai gf' abre a sessão inteira nele.
 # Na hora: AI_GLM_FLASH_MODEL=.
 GLM_FLASH_MODEL="${AI_GLM_FLASH_MODEL:-glm-5.3-flash[1m]}"
+# Variante FlashX do 5.3 (lançada 18/09/2026): serving rápido do Flash (até
+# 200 tok/s), id próprio glm-5.3-flashx no catálogo (confirmado em
+# /paas/v4/models). O sufixo [1m] segue o mesmo mecanismo: o client faz o
+# strip antes do wire — e o endpoint REJEITA o sufixo colado (curl direto
+# responde 1211 "Unknown Model"). ATENÇÃO: o GLM Coding Plan ainda NÃO
+# inclui o FlashX (erro 1311 testado em 19/09/2026) — o 'ai glx' só passa
+# a funcionar quando a Z.ai liberar o modelo no plano. Na hora:
+# AI_GLM_FLASHX_MODEL=.
+GLM_FLASHX_MODEL="${AI_GLM_FLASHX_MODEL:-glm-5.3-flashx[1m]}"
 # Versões sem o sufixo, para rótulos de menu/launch ("5.3", não "5.3[1m]").
 GLM_MODEL_LABEL="${GLM_MODEL%%\[*}"
 GLM_FLASH_MODEL_LABEL="${GLM_FLASH_MODEL%%\[*}"
+GLM_FLASHX_MODEL_LABEL="${GLM_FLASHX_MODEL%%\[*}"
 
 # DeepSeek V4.1 Flash (GA). A DeepSeek dropou os números de versão do nome:
 # o ID 'deepseek-flash' sempre aponta pro V4.1 mais novo (changelog em
@@ -1006,6 +1016,17 @@ glm_flash_setup_env() {
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="$GLM_FLASH_MODEL"
     export ANTHROPIC_DEFAULT_SONNET_MODEL="$GLM_FLASH_MODEL"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="$GLM_FLASH_MODEL"
+}
+
+# GLM FlashX: mesma mecânica do Flash — provider/base_url do GLM, modelo
+# trocado em TODOS os slots (o provider_setup_env exporta 5.3/Flash; sem o
+# override a sessão misturaria gerações).
+glm_flashx_setup_env() {
+    provider_setup_env "glm" || return 1
+    export ANTHROPIC_MODEL="$GLM_FLASHX_MODEL"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$GLM_FLASHX_MODEL"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="$GLM_FLASHX_MODEL"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$GLM_FLASHX_MODEL"
 }
 
 sakana_setup_claude_env() {
@@ -5263,6 +5284,7 @@ CLIs de IA:
   c --bare               Modo mínimo (sem hooks/plugins)
   glm, zai               Claude Code via GLM/Z.ai — 5.3 (haiku = 5.3 Flash)
   glm-flash, gf, flash   Sessão inteira no GLM 5.3 Flash (mesmo 1M, +barato)
+  glm-flashx, glx, gfx   Sessão inteira no GLM 5.3 FlashX (200 tok/s; ainda fora do Coding Plan)
   ms, muse-spark         CLI própria do Muse Spark (Meta AI)
   ms claude              Abre Claude Code usando Muse Spark (yolo)
   ms model [nome]        Escolhe o modelo — vale para os dois caminhos
@@ -6448,6 +6470,13 @@ elif [[ ${1:-} == "glm-flash" || ${1:-} == "gf" || ${1:-} == "zf" || ${1:-} == "
     glm_flash_setup_env || exit 1
     enter_repo_if_needed
     launch "GLM ${GLM_FLASH_MODEL_LABEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+elif [[ ${1:-} == "glm-flashx" || ${1:-} == "glx" || ${1:-} == "gfx" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    glm_flashx_setup_env || exit 1
+    enter_repo_if_needed
+    launch "GLM ${GLM_FLASHX_MODEL_LABEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "glm" || ${1:-} == "zai" || ${1:-} == "z.ai" ]]; then
     shift
     parse_global_flags "$@"
