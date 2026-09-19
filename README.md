@@ -43,7 +43,7 @@ ai ds           # DeepSeek V4.1 Flash (GA, model ID: deepseek-flash) via Claude 
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai ds-v41       # DeepSeek V4.1 Flash — alias do ai ds
 ai step         # Step Plan step-5-preview (StepFun, janela de 1M) via Claude Code
-ai x            # Codex direto
+ai x            # Codex direto (1M por padrão no provider oficial)
 ai sol          # Codex GPT-5.6 Sol com janela de 1M de contexto (aliases: x-1m, x1m)
 ai fugu         # Codex via Sakana Fugu Ultra V2.0
 ai claude-fugu  # Claude Code via endpoint Anthropic-compatible da Sakana
@@ -80,7 +80,7 @@ ai --help       # Ajuda
 | GLM/Z.ai | `ai glm` | Claude Code via provider `glm` — **GLM 5.3** nos slots sonnet/opus e **GLM 5.3 Flash** no haiku (troque no `/model` sem sair da sessão). Os modelCodes carregam o sufixo `[1m]` (mecanismo do próprio Claude Code para janela de 1M em modelos não reconhecidos — o client faz strip antes de chamar a API) |
 | GLM Flash | `ai gf`, `ai glm-flash` | Mesmo provider `glm` — **GLM 5.3 Flash** (também 1M) em **todos** os slots |
 | Muse Spark (Meta AI) | `ai ms` | CLI própria (REPL/one-shot) via `api.meta.ai`; `ai ms claude` abre no Claude Code (yolo); `ai ms model` escolhe o modelo para os dois caminhos |
-| Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
+| Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` + `-c model_context_window=1000000 -c model_auto_compact_token_limit=900000` (1M por padrão no provider oficial; override com `-c` na linha ou `AI_CODEX_CONTEXT_WINDOW=""`) |
 | Codex Sol 1M | `ai sol` | idem + `-m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` |
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra`, `ai fugu-max`, `ai fugu-ultra-v1.x`, `ai claude-fugu` | Ultra V2.0 por padrão no perfil Codex `fugu` ou no endpoint Anthropic-compatible |
 | Gemini | `ai g` | `--yolo` |
@@ -459,6 +459,8 @@ ai sol --conta trabalho  # troca de conta Codex e já lança
 ```
 
 Equivale a `codex -m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` — a compactação automática do histórico começa em 900k, deixando folga antes do teto. Ajustes por env: `AI_CODEX_SOL_MODEL`, `AI_CODEX_SOL_CONTEXT_WINDOW`, `AI_CODEX_SOL_AUTOCOMPACT_LIMIT`.
+
+O `ai x` (Codex padrão, provider oficial) também já sai com 1M por padrão — mesma receita, sem fixar modelo: `-c model_context_window=1000000 -c model_auto_compact_token_limit=900000`. Override por sessão com `ai x -c model_context_window=...`, ou desligue via `AI_CODEX_CONTEXT_WINDOW="" AI_CODEX_AUTOCOMPACT_LIMIT=""`. Providers alternativos (`ai x --via ...`) não recebem essas flags, pois a janela é específica de cada modelo.
 
 Para tornar 1M o **padrão permanente** do Codex (aí sim editando config), adicione no topo do `~/.codex/config.toml`, antes de qualquer `[seção]`:
 

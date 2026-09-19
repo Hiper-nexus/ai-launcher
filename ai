@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.58.0"
+AI_LAUNCHER_VERSION="1.59.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -72,6 +72,16 @@ OPENCODE_FLAGS=(--auto)
 CODEX_SOL_MODEL="${AI_CODEX_SOL_MODEL:-gpt-5.6-sol}"
 CODEX_SOL_CONTEXT_WINDOW="${AI_CODEX_SOL_CONTEXT_WINDOW:-1000000}"
 CODEX_SOL_AUTOCOMPACT_LIMIT="${AI_CODEX_SOL_AUTOCOMPACT_LIMIT:-900000}"
+
+# ── Codex padrão (ai x) com janela de 1M ───────────────
+# O Codex limita o contexto por padrão (~256k, custo/latência), mas os modelos
+# atuais suportam 1M. Estas flags ativam 1M em toda sessão `ai x`/`ai codex` no
+# provider oficial — nada é gravado no ~/.codex/config.toml. Override por
+# sessão: `ai x -c model_context_window=...`. Para voltar ao default do Codex:
+# AI_CODEX_CONTEXT_WINDOW="" AI_CODEX_AUTOCOMPACT_LIMIT="".
+# Nota: `${VAR-...}` sem dois-pontos de propósito — string vazia desliga.
+CODEX_CONTEXT_WINDOW="${AI_CODEX_CONTEXT_WINDOW-1000000}"
+CODEX_AUTOCOMPACT_LIMIT="${AI_CODEX_AUTOCOMPACT_LIMIT-900000}"
 
 # ── Ollama ───────────────────────────────────────────────
 # Modo cloud (default): fala direto com ollama.com via API key.
@@ -5221,6 +5231,25 @@ codex_add_model_flag() {
     CODEX_FLAGS+=("-m" "$model")
 }
 
+# Janela de 1M padrão no provider oficial. Pula a chave que o usuário já
+# passou na linha (override explícito vence) ou esvaziou via env.
+# Varre CODEX_FLAGS (flags -c já consumidas) + args restantes (prompt).
+codex_add_context_flags() {
+    local arg have_window=false have_limit=false
+    for arg in "${CODEX_FLAGS[@]+"${CODEX_FLAGS[@]}"}" "$@"; do
+        case "$arg" in
+            *model_context_window*) have_window=true ;;
+            *model_auto_compact_token_limit*) have_limit=true ;;
+        esac
+    done
+    if [[ -n "${CODEX_CONTEXT_WINDOW:-}" && "$have_window" == false ]]; then
+        CODEX_FLAGS+=(-c "model_context_window=${CODEX_CONTEXT_WINDOW}")
+    fi
+    if [[ -n "${CODEX_AUTOCOMPACT_LIMIT:-}" && "$have_limit" == false ]]; then
+        CODEX_FLAGS+=(-c "model_auto_compact_token_limit=${CODEX_AUTOCOMPACT_LIMIT}")
+    fi
+}
+
 launch_sakana_fugu() {
     local requested_model="${1:-fugu}"
     shift || true
@@ -5294,7 +5323,7 @@ CLIs de IA:
   deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
   deepseek-v41, ds-v41   Abre Claude Code usando DeepSeek V4.1 Flash (GA)
   step, sp, stepfun      Abre Claude Code usando Step Plan (step-5-preview 1M)
-  codex,  x              Abre Codex CLI
+  codex,  x              Abre Codex CLI (1M por padrão no provider oficial)
   sakana, fugu           Abre Codex com Fugu Ultra V2.0
   claude-fugu, cfugu     Abre Claude Code com o endpoint Anthropic da Sakana
   fugu-ultra             Abre Fugu Ultra V2.0
@@ -5459,7 +5488,7 @@ Exemplos:
   ai ds-pro                       Claude via DeepSeek V4-Pro
   ai ds-v41                       Claude via DeepSeek V4.1 Flash (beta)
   ai step                         Claude via Step Plan step-5-preview (1M)
-  ai x                            Codex
+  ai x                            Codex (1M por padrão; override: -c model_context_window=...)
   ai sol                          Codex GPT-5.6 Sol com janela de 1M de contexto
   ai sol "tarefa gigante"         (auto-compacta em 900k; aliases: x-1m, x1m)
   ai fugu                         Codex via Fugu Ultra V2.0
@@ -6589,6 +6618,27 @@ elif [[ ${1:-} == "codex" || ${1:-} == "x" ]]; then
     fi
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    # Flags nativas do Codex na frente (-m/-c); o resto é prompt.
+    # Precedente: launch_sakana_fugu consome -c do mesmo jeito.
+    while [[ $# -gt 0 && "${1:-}" == -* ]]; do
+        case "$1" in
+            -m|--model)
+                if [[ $# -ge 2 ]]; then
+                    codex_add_model_flag "$2"; shift 2
+                else
+                    break
+                fi
+                ;;
+            -c|--config)
+                if [[ $# -ge 2 ]]; then
+                    CODEX_FLAGS+=("-c" "$2"); shift 2
+                else
+                    break
+                fi
+                ;;
+            *) break ;;
+        esac
+    done
     if [[ -n "$_active_provider" ]]; then
         codex_provider_setup_env "$_active_provider" || exit 1
         case "$_active_provider" in
@@ -6606,9 +6656,12 @@ elif [[ ${1:-} == "codex" || ${1:-} == "x" ]]; then
     else
         # Auto-switch de conta Codex se a janela de 5h esgotou
         xconta_autoswitch_if_needed
+        # Janela de 1M por padrão no provider oficial (override: -c na linha
+        # ou AI_CODEX_CONTEXT_WINDOW="").
+        codex_add_context_flags "$@"
     fi
     enter_repo_if_needed
-    launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS "$@"
+    launch "Codex (1M)" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS "$@"
 elif [[ ${1:-} == "sol" || ${1:-} == "x-1m" || ${1:-} == "x1m" ]]; then
     shift
     if [[ "${1:-}" == "--conta" || "${1:-}" == "--account" ]]; then
@@ -7238,8 +7291,9 @@ case $choice in
        launch "DeepSeek V4.1" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     5) launch_sakana_fugu "fugu" ;;
     6) xconta_autoswitch_if_needed
+       codex_add_context_flags
        enter_repo_if_needed
-       launch "Codex" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
+       launch "Codex (1M)" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
     7) enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
     8) enter_repo_if_needed
