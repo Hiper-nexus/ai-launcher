@@ -61,6 +61,8 @@ ai dv           # Devin CLI (Cognition) — modo dangerous (auto-aprova tudo)
 ai dv "prompt"  # Devin one-shot (modo print)
 ai omp          # omp (oh-my-pi) direto — 60+ providers num só agente
 ai omp models   # Providers/modelos que o omp enxerga hoje
+ai mi           # MiMoCode (Xiaomi MiMo) — CLI própria, não é o Claude
+ai mi "prompt"  # MiMoCode one-shot via 'mimo run'
 ai ol           # Ollama Cloud (roda em ollama.com, não na sua máquina)
 ai ab           # GLM-5.3 sem censura (Abliteration.ai) — chat ou one-shot
 ai c "prompt"   # Claude com prompt
@@ -89,6 +91,7 @@ ai --help       # Ajuda
 | Qoder | `ai q` | `--dangerously-skip-permissions` |
 | Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
 | omp (oh-my-pi) | `ai omp`, `ai o` | `--yolo` — agente único com 60+ providers; `-m` troca de modelo |
+| MiMoCode (Xiaomi MiMo) | `ai mi`, `ai mimo` | CLI **própria** (binário `mimo`, fork do OpenCode) — não é o Claude com outro modelo. `--dangerously-skip-permissions`; one-shot via `mimo run` |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
@@ -319,6 +322,25 @@ A key vai só pro `providers.conf` local (chmod 600, slot `dashscope`), nunca pr
 > **sobrescrevendo** um `agent` pré-existente — o Grok Build usa esse mesmo nome. O launcher
 > invoca `cursor-agent` justamente para não depender do nome disputado; se você usa o Grok
 > por `agent`, restaure com `ln -sf ~/.grok/bin/agent ~/.local/bin/agent` após instalar.
+
+## MiMoCode (Xiaomi MiMo — CLI própria)
+
+O MiMo/MiMoCode é a CLI **própria** da Xiaomi MiMo (binário `mimo`, fork do OpenCode) — **não é o Claude Code com outro modelo**. Tem harness próprio: TUI de sessão, memória persistente, subagentes, compose workflows, dream/distill. Por isso o launcher abre o `mimo` direto (como `opencode`/`muse`), e não como um provider do Claude (`glm`/`deepseek`).
+
+```bash
+ai mi                      # TUI do MiMoCode (--dangerously-skip-permissions)
+ai mi "corrige este teste" # one-shot: mimo run <yolo> "prompt"
+ai mi providers            # login/credenciais (alias: auth; Xiaomi MiMo OAuth)
+ai mi models               # lista modelos (xiaomi/mimo-v2.5, mimo-auto, …)
+ai mi -m xiaomi/mimo-v2.5  # escolhe o modelo da sessão
+ai mi -c                   # continua a última sessão
+```
+
+**Análise CLI própria vs Claude:** o MiMo **não roda dentro do Claude**. O interop que existe é opcional: `mimo` consegue importar a auth do Claude Code e há uma skill `claude-code` quando a CLI do Claude está instalada — mas o agente, as tools e a TUI são do MiMoCode.
+
+**One-shot:** `ai mi "prompt"` vira `mimo run --dangerously-skip-permissions "prompt"` (o `run` aceita as flags de yolo). Subcomandos (`providers`/`auth`, `models`, `mcp`, `agent`, `upgrade`, `run`, …) e flags informativas passam **verbatim**.
+
+Instalação: `npm install -g @mimo-ai/cli` (binário `mimo`; se o npm bloquear o postinstall: `npm install -g --allow-scripts=@mimo-ai/cli @mimo-ai/cli`). Docs: [mimo.xiaomi.com/coder](https://mimo.xiaomi.com/coder).
 
 ## Prime Agent (sessão persistente)
 
@@ -743,6 +765,7 @@ npm install -g @qoder-ai/qodercli            # Qoder
 npm install -g @vegamo/deepcode-cli          # Deep Code
 npm install -g @oh-my-pi/pi-coding-agent     # omp (oh-my-pi)
 npm install -g opencode-ai                   # opencode
+npm install -g @mimo-ai/cli                  # MiMoCode (binário `mimo`)
 ```
 
 Não precisa decorar: quando uma CLI falta, o launcher imprime o comando certo **para a plataforma em que você está** (`cli_install_hint`).

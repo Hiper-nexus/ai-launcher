@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.59.0"
+AI_LAUNCHER_VERSION="1.60.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -63,6 +63,12 @@ PRIME_FLAGS=()
 # comando e rejeita a flag, cuspindo o help. Por isso o opencode não usa o
 # launch() genérico e sim opencode_launch(), que monta a ordem certa.
 OPENCODE_FLAGS=(--auto)
+# MiMoCode (Xiaomi MiMo) — CLI própria, fork do OpenCode. Não roda dentro do
+# Claude: o harness é o `mimo` (TUI, memória, subagentes). O yolo documentado
+# é --dangerously-skip-permissions / --yolo (auto-aprova o que não estiver
+# explicitamente negado; pede confirmação uma vez). Mesma ordem do opencode:
+# no one-shot as flags vão DEPOIS de 'run' (mimo_launch).
+MIMO_FLAGS=(--dangerously-skip-permissions)
 
 # ── Codex GPT-5.6 Sol com janela de 1M (ai sol) ──────────
 # O Codex limita o contexto por padrão (custo/latência), mas o gpt-5.6-sol
@@ -349,6 +355,14 @@ cli_install_hint() {
             else
                 echo "  Instale: brew install anomalyco/tap/opencode"
             fi
+            ;;
+        mimo)
+            # Binário `mimo` (@mimo-ai/cli) + pacote de plataforma. npm nas
+            # três plataformas; o postinstall baixa o binário nativo — se o
+            # npm bloquear scripts, reinstale com --allow-scripts=@mimo-ai/cli.
+            echo "  Instale: npm install -g @mimo-ai/cli"
+            echo "  (se faltar o binário: npm install -g --allow-scripts=@mimo-ai/cli @mimo-ai/cli)"
+            echo "  Depois:  ai mi providers   # login / credenciais"
             ;;
         omp)
             if ai_is_windows; then
@@ -2968,6 +2982,7 @@ C_CURSOR=$(_fg  148 163 184 145 90)  # ardósia Cursor
 C_OMP=$(_fg     251 146  60 208 33)  # laranja omp (oh-my-pi)
 C_PRIME=$(_fg   217  70 239 207 35)  # fúcsia Prime Agent
 C_OPENCODE=$(_fg 94 234 212  86 36)  # água-marinha opencode
+C_MIMO=$(_fg    255  69   0 202 31)  # laranja Xiaomi MiMo
 C_DEVIN=$(_fg    99 102 241  63 34)  # índigo Devin (Cognition)
 C_OLLAMA=$(_fg  245 245 245 255 37)  # branco Ollama
 C_HF=$(_fg      255 214  10 220 33)  # amarelo Hugging Face
@@ -3156,7 +3171,7 @@ AI_VERSION_TTL_MIN=5
 
 preload_versions() {
     local cmds=(claude codex gemini agy kimi grok deepcode qodercli cursor-agent \
-                omp prime-agent codex-security qwen opencode muse devin)
+                omp prime-agent codex-security qwen opencode muse devin mimo)
     # Cache ainda válido → nada a fazer.
     if [[ -f "$AI_VERSION_CACHE" ]] && \
        [[ -n "$(find "$AI_VERSION_CACHE" -mmin "-$AI_VERSION_TTL_MIN" 2>/dev/null)" ]]; then
@@ -3273,6 +3288,62 @@ opencode_launch() {
         echo -e "${GREEN}Iniciando opencode:${RESET} opencode ${flags[*]+"${flags[*]}"}"
         echo ""
         exec opencode ${flags[@]+"${flags[@]}"} ${extra[@]+"${extra[@]}"}
+    fi
+}
+
+# ── MiMoCode (Xiaomi MiMo) ───────────────────────────────
+# CLI própria (binário `mimo`, fork do OpenCode) — NÃO é o Claude Code com
+# outro modelo. One-shot é o subcomando 'run', igual ao opencode: as flags de
+# yolo vão DEPOIS de 'run'. Subcomando reconhecido passa verbatim.
+mimo_install_hint() {
+    cli_install_hint mimo
+}
+
+mimo_launch() {
+    if ! check_installed mimo; then
+        echo -e "${RED}Erro: MiMoCode (mimo) não está instalado.${RESET}"
+        mimo_install_hint
+        exit 1
+    fi
+    # Subcomandos do MiMoCode ou flag informativa passa verbatim: sem --yolo e
+    # sem virar prompt. Senão 'ai mi --version' abriria uma sessão com o texto
+    # "--version" — o mesmo erro que o teste do omp cobre. A lista espelha o
+    # 'mimo --help' real (0.1.14): providers tem alias auth; não existe
+    # 'account' (a doc antiga falava isso, o CLI publica providers/auth).
+    case "${1:-}" in
+        run|mcp|agent|models|providers|auth|upgrade|uninstall|serve| \
+        llm-server|stats|export|import|session|github|pr|plugin| \
+        plug|db|acp|attach|debug|completion|--version|-v|--help|-h)
+            exec mimo "$@"
+            ;;
+    esac
+    # -m/--model e --agent/--session/--continue/--trust/--never-ask viajam
+    # junto do 'run' (ou da TUI); o que sobrar é o prompt.
+    local -a extra=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -m|--model)
+                shift; [[ $# -gt 0 ]] || break
+                extra+=(-m "$1"); shift ;;
+            --agent|-s|--session)
+                extra+=("$1"); shift; [[ $# -gt 0 ]] || break
+                extra+=("$1"); shift ;;
+            -c|--continue|--never-ask|--trust)
+                extra+=("$1"); shift ;;
+            *) break ;;
+        esac
+    done
+    local -a flags=("${MIMO_FLAGS[@]+"${MIMO_FLAGS[@]}"}")
+    save_history "MiMoCode"
+    if [[ $# -gt 0 ]]; then
+        local prompt="$*"
+        echo -e "${GREEN}Iniciando MiMoCode:${RESET} mimo run ${flags[*]+"${flags[*]}"} \"${prompt}\""
+        echo ""
+        exec mimo run ${flags[@]+"${flags[@]}"} ${extra[@]+"${extra[@]}"} "$prompt"
+    else
+        echo -e "${GREEN}Iniciando MiMoCode:${RESET} mimo ${flags[*]+"${flags[*]}"}"
+        echo ""
+        exec mimo ${flags[@]+"${flags[@]}"} ${extra[@]+"${extra[@]}"}
     fi
 }
 
@@ -5340,6 +5411,12 @@ CLIs de IA:
   cursor,  cu              Abre Cursor Agent CLI (modo yolo)
   agy,     a              Abre Antigravity CLI
   opencode, oc             Abre opencode (--auto; 'ai oc auth' passa verbatim)
+  mimo, mi                 Abre MiMoCode (Xiaomi — CLI própria, não é o Claude)
+  mimo "prompt"            One-shot via 'mimo run' (flags de yolo valem também)
+  mimo providers           Login / credenciais (alias: auth; Xiaomi MiMo OAuth)
+  mimo models              Lista modelos (xiaomi/mimo-v2.5, mimo-auto, …)
+  mimo -m <provider/model> Escolhe o modelo da sessão
+  mimo -c                  Continua a última sessão
 
   --via <provider>       Usa provider alternativo (ex: glm no Claude, sakana no Codex)
 
@@ -5411,6 +5488,19 @@ Qwen (Alibaba Model Studio — Qwen-Max, DUAS opções, não é o Qoder):
   Modelo: AI_QWEN_MODEL (default qwen3-max-latest; fixe qwen3.8-max se quiser).
   Endpoint OpenAI: AI_QWEN_BASE_URL. Endpoint Anthropic (Claude): AI_QWEN_ANTHROPIC_URL
   ou 'qw claude-url'. Coding Plan tem URL fixa; Model Studio inclui o WorkspaceId.
+
+MiMoCode (Xiaomi MiMo — CLI própria, NÃO é o Claude com outro modelo):
+  mi / mimo / mimocode   Abre o MiMoCode (binário `mimo`, fork do OpenCode)
+  mi "prompt"            One-shot: 'mimo run <flags-yolo> "prompt"'
+  mi providers           Login/credenciais (alias: auth; Xiaomi MiMo OAuth)
+  mi models              Lista modelos (xiaomi/mimo-v2.5, mimo-auto, …)
+  mi -m <provider/model> Escolhe o modelo da sessão
+  mi -c                  Continua a última sessão
+  Análise: o MiMo tem CLI e harness PRÓPRIOS (TUI, memória persistente,
+  subagentes, compose). Não roda dentro do Claude Code — o que existe de
+  interop é a importação opcional da auth do Claude e a skill claude-code.
+  Por isso o launcher abre o `mimo` direto, como o opencode/muse — e não
+  como um provider do Claude (glm/deepseek).
 
 Providers:
   provider, p            Menu de providers
@@ -5510,6 +5600,11 @@ Exemplos:
   ai qoder "prompt"               Qoder CLI com prompt direto
   ai cu                           Cursor Agent CLI (modo yolo)
   ai cursor "prompt"              Cursor Agent com prompt direto
+  ai mi                           MiMoCode (CLI própria da Xiaomi MiMo)
+  ai mi "corrige este teste"      MiMoCode one-shot ('mimo run')
+  ai mi providers                 Login/credenciais (alias: auth)
+  ai mi -m xiaomi/mimo-v2.5       Escolhe o modelo da sessão
+  ai mimo models                  Lista modelos/providers do MiMoCode
   ai dv                           Devin CLI (modo dangerous — auto-aprova tudo)
   ai devin "prompt"               Devin one-shot (modo print)
   ai dv -c "continua isso"        Retoma a última sessão com um prompt
@@ -6017,6 +6112,7 @@ JEV_ROUTE_CRITERIA='{
   "omp":          "Tarefa em que o usuário citou omp ou oh-my-pi.",
   "prime":        "Tarefa em que o usuário citou prime-agent.",
   "opencode":     "Tarefa em que o usuário citou opencode.",
+  "mimo":         "Tarefa em que o usuário citou MiMo, MiMoCode, Xiaomi MiMo ou pediu o modelo MiMo/xiaomi-mimo. É a CLI própria (TUI agente), não o Claude com outro modelo.",
   "muse":         "Tarefa em que o usuário pediu a CLI do Muse Code (não o Muse Spark dentro do Claude Code).",
   "devin":        "Tarefa delegada de ponta a ponta, que pode rodar sozinha e voltar depois com o resultado pronto — trabalho longo e autônomo, não conversa iterativa.",
   "ollama":       "Quando o que importa é ONDE O MODELO RODA: o usuário quer privacidade (não mandar o código para fora), trabalhar sem internet, ou citou Ollama explicitamente. NÃO escolha esta só porque a tarefa menciona algo local — um arquivo local, um servidor local de desenvolvimento, abrir no navegador local. O critério é onde a IA roda, não onde o código roda. Para tarefa normal de programação que só menciona algo local como cenário, prefira claude ou deepseek.",
@@ -6738,6 +6834,12 @@ elif [[ ${1:-} == "opencode" || ${1:-} == "oc" ]]; then
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
     enter_repo_if_needed
     opencode_launch "$@"
+elif [[ ${1:-} == "mimo" || ${1:-} == "mi" || ${1:-} == "mimocode" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    enter_repo_if_needed
+    mimo_launch "$@"
 elif [[ ${1:-} == "kimi" || ${1:-} == "k" ]]; then
     shift
     parse_global_flags "$@"
@@ -7171,6 +7273,7 @@ devin_status=$(status_icon devin)
 omp_status=$(status_icon omp)
 prime_status=$(status_icon prime-agent)
 opencode_status=$(opencode_status_icon)
+mimo_status=$(status_icon mimo)
 secscan_status=$(status_icon codex-security)
 ollama_status=$(ollama_status_icon)
 hf_status=$(hf_status_icon)
@@ -7195,6 +7298,7 @@ devin_ver=$(get_version devin)
 omp_ver=$(get_version omp)
 prime_ver=$(get_version prime-agent)
 opencode_ver=$(get_version opencode)
+mimo_ver=$(get_version mimo)
 secscan_ver=$(get_version codex-security)
 qwen_status=$(qwen_status_icon)
 qwen_ver=$(get_version qwen)
@@ -7227,27 +7331,28 @@ menu_row 13 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status
 menu_row 14 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
 menu_row 15 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
 menu_row 16 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
-menu_row 17 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
-menu_row 18 "$C_DEVIN"    "Devin CLI"    "${devin_ver}"         "${devin_status}"
+menu_row 17 "$C_MIMO"     "MiMo Code"    "${mimo_ver}"          "${mimo_status}"
+menu_row 18 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
+menu_row 19 "$C_DEVIN"    "Devin CLI"    "${devin_ver}"         "${devin_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 19 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 20 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 21 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 22 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 23 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 24 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
-menu_row 25 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
-menu_row 26 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
-menu_row 27 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
-menu_row 28 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
-menu_row 29 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
+menu_row 20 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 21 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 22 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 23 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 24 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 25 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 26 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 27 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
+menu_row 28 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
+menu_row 29 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
+menu_row 30 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 30 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 31 "$C_TOOL" "🔌 Providers"
-menu_tool 32 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 33 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 31 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 32 "$C_TOOL" "🔌 Providers"
+menu_tool 33 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 34 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -7266,12 +7371,13 @@ flag_row "$C_DEVIN"  "Devin"  "${DEVIN_FLAGS[*]+"${DEVIN_FLAGS[*]}"}"
 flag_row "$C_MUSE"   "Muse"   "${MUSE_CODE_FLAGS[*]+"${MUSE_CODE_FLAGS[*]}"}"
 flag_row "$C_OMP"    "omp"    "${OMP_FLAGS[*]+"${OMP_FLAGS[*]}"}"
 flag_row "$C_OPENCODE" "opencode" "${OPENCODE_FLAGS[*]+"${OPENCODE_FLAGS[*]}"}"
+flag_row "$C_MIMO"   "MiMo"   "${MIMO_FLAGS[*]+"${MIMO_FLAGS[*]}"}"
 echo ""
 
 show_last_used
 echo ""
 
-read -rp "Escolha [1-33/0]: " choice
+read -rp "Escolha [1-34/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -7315,35 +7421,37 @@ case $choice in
        launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
    16) enter_repo_if_needed
        opencode_launch ;;
-   17) if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; cli_install_hint muse; continue; fi
+   17) enter_repo_if_needed
+       mimo_launch ;;
+   18) if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; cli_install_hint muse; continue; fi
        enter_repo_if_needed
        launch "Muse Code" muse "" MUSE_CODE_FLAGS ;;
-   18) if ! check_installed devin; then echo -e "${RED}Erro: Devin CLI não instalada.${RESET}"; cli_install_hint devin; continue; fi
+   19) if ! check_installed devin; then echo -e "${RED}Erro: Devin CLI não instalada.${RESET}"; cli_install_hint devin; continue; fi
        enter_repo_if_needed
        devin_launch ;;
-   19) ollama_dispatch || true ;;
-   20) hf_menu_panel || true ;;
-   21) fl_dispatch || true ;;
-   22) qwen_launch || true ;;
-   23) qwen_launch_claude || true ;;
-   24) muse_dispatch || true ;;
-   25) provider_setup_env "deepseek" || continue
+   20) ollama_dispatch || true ;;
+   21) hf_menu_panel || true ;;
+   22) fl_dispatch || true ;;
+   23) qwen_launch || true ;;
+   24) qwen_launch_claude || true ;;
+   25) muse_dispatch || true ;;
+   26) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "deepseek-v4-pro[1m]")"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   26) provider_setup_env "deepseek" || continue
+   27) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "$DEEPSEEK_V41_MODEL")"
        enter_repo_if_needed
        launch "DeepSeek V4.1 Flash" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   27) ab_dispatch || true ;;
-   28) ab_launch_claude ;;
-   29) provider_setup_env "step" || continue
+   28) ab_dispatch || true ;;
+   29) ab_launch_claude ;;
+   30) provider_setup_env "step" || continue
        enter_repo_if_needed
        launch "Step Plan (${STEP_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   30) enter_repo_if_needed
+   31) enter_repo_if_needed
        launch_codex_security ;;
-   31) provider_list ;;
-   32) flags_menu
+   32) provider_list ;;
+   33) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -7363,7 +7471,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
 	       esac
 	       ;;
-   33) conta_menu ;;
+   34) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
