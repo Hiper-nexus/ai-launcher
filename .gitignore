@@ -33,3 +33,7 @@ credentials.json
 # ── Sistema ───────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# ── Previews / demos locais (não são o launcher) ──────────
+preview-*.png
+pelicano-*.html

@@ -63,6 +63,7 @@ ai omp          # omp (oh-my-pi) direto — 60+ providers num só agente
 ai omp models   # Providers/modelos que o omp enxerga hoje
 ai mi           # MiMoCode (Xiaomi MiMo) — CLI própria, não é o Claude
 ai mi "prompt"  # MiMoCode one-shot via 'mimo run'
+ai mi -m xiaomi/mimo-v2.6-pro   # série V2.6 (1M de contexto)
 ai ol           # Ollama Cloud (roda em ollama.com, não na sua máquina)
 ai ab           # GLM-5.3 sem censura (Abliteration.ai) — chat ou one-shot
 ai c "prompt"   # Claude com prompt
@@ -91,7 +92,7 @@ ai --help       # Ajuda
 | Qoder | `ai q` | `--dangerously-skip-permissions` |
 | Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
 | omp (oh-my-pi) | `ai omp`, `ai o` | `--yolo` — agente único com 60+ providers; `-m` troca de modelo |
-| MiMoCode (Xiaomi MiMo) | `ai mi`, `ai mimo` | CLI **própria** (binário `mimo`, fork do OpenCode) — não é o Claude com outro modelo. `--dangerously-skip-permissions`; one-shot via `mimo run` |
+| MiMoCode (Xiaomi MiMo) | `ai mi`, `ai mimo` | CLI **própria** (binário `mimo`, fork do OpenCode) — não é o Claude com outro modelo. `--dangerously-skip-permissions`; one-shot via `mimo run`; modelos V2.6 (pro / ultraspeed / flash) e V2.5 |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
@@ -331,10 +332,55 @@ O MiMo/MiMoCode é a CLI **própria** da Xiaomi MiMo (binário `mimo`, fork do O
 ai mi                      # TUI do MiMoCode (--dangerously-skip-permissions)
 ai mi "corrige este teste" # one-shot: mimo run <yolo> "prompt"
 ai mi providers            # login/credenciais (alias: auth; Xiaomi MiMo OAuth)
-ai mi models               # lista modelos (xiaomi/mimo-v2.5, mimo-auto, …)
-ai mi -m xiaomi/mimo-v2.5  # escolhe o modelo da sessão
+ai mi models               # lista modelos da Xiaomi
+ai mi -m xiaomi/mimo-v2.6-pro               # V2.6 flagship (1M)
+ai mi -m xiaomi/mimo-v2.6-pro-ultraspeed    # V2.6 Pro ~10x mais rápido
+ai mi -m xiaomi/mimo-v2.6-flash             # V2.6 Flash (MoE 309B/15B)
 ai mi -c                   # continua a última sessão
 ```
+
+**Série V2.6** (lançada 21–22/09/2026) — três modelos, janela 1M (compacta em 944K):
+
+| Modelo | Papel |
+|--------|-------|
+| `xiaomi/mimo-v2.6-pro` | flagship 1T+ multimodal + execução de agentes |
+| `xiaomi/mimo-v2.6-pro-ultraspeed` | mesmo checkpoint do Pro, ~10x mais rápido no decode |
+| `xiaomi/mimo-v2.6-flash` | MoE 309B total / 15B ativos, open-weight, rápido e barato |
+
+O catálogo nativo do `mimo` ainda lista V2.5. Para plugar o V2.6 por cima do login Xiaomi, registre no `~/.config/mimocode/mimocode.jsonc`:
+
+```jsonc
+{
+  "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
+  "model": "xiaomi/mimo-v2.6-pro",
+  "provider": {
+    "xiaomi": {
+      "models": {
+        "mimo-v2.6-pro": {
+          "name": "MiMo-V2.6-Pro",
+          "limit": { "context": 1048576, "output": 131072 },
+          "reasoning": true, "tool_call": true,
+          "modalities": { "input": ["text", "image", "video", "audio"], "output": ["text"] }
+        },
+        "mimo-v2.6-pro-ultraspeed": {
+          "name": "MiMo-V2.6-Pro-UltraSpeed",
+          "limit": { "context": 1048576, "output": 131072 },
+          "reasoning": true, "tool_call": true,
+          "modalities": { "input": ["text", "image", "video", "audio"], "output": ["text"] }
+        },
+        "mimo-v2.6-flash": {
+          "name": "MiMo-V2.6-Flash",
+          "limit": { "context": 1048576, "output": 131072 },
+          "reasoning": true, "tool_call": true,
+          "modalities": { "input": ["text", "image", "video", "audio"], "output": ["text"] }
+        }
+      }
+    }
+  }
+}
+```
+
+Valide com `mimo models xiaomi` — os seis (V2.5 + V2.6) devem listar.
 
 **Análise CLI própria vs Claude:** o MiMo **não roda dentro do Claude**. O interop que existe é opcional: `mimo` consegue importar a auth do Claude Code e há uma skill `claude-code` quando a CLI do Claude está instalada — mas o agente, as tools e a TUI são do MiMoCode.
 

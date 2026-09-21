@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.60.0"
+AI_LAUNCHER_VERSION="1.61.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -5414,7 +5414,7 @@ CLIs de IA:
   mimo, mi                 Abre MiMoCode (Xiaomi — CLI própria, não é o Claude)
   mimo "prompt"            One-shot via 'mimo run' (flags de yolo valem também)
   mimo providers           Login / credenciais (alias: auth; Xiaomi MiMo OAuth)
-  mimo models              Lista modelos (xiaomi/mimo-v2.5, mimo-auto, …)
+  mimo models              Lista modelos (V2.6: pro, pro-ultraspeed, flash; V2.5 e auto)
   mimo -m <provider/model> Escolhe o modelo da sessão
   mimo -c                  Continua a última sessão
 
@@ -5493,9 +5493,15 @@ MiMoCode (Xiaomi MiMo — CLI própria, NÃO é o Claude com outro modelo):
   mi / mimo / mimocode   Abre o MiMoCode (binário `mimo`, fork do OpenCode)
   mi "prompt"            One-shot: 'mimo run <flags-yolo> "prompt"'
   mi providers           Login/credenciais (alias: auth; Xiaomi MiMo OAuth)
-  mi models              Lista modelos (xiaomi/mimo-v2.5, mimo-auto, …)
+  mi models              Lista modelos da Xiaomi
   mi -m <provider/model> Escolhe o modelo da sessão
   mi -c                  Continua a última sessão
+  Série V2.6 (21–22/09/2026, janela 1M):
+    xiaomi/mimo-v2.6-pro              flagship 1T+ multimodal + agentes
+    xiaomi/mimo-v2.6-pro-ultraspeed   mesmo Pro, ~10x mais rápido
+    xiaomi/mimo-v2.6-flash            MoE 309B/15B open-weight, rápido
+  (O catálogo nativo ainda lista V2.5; registre o V2.6 no
+   ~/.config/mimocode/mimocode.jsonc sob o provider xiaomi — ver README.)
   Análise: o MiMo tem CLI e harness PRÓPRIOS (TUI, memória persistente,
   subagentes, compose). Não roda dentro do Claude Code — o que existe de
   interop é a importação opcional da auth do Claude e a skill claude-code.
@@ -5603,7 +5609,8 @@ Exemplos:
   ai mi                           MiMoCode (CLI própria da Xiaomi MiMo)
   ai mi "corrige este teste"      MiMoCode one-shot ('mimo run')
   ai mi providers                 Login/credenciais (alias: auth)
-  ai mi -m xiaomi/mimo-v2.5       Escolhe o modelo da sessão
+  ai mi -m xiaomi/mimo-v2.6-pro   Série V2.6 flagship (1M de contexto)
+  ai mi -m xiaomi/mimo-v2.6-flash V2.6 Flash (MoE, mais barato/rápido)
   ai mimo models                  Lista modelos/providers do MiMoCode
   ai dv                           Devin CLI (modo dangerous — auto-aprova tudo)
   ai devin "prompt"               Devin one-shot (modo print)
