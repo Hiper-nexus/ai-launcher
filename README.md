@@ -43,6 +43,8 @@ ai ds           # DeepSeek V4.1 Flash (GA, model ID: deepseek-flash) via Claude 
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai ds-v41       # DeepSeek V4.1 Flash — alias do ai ds
 ai step         # Step Plan step-5-preview (StepFun, janela de 1M) via Claude Code
+ai mint         # Macaron V1 (macaron-v1-coding-venti) via Claude Code (aliases: macaron, venti, mac, mv; menu: 5)
+ai mint-codex   # Codex via Macaron V1 (provider responses; alias: mcx)
 ai x            # Codex direto (1M por padrão no provider oficial)
 ai sol          # Codex GPT-5.6 Sol com janela de 1M de contexto (aliases: x-1m, x1m)
 ai fugu         # Codex via Sakana Fugu Ultra V2.0
@@ -86,6 +88,7 @@ ai --help       # Ajuda
 | Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` + `-c model_context_window=1000000 -c model_auto_compact_token_limit=900000` (1M por padrão no provider oficial; override com `-c` na linha ou `AI_CODEX_CONTEXT_WINDOW=""`) |
 | Codex Sol 1M | `ai sol` | idem + `-m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` |
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra`, `ai fugu-max`, `ai fugu-ultra-v1.x`, `ai claude-fugu` | Ultra V2.0 por padrão no perfil Codex `fugu` ou no endpoint Anthropic-compatible |
+| Macaron V1 (Mind Lab) | `ai mint`, `ai macaron`, `ai venti`, `ai mint-codex` (menu: 5) | Modelo **hospedado** (não é CLI de agente) — roda dentro do Claude Code (`ANTHROPIC_BASE_URL=https://mint.macaron.im`) ou do Codex (`wire_api=responses`). Default `macaron-v1-coding-venti`; troque com `AI_MACARON_MODEL=`. Key: `ai p add macaron` |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--auto` (never-ask; o `--yolo` do kimi ainda pede yes em ação arriscada/plano) |
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |

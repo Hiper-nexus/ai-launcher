@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.61.0"
+AI_LAUNCHER_VERSION="1.62.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -675,6 +675,15 @@ STEP_MODEL="${AI_STEP_MODEL:-step-5-preview[1m]}"
 STEP_FLASH_MODEL="${AI_STEP_FLASH_MODEL:-step-3.7-flash}"
 STEP_MODEL_LABEL="${STEP_MODEL%%\[*}"
 
+# Macaron V1 (Mind Lab / Mint Recursive) — modelo HOSPEDADO, não é CLI de
+# agente. Roda DENTRO do Claude Code (API Anthropic-compatible na raiz do
+# endpoint) ou do Codex (wire_api responses). Docs:
+# https://mint-doc.macaron.xin/model-api/integrations/
+# Preços macaron-v1-venti (dashboard Models & Pricing): input $1.50/$0.90
+# (miss/hit de cache) e output $4.50/$2.70 nas tiers listadas.
+# Modelo coding padrão: macaron-v1-coding-venti (override: AI_MACARON_MODEL=macaron-v1-venti).
+MACARON_MODEL="${AI_MACARON_MODEL:-macaron-v1-coding-venti}"
+
 # O endpoint oficial da DeepSeek e o Token Plan da Alibaba nomeiam o mesmo
 # modelo diferente: deepseek-flash lá é deepseek-v4.1-flash cá. Sem este
 # mapeamento a rota pela Alibaba morre com 400 "Model not exist." — o id
@@ -733,6 +742,7 @@ declare -A PROVIDER_URLS=(
     [lmstudio]="http://localhost:1234"
     [litellm]="http://localhost:4000"
     [muse-spark]="https://api.meta.ai"
+    [macaron]="https://mint.macaron.im"
 )
 
 # Modelos default por provider
@@ -747,6 +757,7 @@ declare -A PROVIDER_MODELS=(
     [lmstudio]="loaded-model"
     [litellm]="gpt-4o"
     [muse-spark]="muse-spark-1.3"
+    [macaron]="${MACARON_MODEL}"
 )
 
 # Env vars extras por provider (timeout, tráfego, etc.)
@@ -771,6 +782,11 @@ declare -A PROVIDER_EXTRA_ENV=(
     [lmstudio]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
     [muse-spark]="API_TIMEOUT_MS=600000 ANTHROPIC_MODEL=muse-spark-1.3 ANTHROPIC_DEFAULT_HAIKU_MODEL=muse-spark-1.3 ANTHROPIC_DEFAULT_SONNET_MODEL=muse-spark-1.3 ANTHROPIC_DEFAULT_OPUS_MODEL=muse-spark-1.3 CLAUDE_CODE_SUBAGENT_MODEL=muse-spark-1.3 ENABLE_TOOL_SEARCH=true"
+    # Macaron V1: sessão inteira no mesmo modelo (não há tier Haiku/Opus
+    # separado na série V1). _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 é o
+    # que a doc oficial do Macaron pede para o Claude Code aceitar o endpoint
+    # terceiro sem reclamar de first-party.
+    [macaron]="API_TIMEOUT_MS=600000 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1 CLAUDE_CODE_ATTRIBUTION_HEADER=0 ANTHROPIC_MODEL=${MACARON_MODEL} ANTHROPIC_DEFAULT_HAIKU_MODEL=${MACARON_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${MACARON_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${MACARON_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=${MACARON_MODEL} CLAUDE_CODE_SUBAGENT_MODEL=${MACARON_MODEL}"
 )
 
 # ── omp (oh-my-pi): afinação padrão ──────────────────────
@@ -936,6 +952,14 @@ provider_setup_env() {
         clear_anthropic_provider_env
         return
     fi
+
+    # Aliases do Macaron/Mint: o slot no providers.conf é sempre 'macaron'
+    # (mesma key, mesmo base-url). mint/venti/etc. só apelidam o caminho.
+    case "$provider" in
+        mint|mac|mv|venti|macaron-v1|macaron-v1-venti)
+            provider="macaron"
+            ;;
+    esac
 
     case "$provider" in
         sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v2.0|sakana-ultra-v2.0|fugu-max|sakana-max|fugu-max-v1.0|sakana-max-v1.0|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1)
@@ -1416,11 +1440,129 @@ PY
     fi
 }
 
+# ── Macaron V1 no Codex ─────────────────────────────────
+# Provider OpenAI-compatible (wire_api responses) conforme
+# https://mint-doc.macaron.xin/model-api/integrations/ — o mesmo padrão do
+# sakana_write_provider_config: key via env_key (nunca no TOML), bloco
+# marcado por comentário para o remove ser idempotente.
+macaron_write_provider_config() {
+    local config="$1"
+    cat >> "$config" <<'TOML'
+
+# ai-launcher: Macaron V1 provider
+[model_providers.macaron]
+name = "Macaron V1"
+base_url = "https://mint.macaron.im"
+env_key = "MACARON_API_KEY"
+wire_api = "responses"
+stream_idle_timeout_ms = 7200000
+stream_max_retries = 5
+request_max_retries = 4
+TOML
+}
+
+macaron_remove_provider_config() {
+    local config="$1"
+    local tmp_config
+    tmp_config=$(mktemp) || return 1
+    trap "rm -f '$tmp_config'" RETURN
+    awk '
+        /^# ai-launcher: Macaron V1 provider$/ { pending_comment = $0; next }
+        /^\[model_providers\.macaron\]$/ { pending_comment = ""; skip = 1; next }
+        /^\[/ && skip { skip = 0 }
+        {
+            if (pending_comment != "") {
+                print pending_comment
+                pending_comment = ""
+            }
+            if (!skip) print
+        }
+        END {
+            if (pending_comment != "") print pending_comment
+        }
+    ' "$config" > "$tmp_config"
+    mv "$tmp_config" "$config"
+    secure_file "$config"
+    trap - RETURN
+}
+
+macaron_install_codex_config() {
+    local mode="${1:-}"
+    local quiet=false
+    local force=false
+    case "$mode" in
+        quiet) quiet=true ;;
+        force) force=true ;;
+        force-quiet) quiet=true; force=true ;;
+    esac
+    local codex_home="${CODEX_HOME:-${HOME}/.codex}"
+    local config="${codex_home}/config.toml"
+    local changed=false
+
+    mkdir -p "$codex_home"
+    if [[ ! -f "$config" ]]; then
+        install -m 600 /dev/null "$config"
+        changed=true
+    fi
+
+    if [[ "$force" == true && -f "$config" ]] && grep -q '^\[model_providers\.macaron\]' "$config" 2>/dev/null; then
+        macaron_remove_provider_config "$config"
+        changed=true
+    fi
+
+    if ! grep -q '^\[model_providers\.macaron\]' "$config" 2>/dev/null; then
+        macaron_write_provider_config "$config"
+        secure_file "$config"
+        changed=true
+    fi
+
+    if [[ "$quiet" != true || "$changed" == true ]]; then
+        echo -e "${GREEN}✔ Macaron V1 configurado no Codex${RESET}"
+        echo -e "  ${DIM}${config}${RESET}"
+    fi
+}
+
+# Lança o Codex apontado no Macaron (modelo via -m, provider via -c).
+# Espelha launch_sakana_fugu, sem o catálogo de reasoning levels (a série
+# V1 não expõe effort multi-nível no wire responses).
+launch_macaron_codex() {
+    while [[ $# -gt 0 && ${1:-} == -* ]]; do
+        case "$1" in
+            -m|--model)
+                shift
+                [[ $# -gt 0 ]] && MACARON_MODEL="$1" && shift
+                ;;
+            -c|--config)
+                shift
+                [[ $# -gt 0 ]] && CODEX_FLAGS+=("-c" "$1") && shift
+                ;;
+            --search|--no-alt-screen)
+                CODEX_FLAGS+=("$1")
+                shift
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    macaron_install_codex_config quiet
+    codex_provider_setup_env "macaron" || exit 1
+    codex_add_model_flag "$MACARON_MODEL"
+    CODEX_FLAGS+=(-c "model_provider=macaron")
+
+    enter_repo_if_needed
+    launch "Codex + Macaron ${MACARON_MODEL}" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS "$@"
+}
+
 codex_provider_setup_env() {
     local provider="$1"
     case "$provider" in
         sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v2.0|sakana-ultra-v2.0|fugu-max|sakana-max|fugu-max-v1.0|sakana-max-v1.0|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1)
             provider="sakana"
+            ;;
+        macaron|mint|mac|mv|venti|macaron-v1|macaron-v1-venti)
+            provider="macaron"
             ;;
         ""|codex|openai)
             return 0
@@ -1428,33 +1570,46 @@ codex_provider_setup_env() {
         *)
             echo -e "${RED}Provider ${provider} não está configurado para Codex no launcher.${RESET}"
             echo "  Para Sakana/Fugu use: ai x --via sakana"
+            echo "  Para Macaron use:     ai x --via macaron"
             return 1
             ;;
     esac
 
-    sakana_install_codex_config quiet
-
-    local api_key
-    api_key=$(provider_load_key "$provider") || true
-    api_key="${api_key:-${SAKANA_API_KEY:-}}"
+    local api_key env_key label
+    case "$provider" in
+        macaron)
+            macaron_install_codex_config quiet
+            env_key="MACARON_API_KEY"
+            label="Macaron"
+            api_key=$(provider_load_key macaron) || true
+            api_key="${api_key:-${MACARON_API_KEY:-}}"
+            ;;
+        sakana)
+            sakana_install_codex_config quiet
+            env_key="SAKANA_API_KEY"
+            label="Sakana Fugu"
+            api_key=$(provider_load_key sakana) || true
+            api_key="${api_key:-${SAKANA_API_KEY:-}}"
+            ;;
+    esac
 
     if [[ -z "$api_key" ]]; then
         if [[ -t 0 ]]; then
-            read -rsp "$(echo -e "  ${BOLD}API Key para sakana:${RESET} ")" api_key
+            read -rsp "$(echo -e "  ${BOLD}API Key para ${provider}:${RESET} ")" api_key
             echo ""
             if [[ -n "$api_key" ]]; then
                 provider_save_key "$provider" "$api_key"
                 echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET}"
             fi
         else
-            echo -e "${RED}Erro: API key para sakana não configurada.${RESET}"
-            echo "  Configure: ai p add sakana"
+            echo -e "${RED}Erro: API key para ${provider} não configurada.${RESET}"
+            echo "  Configure: ai p add ${provider}"
             return 1
         fi
     fi
 
-    export SAKANA_API_KEY="$api_key"
-    echo -e "${CYAN}Provider:${RESET} sakana → https://api.sakana.ai/v1"
+    export "${env_key}=${api_key}"
+    echo -e "${CYAN}Provider:${RESET} ${label} → ${PROVIDER_URLS[$provider]:-}"
 }
 
 provider_list() {
@@ -2969,6 +3124,7 @@ C_CLAUDE=$(_fg 217 119  87 173 33)   # terracota Anthropic
 C_GLM=$(_fg     56 160 255  75 36)   # azul Z.ai
 C_MUSE=$(_fg     0 129 251  33 34)   # azul Meta
 C_DEEPSEEK=$(_fg 77 107 254  69 34)  # azul DeepSeek
+C_MACARON=$(_fg  16 185 129  48 32)  # verde menta Macaron V1 (Mind Lab)
 C_DEEPCODE=$(_fg 77 107 254  69 34)  # azul DeepSeek (Deep Code CLI)
 C_QWEN=$(_fg    124  92 237 099 35)  # roxo Qwen
 C_SAKANA=$(_fg  255 111 145 211 35)  # rosa Sakana
@@ -3601,6 +3757,8 @@ provider_cli_status_icon() {
     elif [[ -n "$(provider_load_key "$provider")" ]]; then
         echo -e "${GREEN}✔${RESET}"
     elif [[ "$provider" == "sakana" && -n "${SAKANA_API_KEY:-}" ]]; then
+        echo -e "${GREEN}✔${RESET}"
+    elif [[ "$provider" == "macaron" && -n "${MACARON_API_KEY:-}" ]]; then
         echo -e "${GREEN}✔${RESET}"
     else
         echo -e "${YELLOW}✗ sem key${RESET}"
@@ -5394,6 +5552,8 @@ CLIs de IA:
   deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
   deepseek-v41, ds-v41   Abre Claude Code usando DeepSeek V4.1 Flash (GA)
   step, sp, stepfun      Abre Claude Code usando Step Plan (step-5-preview 1M)
+  mint, macaron, venti   Abre Claude Code usando Macaron V1 (macaron-v1-coding-venti)
+  mint-codex, mcx        Abre Codex usando Macaron V1 (provider responses)
   codex,  x              Abre Codex CLI (1M por padrão no provider oficial)
   sakana, fugu           Abre Codex com Fugu Ultra V2.0
   claude-fugu, cfugu     Abre Claude Code com o endpoint Anthropic da Sakana
@@ -6107,6 +6267,8 @@ JEV_ROUTE_CRITERIA='{
   "sakana":       "Tarefa que o usuário associou a Fugu ou Sakana, ou quando pediu explicitamente o Codex/Fugu. Aqui é o Fugu Ultra V2.0 (o topo da linha).",
   "fugu-max":     "Mesma linha do Fugu, mas a versão ECONÔMICA (Max V1.0) em vez do Ultra: quando o usuário quer Fugu/Sakana gastando menos, ou citou fugu-max. Se ele citou Fugu sem falar de custo, prefira `sakana`.",
   "claude-fugu":  "O harness do Claude Code rodando por cima do endpoint Anthropic-compatible da Sakana: quando o usuário quer o Fugu mas dentro do Claude Code (ferramentas, skills e fluxo do Claude), ou citou claude-fugu. Diferente de `sakana`, que abre o Codex.",
+  "step":         "Tarefa em que o usuário citou StepFun, Step Plan, ou step-5-preview.",
+  "mint":         "Tarefa em que o usuário citou Macaron, Mint, Mint Recursive, Mind Lab, ou macaron-v1 (venti/grande/tall). Modelo hospedado rodando dentro do Claude Code. Não confundir com MiMo/mimo.",
   "codex":        "Tarefa em que o usuário citou Codex, GPT, OpenAI, ou pediu explicitamente o Codex (janela padrão). Se ele precisa de contexto gigante no Codex, prefira `sol`.",
   "sol":          "Codex com janela de 1M de contexto: tarefa longa demais para o Codex padrão, varredura de repositório inteiro, ou quando o usuário citou Sol, x-1m, ou pediu 1M de contexto no Codex.",
   "gemini":       "Tarefa em que o usuário citou Gemini, Google, ou pediu contexto muito longo com busca.",
@@ -6627,6 +6789,16 @@ elif [[ ${1:-} == "step" || ${1:-} == "sp" || ${1:-} == "stepfun" ]]; then
     provider_setup_env "step" || exit 1
     enter_repo_if_needed
     launch "Step Plan (${STEP_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+elif [[ ${1:-} == "mint-codex" || ${1:-} == "macaron-codex" || ${1:-} == "mcx" ]]; then
+    shift
+    launch_macaron_codex "$@"
+elif [[ ${1:-} == "mint" || ${1:-} == "macaron" || ${1:-} == "mac" || ${1:-} == "venti" || ${1:-} == "mv" ]]; then
+    shift
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    provider_setup_env "macaron" || exit 1
+    enter_repo_if_needed
+    launch "Claude Code + Macaron (${MACARON_MODEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
 elif [[ ${1:-} == "deepseek-pro" || ${1:-} == "dsp" || ${1:-} == "ds-pro" ]]; then
     shift
     parse_global_flags "$@"
@@ -7089,9 +7261,10 @@ elif [[ ${1:-} == "provider" || ${1:-} == "p" ]]; then
             if [[ -n "$pkey" ]]; then
                 provider_save_key "$pname" "$pkey"
                 echo -e "${GREEN}✔ Key salva para ${pname}${RESET}"
-                if [[ "$pname" == "sakana" ]]; then
-                    sakana_install_codex_config quiet
-                fi
+                case "$pname" in
+                    sakana) sakana_install_codex_config quiet ;;
+                    macaron) macaron_install_codex_config quiet ;;
+                esac
             else
                 echo -e "${RED}Erro: key vazia.${RESET}"
                 exit 1
@@ -7265,6 +7438,7 @@ glm_status=$(provider_cli_status_icon glm claude)
 muse_spark_status=$(provider_cli_status_icon muse-spark claude)
 muse_cli_status=$(muse_status_icon)   # CLI própria: só depende da key
 deepseek_status=$(provider_cli_status_icon deepseek claude)
+macaron_status=$(provider_cli_status_icon macaron claude)
 step_status=$(provider_cli_status_icon step claude)
 sakana_status=$(provider_cli_status_icon sakana codex)
 codex_status=$(status_icon codex)
@@ -7291,6 +7465,7 @@ claude_ver=$(get_version claude)
 glm_ver="${claude_ver}" # GLM usa Claude Code
 muse_spark_ver="${claude_ver}" # Muse Spark usa Claude Code
 deepseek_ver="${claude_ver}" # DeepSeek usa Claude Code
+macaron_ver="${claude_ver}" # Macaron V1 usa Claude Code
 sakana_ver=$(get_version codex)
 codex_ver=$(get_version codex)
 gemini_ver=$(get_version gemini)
@@ -7322,44 +7497,45 @@ menu_row  1 "$C_CLAUDE"   "Claude Code"  "${claude_ver}"        "${claude_status
 menu_row  2 "$C_GLM"      "GLM ${GLM_MODEL_LABEL#glm-} Z.ai" "${glm_ver}"  "${glm_status}"
 menu_row  3 "$C_MUSE"     "Muse Spark"   "${muse_spark_ver}"    "${muse_spark_status}"
 menu_row  4 "$C_DEEPSEEK" "DeepSeek V4.1" "${deepseek_ver}"      "${deepseek_status}"
+menu_row  5 "$C_MACARON"  "Macaron Venti" "${macaron_ver}"      "${macaron_status}"
 
 menu_group "CODEX"
-menu_row  5 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"
-menu_row  6 "$C_CODEX"    "Codex"        "${codex_ver}"         "${codex_status}"
+menu_row  6 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"
+menu_row  7 "$C_CODEX"    "Codex"        "${codex_ver}"         "${codex_status}"
 
 menu_group "OUTRAS CLIs"
-menu_row  7 "$C_GEMINI"   "Gemini"       "${gemini_ver}"        "${gemini_status}"
-menu_row  8 "$C_KIMI"     "Kimi Code"    "${kimi_ver}"          "${kimi_status}"
-menu_row  9 "$C_GROK"     "Grok (xAI)"   "${grok_ver}"          "${grok_status}"
-menu_row 10 "$C_DEEPCODE" "Deep Code"    "${deepcode_ver}"      "${deepcode_status}"
-menu_row 11 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
-menu_row 12 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
-menu_row 13 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
-menu_row 14 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
-menu_row 15 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
-menu_row 16 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
-menu_row 17 "$C_MIMO"     "MiMo Code"    "${mimo_ver}"          "${mimo_status}"
-menu_row 18 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
-menu_row 19 "$C_DEVIN"    "Devin CLI"    "${devin_ver}"         "${devin_status}"
+menu_row  8 "$C_GEMINI"   "Gemini"       "${gemini_ver}"        "${gemini_status}"
+menu_row  9 "$C_KIMI"     "Kimi Code"    "${kimi_ver}"          "${kimi_status}"
+menu_row 10 "$C_GROK"     "Grok (xAI)"   "${grok_ver}"          "${grok_status}"
+menu_row 11 "$C_DEEPCODE" "Deep Code"    "${deepcode_ver}"      "${deepcode_status}"
+menu_row 12 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
+menu_row 13 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
+menu_row 14 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
+menu_row 15 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
+menu_row 16 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
+menu_row 17 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
+menu_row 18 "$C_MIMO"     "MiMo Code"    "${mimo_ver}"          "${mimo_status}"
+menu_row 19 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
+menu_row 20 "$C_DEVIN"    "Devin CLI"    "${devin_ver}"         "${devin_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 20 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 21 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 22 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 23 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 24 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 25 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
-menu_row 26 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
-menu_row 27 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
-menu_row 28 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
-menu_row 29 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
-menu_row 30 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
+menu_row 21 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 22 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 23 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 24 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 25 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 26 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 27 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 28 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
+menu_row 29 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
+menu_row 30 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
+menu_row 31 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 31 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 32 "$C_TOOL" "🔌 Providers"
-menu_tool 33 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 34 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 32 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 33 "$C_TOOL" "🔌 Providers"
+menu_tool 34 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 35 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -7384,81 +7560,105 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-34/0]: " choice
+read -rp "Escolha [1-35/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
-    1) clear_anthropic_provider_env
+    1|claude)
+       clear_anthropic_provider_env
        conta_autoswitch_if_needed
        enter_repo_if_needed
        launch "Claude Code" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-    2) provider_setup_env "glm" || continue
+    2|glm)
+       provider_setup_env "glm" || continue
        enter_repo_if_needed
        launch "GLM ${GLM_MODEL_LABEL#glm-} (Z.ai)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-    3) provider_setup_env "muse-spark" || continue
+    3|spark|muse-spark)
+       provider_setup_env "muse-spark" || continue
        enter_repo_if_needed
        launch "Muse Spark (Meta AI)" claude "$CLAUDE_PROMPT_FLAG" MUSE_FLAGS ;;
-    4) provider_setup_env "deepseek" || continue
+    4|ds|deepseek)
+       provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "$DEEPSEEK_V41_MODEL")"
        enter_repo_if_needed
        launch "DeepSeek V4.1" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-    5) launch_sakana_fugu "fugu" ;;
-    6) xconta_autoswitch_if_needed
+    5|mint|macaron|venti|mac)
+       provider_setup_env "macaron" || continue
+       enter_repo_if_needed
+       launch "Claude Code + Macaron (${MACARON_MODEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
+    6|sakana|fugu)
+       launch_sakana_fugu "fugu" ;;
+    7|codex|x)
+       xconta_autoswitch_if_needed
        codex_add_context_flags
        enter_repo_if_needed
        launch "Codex (1M)" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
-    7) enter_repo_if_needed
+    8|gemini|g)
+       enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
-    8) enter_repo_if_needed
+    9|kimi|k)
+       enter_repo_if_needed
        launch "Kimi Code" kimi "$KIMI_PROMPT_FLAG" KIMI_FLAGS ;;
-    9) enter_repo_if_needed
+   10|grok|gr)
+       enter_repo_if_needed
        launch "Grok" grok "$GROK_PROMPT_FLAG" GROK_FLAGS ;;
-   10) enter_repo_if_needed
+   11|deepcode|dc)
+       enter_repo_if_needed
        launch "Deep Code" deepcode "$DEEPCODE_PROMPT_FLAG" DEEPCODE_FLAGS ;;
-   11) enter_repo_if_needed
+   12|antigravity|agy)
+       enter_repo_if_needed
        agy_add_workspace_flag
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-   12) enter_repo_if_needed
+   13|qoder)
+       enter_repo_if_needed
        launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
-   13) enter_repo_if_needed
+   14|cursor)
+       enter_repo_if_needed
        launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
-   14) enter_repo_if_needed
+   15|omp)
+       enter_repo_if_needed
        launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS ;;
-   15) enter_repo_if_needed
+   16|prime)
+       enter_repo_if_needed
        launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
-   16) enter_repo_if_needed
+   17|opencode)
+       enter_repo_if_needed
        opencode_launch ;;
-   17) enter_repo_if_needed
+   18|mimo)
+       enter_repo_if_needed
        mimo_launch ;;
-   18) if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; cli_install_hint muse; continue; fi
+   19|muse)
+       if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; cli_install_hint muse; continue; fi
        enter_repo_if_needed
        launch "Muse Code" muse "" MUSE_CODE_FLAGS ;;
-   19) if ! check_installed devin; then echo -e "${RED}Erro: Devin CLI não instalada.${RESET}"; cli_install_hint devin; continue; fi
+   20|devin)
+       if ! check_installed devin; then echo -e "${RED}Erro: Devin CLI não instalada.${RESET}"; cli_install_hint devin; continue; fi
        enter_repo_if_needed
        devin_launch ;;
-   20) ollama_dispatch || true ;;
-   21) hf_menu_panel || true ;;
-   22) fl_dispatch || true ;;
-   23) qwen_launch || true ;;
-   24) qwen_launch_claude || true ;;
-   25) muse_dispatch || true ;;
-   26) provider_setup_env "deepseek" || continue
+   21) ollama_dispatch || true ;;
+   22) hf_menu_panel || true ;;
+   23) fl_dispatch || true ;;
+   24) qwen_launch || true ;;
+   25) qwen_launch_claude || true ;;
+   26) muse_dispatch || true ;;
+   27) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "deepseek-v4-pro[1m]")"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   27) provider_setup_env "deepseek" || continue
+   28) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "$DEEPSEEK_V41_MODEL")"
        enter_repo_if_needed
        launch "DeepSeek V4.1 Flash" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   28) ab_dispatch || true ;;
-   29) ab_launch_claude ;;
-   30) provider_setup_env "step" || continue
+   29) ab_dispatch || true ;;
+   30) ab_launch_claude ;;
+   31|step)
+       provider_setup_env "step" || continue
        enter_repo_if_needed
        launch "Step Plan (${STEP_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   31) enter_repo_if_needed
+   32) enter_repo_if_needed
        launch_codex_security ;;
-   32) provider_list ;;
-   33) flags_menu
+   33) provider_list ;;
+   34) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -7476,9 +7676,9 @@ case $choice in
                ;;
            2) ;;
            *) echo "Opção inválida."; exit 1 ;;
-	       esac
-	       ;;
-   34) conta_menu ;;
+       esac
+       ;;
+   35) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
