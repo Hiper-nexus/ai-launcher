@@ -8,6 +8,10 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# python3() de verdade: sem ele, no Windows o heredoc do passo 6 cai no alias
+# da Microsoft Store e morre com exit 49.
+# shellcheck source=helpers/platform.sh
+source "${ROOT}/tests/helpers/platform.sh"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -124,6 +128,10 @@ codex_args=$(grep "^ARGS=" "$CAPTURE_CODEX" | cut -d= -f2-)
 grep -q '^\[model_providers\.macaron\]' "${TEST_HOME}/.codex/config.toml" || fail "model_providers.macaron não gravado em config.toml"
 
 # 6. Menu interativo: digitar '5' escolhe Macaron V1 no Claude Code
+# O menu exige TTY, e o pty do Python só existe no POSIX (no Windows o import
+# morre em termios). Sem ele o passo se pula, mesmo critério do version-cache.
+menu_testado="menu 5"
+if python3 -c 'import pty' >/dev/null 2>&1; then
 : > "$CAPTURE_ENV"
 python3 - <<PY
 import os, pty, subprocess, time
@@ -155,5 +163,9 @@ os.close(master)
 PY
 env_is "ANTHROPIC_BASE_URL" "https://mint.macaron.im"
 env_is "ANTHROPIC_MODEL" "macaron-v1-coding-venti"
+else
+    echo "  (passo 6 pulado: sem pty do Python — o menu exige TTY)"
+    menu_testado="menu pulado"
+fi
 
-echo "PASS: macaron-dispatch (Claude Code, Codex, aliases, override, menu 5)"
+echo "PASS: macaron-dispatch (Claude Code, Codex, aliases, override, ${menu_testado})"

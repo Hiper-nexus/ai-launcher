@@ -87,4 +87,18 @@ env_is ANTHROPIC_DEFAULT_SONNET_MODEL "glm-5.3[1m]"
 env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "glm-5.3[1m]"
 env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "glm-5.3-flash[1m]"
 
+# Slot salvo: vale para o gf inteiro e para o haiku do glm; o env da
+# sessão continua ganhando do slot (mesma precedência do muse-model).
+printf 'glm=chave-de-teste\nglm-flash-model=glm-5.3-flashx[1m]\n' > "${TEST_HOME}/.local/share/ai-launcher/providers.conf"
+run_launcher gf
+env_is ANTHROPIC_MODEL                "glm-5.3-flashx[1m]"
+env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "glm-5.3-flashx[1m]"
+env_is ANTHROPIC_DEFAULT_SONNET_MODEL "glm-5.3-flashx[1m]"
+env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "glm-5.3-flashx[1m]"
+run_launcher glm
+env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "glm-5.3-flashx[1m]"
+env_is ANTHROPIC_DEFAULT_SONNET_MODEL "glm-5.3[1m]"
+( export AI_GLM_FLASH_MODEL="glm-5.3-flash[1m]"; run_launcher gf )
+env_is ANTHROPIC_MODEL "glm-5.3-flash[1m]"
+
 echo "PASS: dispatch do GLM 5.3 Flash"

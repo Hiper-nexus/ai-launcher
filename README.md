@@ -710,6 +710,13 @@ command = "python3"
 args = ["/caminho/para/ai-launcher/mcp/jev-server.py"]
 ```
 
+> **No Windows, troque `python3` por `python`.** O nome `python3` ali é o App
+> Execution Alias da Microsoft Store: ele existe no PATH mesmo sem Python
+> instalado e só falha ao ser executado, então o cliente MCP mostraria o
+> servidor como configurado e ele nunca subiria. Use o caminho completo do
+> interpretador se tiver mais de um Python. O caminho do script também pode
+> ser escrito em formato Windows (`C:\Users\voce\ai-launcher\mcp\jev-server.py`).
+
 ## Agente de browser com Jev (`ai jb`)
 
 O `ai ask` usa o Jev para **escolher** uma CLI. Este usa o Jev para **decidir
@@ -760,6 +767,30 @@ passava a dirigir um browser de terceiro — lendo conteúdo de página forjado.
 |---|---|---|
 | `AI_JEV_BROWSER_DIR` | `~/dev/jev-ultrafast` | onde o projeto está clonado |
 | `AI_JEV_BROWSER_PROFILE` | `~/.cache/jev-chrome-profile` | perfil descartável |
+| `AI_JEV_CHROME` | detectado por plataforma | binário do Chrome, quando não está onde o instalador oficial deixa |
+
+#### No Windows
+
+A cadeia de confiança é a mesma — o que muda são as fontes, porque as do
+Unix não existem lá:
+
+| Passo | Unix | Windows |
+|---|---|---|
+| achar o Chrome | `/Applications/Google Chrome.app` | `%LOCALAPPDATA%` e `Program Files` (`Google\Chrome\Application\chrome.exe`) |
+| quem escuta a porta | `lsof` | `netstat -ano` |
+| argv e dono do processo | `ps -p` | `Get-CimInstance Win32_Process` |
+
+O `ps` do Git Bash **não** serve aqui: ele enxerga só os processos MSYS,
+enquanto o PID que o `netstat` devolve é do Windows — numeração diferente.
+`kill -0` tem o mesmo problema. Por isso vida, argv e dono saem todos do CIM.
+
+O perfil vai para o Chrome em caminho do Windows (`C:\...`), e é essa string
+que reaparece no argv; a comparação normaliza caixa e barras dos dois lados,
+então ela é sobre o **diretório**, não sobre a grafia. O perfil também recebe
+ACL restrita ao dono, e não só `chmod 700` — que no NTFS não faz nada.
+
+Instale o `uv` com `winget install --id=astral-sh.uv` (o `brew install uv` da
+mensagem antiga não existe no Windows).
 
 ### Limitações (do próprio projeto, é MVP)
 
@@ -922,14 +953,33 @@ handle do console, fora do alcance da redireção que o preload paralelo usa —
 isso embaralha o menu inteiro. A CLI aparece instalada, só sem número de versão.
 É uma troca deliberada; não "conserte" chamando `cmd.exe` ali.
 
+**Encoding do Python.** No Windows o Python escreve no encoding da locale
+(`cp1252` em máquina pt-BR), então qualquer `print` com acento ou seta —
+`réplicas:`, `confiança →` — morria com `UnicodeEncodeError` no meio do
+comando. O wrapper `python3()` trava `PYTHONIOENCODING=utf-8`, o que cobre os
+~40 pontos onde o launcher chama Python de uma vez. O servidor MCP faz o
+equivalente no próprio arquivo (`reconfigure`), porque lá o problema é na
+**leitura**: um pedido com acento chegava como `UnicodeDecodeError`.
+
+**Processos e portas.** Não há `lsof`, e o `ps` do Git Bash enxerga só os
+processos MSYS — enquanto os PIDs do sistema são do Windows. Quem precisa
+disso é a cadeia de confiança do [`ai jb`](#no-windows): `ai_pid_na_porta()`
+usa `netstat -ano` e `ai_win_proc_info()` tira argv e dono do CIM.
+
 **Cofre de credenciais.** Ver [Contas Claude](#contas-claude-multi-conta-sem-logout).
 
 ### Rodando os testes
 
 ```bash
-bash tests/platform-windows.test.sh
+bash tests/run-all.sh                     # a suíte inteira
+bash tests/platform-windows.test.sh       # só a camada de plataforma
 bash tests/secret-store.test.sh
 ```
+
+Dois arquivos se **pulam** conforme o ambiente, e dizem por quê ao pular:
+`platform-windows` fora do Windows, e `version-cache` onde não há como alocar
+um pty (o menu exige TTY; o Windows não tem `script(1)`, e o `winpty` do Git
+Bash não cria pty sem um console anexado — em CI, por exemplo).
 
 `tests/helpers/platform.sh` extrai a camada do próprio `ai` em vez de duplicá-la
 — o launcher é distribuído como arquivo único e não pode sourcear um `lib/`. Use
