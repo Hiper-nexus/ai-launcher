@@ -866,6 +866,32 @@ Arquivos criados pelo setup:
 - `${HOME}/.local/bin/codex-fugu`
 - bloco `[model_providers.sakana]` em `${CODEX_HOME:-~/.codex}/config.toml`
 
+## Rota de provider presa em config global
+
+Dois arquivos **fora** do launcher conseguem prender toda sessão num provider,
+e vencem qualquer coisa que o menu escolha:
+
+| Arquivo | O que sequestra |
+|---|---|
+| `~/.claude/settings.json` | bloco `env` — o Claude Code o aplica por conta própria, **depois** de herdar o ambiente do processo pai |
+| `${CODEX_HOME:-~/.codex}/config.toml` | `model` e `model_provider` no topo do arquivo, que são o default global |
+
+O sintoma é silencioso e não parece um bug de rota: o item "Claude Code" do menu
+abre outro provider, o "Codex" abre outro provider, e como o pin é global ele
+pega junto os itens que roteiam por env (GLM, Muse, DeepSeek). A CLI certa sobe,
+falando com o endpoint errado — sem nenhum aviso.
+
+Quem roteia provider aqui é o launcher, a cada lançamento. Então essas chaves não
+podem morar em config global: ao abrir Claude ou Codex pelo caminho oficial, elas
+são removidas. O que não é rota de provider fica intacto — `permissions`, `model`,
+`hooks`, `IS_SANDBOX`, os `mcp_servers` do Codex e o resto do `config.toml`. A
+primeira remoção deixa `~/.claude/settings.json.ai-launcher.bak` (modo 600, porque
+carrega token).
+
+Só mexe no que é do launcher: um `model_provider` de terceiros no `config.toml`
+não é tocado. Para desligar a limpeza do `settings.json`, use
+`AI_KEEP_CLAUDE_SETTINGS_ENV=1` — mas aí o pin volta a vencer o menu.
+
 ## Windows: o que é diferente
 
 O launcher nasceu para macOS/Linux. No Git Bash, quatro suposições POSIX falham

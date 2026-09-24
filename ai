@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.62.0"
+AI_LAUNCHER_VERSION="1.62.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -879,13 +879,92 @@ declare -A OMP_ENV_MAP=(
     [muse-spark]="META_API_KEY"
 )
 
+# ── settings.json global do Claude Code ──────────────────
+# O Claude Code aplica o bloco "env" do ~/.claude/settings.json por conta
+# própria, DEPOIS de herdar o ambiente do processo pai. Uma rota de provider
+# gravada ali (base_url + token + modelo) vence, portanto, qualquer unset ou
+# export que o launcher faça — e sequestra em silêncio TODO menu que abre o
+# Claude: o 1 (Claude nativo), mas também GLM, Muse, DeepSeek e Macaron, que
+# passam a falar com o endpoint pinado no arquivo. Quem roteia provider aqui é
+# o launcher, a cada lançamento; essas chaves não podem morar no settings.json
+# global. O arquivo do usuário é preservado (só as chaves de rota saem) e a
+# primeira remoção deixa um .bak. Escape: AI_KEEP_CLAUDE_SETTINGS_ENV=1.
+CLAUDE_SETTINGS_FILE="${HOME}/.claude/settings.json"
+CLAUDE_SETTINGS_PROVIDER_KEYS="ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL CLAUDE_CODE_SUBAGENT_MODEL _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL API_TIMEOUT_MS CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ENABLE_TOOL_SEARCH"
+
+claude_settings_strip_provider_env() {
+    [[ "${AI_KEEP_CLAUDE_SETTINGS_ENV:-}" == "1" ]] && return 0
+    local file="${CLAUDE_SETTINGS_FILE}"
+    [[ -f "$file" ]] || return 0
+    # grep barato antes de acordar o python: no caso normal não há o que fazer.
+    grep -q '"ANTHROPIC_\|"CLAUDE_CODE_SUBAGENT_MODEL"\|"_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL"' \
+        "$file" 2>/dev/null || return 0
+    ai_has_python || return 0
+
+    local removed
+    removed=$(
+        AI_SETTINGS_FILE="$file" \
+        AI_STRIP_KEYS="$CLAUDE_SETTINGS_PROVIDER_KEYS" \
+        python3 - <<'PY' 2>/dev/null
+import json, os, shutil, sys
+
+path = os.environ["AI_SETTINGS_FILE"]
+keys = set(os.environ["AI_STRIP_KEYS"].split())
+
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(1)
+
+env = data.get("env")
+if not isinstance(env, dict):
+    sys.exit(0)
+
+removed = sorted(k for k in env if k in keys)
+if not removed:
+    sys.exit(0)
+
+for key in removed:
+    del env[key]
+if not env:
+    data.pop("env", None)
+
+# O settings.json carrega token de provider: backup e arquivo final nascem 600.
+backup = path + ".ai-launcher.bak"
+if not os.path.exists(backup):
+    shutil.copy2(path, backup)
+    os.chmod(backup, 0o600)
+
+tmp = path + ".ai-launcher.tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2, ensure_ascii=False)
+    fh.write("\n")
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+print(" ".join(removed))
+PY
+    ) || return 0
+
+    if [[ -n "$removed" ]]; then
+        echo -e "${YELLOW:-}⚠ Rota de provider removida do ~/.claude/settings.json:${RESET:-} ${removed}"
+        echo -e "  ${DIM:-}Ela sobrescrevia o provider escolhido no menu. Backup: ${file}.ai-launcher.bak${RESET:-}"
+    fi
+}
+
 clear_anthropic_provider_env() {
+    claude_settings_strip_provider_env
     unset ANTHROPIC_BASE_URL 2>/dev/null || true
     unset ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
+    unset ANTHROPIC_API_KEY 2>/dev/null || true
     unset ANTHROPIC_MODEL 2>/dev/null || true
     unset ANTHROPIC_DEFAULT_HAIKU_MODEL 2>/dev/null || true
     unset ANTHROPIC_DEFAULT_SONNET_MODEL 2>/dev/null || true
     unset ANTHROPIC_DEFAULT_OPUS_MODEL 2>/dev/null || true
+    unset ANTHROPIC_DEFAULT_FABLE_MODEL 2>/dev/null || true
+    unset CLAUDE_CODE_SUBAGENT_MODEL 2>/dev/null || true
+    unset _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL 2>/dev/null || true
+    unset ENABLE_TOOL_SEARCH 2>/dev/null || true
     unset CLAUDE_CODE_AUTO_COMPACT_WINDOW 2>/dev/null || true
     unset CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC 2>/dev/null || true
     unset API_TIMEOUT_MS 2>/dev/null || true
@@ -948,6 +1027,9 @@ provider_save_key() {
 
 provider_setup_env() {
     local provider="$1"
+    # Mesmo roteando por env aqui, o bloco "env" do settings.json global
+    # venceria e mandaria a sessão para o provider pinado no arquivo.
+    claude_settings_strip_provider_env
     if [[ "$provider" == "anthropic" || -z "$provider" ]]; then
         clear_anthropic_provider_env
         return
@@ -5451,6 +5533,62 @@ codex_add_profile_flag() {
     CODEX_FLAGS=("-p" "$profile" "${CODEX_FLAGS[@]+"${CODEX_FLAGS[@]}"}")
 }
 
+# ── Codex oficial x provider pinado no config.toml ───────
+# O topo do ~/.codex/config.toml aceita `model` e `model_provider` como
+# default global. A doc do Macaron (e o caminho `mcx`) mandam gravar isso lá,
+# e aí o "Codex" do menu deixa de abrir o Codex: toda sessão sai pelo provider
+# alternativo. Os providers alternativos do launcher já se identificam na hora
+# do lançamento (perfil `-p` ou `-c model_provider=`), então o default global
+# preso neles é sempre resíduo — e é removido aqui. Só mexe quando o provider
+# pinado é um dos gerenciados pelo launcher; config de terceiros fica intacta.
+codex_config_clear_foreign_defaults() {
+    local config="${CODEX_HOME:-${HOME}/.codex}/config.toml"
+    [[ -f "$config" ]] || return 0
+
+    local pinned
+    pinned=$(awk '
+        /^[[:space:]]*\[/ { exit }
+        /^[[:space:]]*model_provider[[:space:]]*=/ {
+            line = $0
+            sub(/^[^=]*=[[:space:]]*/, "", line)
+            gsub(/["'"'"']/, "", line)
+            sub(/[[:space:]]*(#.*)?$/, "", line)
+            print line
+            exit
+        }
+    ' "$config" 2>/dev/null) || return 0
+
+    case "$pinned" in
+        macaron|sakana) ;;
+        *) return 0 ;;
+    esac
+
+    local tmp
+    tmp=$(mktemp) || return 0
+    awk '
+        !seen_section && /^[[:space:]]*\[/ { seen_section = 1 }
+        !seen_section && /^[[:space:]]*(model|model_provider)[[:space:]]*=/ { next }
+        { print }
+    ' "$config" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+
+    cat "$tmp" > "$config" && rm -f "$tmp" || { rm -f "$tmp"; return 0; }
+    echo -e "${YELLOW:-}⚠ Default global '${pinned}' removido do topo do config.toml do Codex.${RESET:-}"
+    echo -e "  ${DIM:-}Ele fazia o Codex oficial abrir no provider errado. Use o item do menu do ${pinned}.${RESET:-}"
+}
+
+# Cinto de segurança do Codex oficial: se nada explícito escolheu provider
+# (perfil ou -c), fixa o oficial para um resíduo no config.toml não sequestrar
+# a sessão. Override do usuário na linha de comando continua vencendo.
+codex_force_official_provider() {
+    local flag
+    for flag in "${CODEX_FLAGS[@]+"${CODEX_FLAGS[@]}"}"; do
+        case "$flag" in
+            -p|--profile|*model_provider=*) return 0 ;;
+        esac
+    done
+    CODEX_FLAGS+=(-c "model_provider=openai")
+}
+
 codex_add_model_flag() {
     local model="$1"
     local flag
@@ -6931,6 +7069,10 @@ elif [[ ${1:-} == "codex" || ${1:-} == "x" ]]; then
     else
         # Auto-switch de conta Codex se a janela de 5h esgotou
         xconta_autoswitch_if_needed
+        # Resíduo de provider alternativo no topo do config.toml faria este
+        # caminho "oficial" abrir no provider errado.
+        codex_config_clear_foreign_defaults
+        codex_force_official_provider
         # Janela de 1M por padrão no provider oficial (override: -c na linha
         # ou AI_CODEX_CONTEXT_WINDOW="").
         codex_add_context_flags "$@"
@@ -7500,8 +7642,8 @@ menu_row  4 "$C_DEEPSEEK" "DeepSeek V4.1" "${deepseek_ver}"      "${deepseek_sta
 menu_row  5 "$C_MACARON"  "Macaron Venti" "${macaron_ver}"      "${macaron_status}"
 
 menu_group "CODEX"
-menu_row  6 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"
-menu_row  7 "$C_CODEX"    "Codex"        "${codex_ver}"         "${codex_status}"
+menu_row  6 "$C_CODEX"    "Codex"        "${codex_ver}"         "${codex_status}"
+menu_row  7 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"
 
 menu_group "OUTRAS CLIs"
 menu_row  8 "$C_GEMINI"   "Gemini"       "${gemini_ver}"        "${gemini_status}"
@@ -7586,13 +7728,15 @@ case $choice in
        provider_setup_env "macaron" || continue
        enter_repo_if_needed
        launch "Claude Code + Macaron (${MACARON_MODEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-    6|sakana|fugu)
-       launch_sakana_fugu "fugu" ;;
-    7|codex|x)
+    6|codex|x)
        xconta_autoswitch_if_needed
+       codex_config_clear_foreign_defaults
+       codex_force_official_provider
        codex_add_context_flags
        enter_repo_if_needed
        launch "Codex (1M)" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
+    7|sakana|fugu)
+       launch_sakana_fugu "fugu" ;;
     8|gemini|g)
        enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
