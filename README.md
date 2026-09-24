@@ -42,7 +42,10 @@ ai gf           # sessão inteira no GLM 5.3 Flash (aliases: glm-flash, zf, flas
 ai ds           # DeepSeek V4.1 Flash (GA, model ID: deepseek-flash) via Claude Code
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai ds-v41       # DeepSeek V4.1 Flash — alias do ai ds
-ai x            # Codex direto
+ai step         # Step Plan step-5-preview (StepFun, janela de 1M) via Claude Code
+ai mint         # Macaron V1 (macaron-v1-coding-venti) via Claude Code (aliases: macaron, venti, mac, mv; menu: 5)
+ai mint-codex   # Codex via Macaron V1 (provider responses; alias: mcx)
+ai x            # Codex direto (1M por padrão no provider oficial)
 ai sol          # Codex GPT-5.6 Sol com janela de 1M de contexto (aliases: x-1m, x1m)
 ai fugu         # Codex via Sakana Fugu Ultra V2.0
 ai claude-fugu  # Claude Code via endpoint Anthropic-compatible da Sakana
@@ -60,6 +63,9 @@ ai dv           # Devin CLI (Cognition) — modo dangerous (auto-aprova tudo)
 ai dv "prompt"  # Devin one-shot (modo print)
 ai omp          # omp (oh-my-pi) direto — 60+ providers num só agente
 ai omp models   # Providers/modelos que o omp enxerga hoje
+ai mi           # MiMoCode (Xiaomi MiMo) — CLI própria, não é o Claude
+ai mi "prompt"  # MiMoCode one-shot via 'mimo run'
+ai mi -m xiaomi/mimo-v2.6-pro   # série V2.6 (1M de contexto)
 ai ol           # Ollama Cloud (roda em ollama.com, não na sua máquina)
 ai ab           # GLM-5.3 sem censura (Abliteration.ai) — chat ou one-shot
 ai c "prompt"   # Claude com prompt
@@ -79,15 +85,17 @@ ai --help       # Ajuda
 | GLM/Z.ai | `ai glm` | Claude Code via provider `glm` — **GLM 5.3** nos slots sonnet/opus e **GLM 5.3 Flash** no haiku (troque no `/model` sem sair da sessão). Os modelCodes carregam o sufixo `[1m]` (mecanismo do próprio Claude Code para janela de 1M em modelos não reconhecidos — o client faz strip antes de chamar a API) |
 | GLM Flash | `ai gf`, `ai glm-flash` | Mesmo provider `glm` — **GLM 5.3 Flash** (também 1M) em **todos** os slots |
 | Muse Spark (Meta AI) | `ai ms` | CLI própria (REPL/one-shot) via `api.meta.ai`; `ai ms claude` abre no Claude Code (yolo); `ai ms model` escolhe o modelo para os dois caminhos |
-| Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` |
+| Codex | `ai x` | `--dangerously-bypass-approvals-and-sandbox` + `-c model_context_window=1000000 -c model_auto_compact_token_limit=900000` (1M por padrão no provider oficial; override com `-c` na linha ou `AI_CODEX_CONTEXT_WINDOW=""`) |
 | Codex Sol 1M | `ai sol` | idem + `-m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` |
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra`, `ai fugu-max`, `ai fugu-ultra-v1.x`, `ai claude-fugu` | Ultra V2.0 por padrão no perfil Codex `fugu` ou no endpoint Anthropic-compatible |
+| Macaron V1 (Mind Lab) | `ai mint`, `ai macaron`, `ai venti`, `ai mint-codex` (menu: 5) | Modelo **hospedado** (não é CLI de agente) — roda dentro do Claude Code (`ANTHROPIC_BASE_URL=https://mint.macaron.im`) ou do Codex (`wire_api=responses`). Default `macaron-v1-coding-venti`; troque com `AI_MACARON_MODEL=`. Key: `ai p add macaron` |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--auto` (never-ask; o `--yolo` do kimi ainda pede yes em ação arriscada/plano) |
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
 | Qoder | `ai q` | `--dangerously-skip-permissions` |
 | Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
 | omp (oh-my-pi) | `ai omp`, `ai o` | `--yolo` — agente único com 60+ providers; `-m` troca de modelo |
+| MiMoCode (Xiaomi MiMo) | `ai mi`, `ai mimo` | CLI **própria** (binário `mimo`, fork do OpenCode) — não é o Claude com outro modelo. `--dangerously-skip-permissions`; one-shot via `mimo run`; modelos V2.6 (pro / ultraspeed / flash) e V2.5 |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
@@ -319,6 +327,70 @@ A key vai só pro `providers.conf` local (chmod 600, slot `dashscope`), nunca pr
 > invoca `cursor-agent` justamente para não depender do nome disputado; se você usa o Grok
 > por `agent`, restaure com `ln -sf ~/.grok/bin/agent ~/.local/bin/agent` após instalar.
 
+## MiMoCode (Xiaomi MiMo — CLI própria)
+
+O MiMo/MiMoCode é a CLI **própria** da Xiaomi MiMo (binário `mimo`, fork do OpenCode) — **não é o Claude Code com outro modelo**. Tem harness próprio: TUI de sessão, memória persistente, subagentes, compose workflows, dream/distill. Por isso o launcher abre o `mimo` direto (como `opencode`/`muse`), e não como um provider do Claude (`glm`/`deepseek`).
+
+```bash
+ai mi                      # TUI do MiMoCode (--dangerously-skip-permissions)
+ai mi "corrige este teste" # one-shot: mimo run <yolo> "prompt"
+ai mi providers            # login/credenciais (alias: auth; Xiaomi MiMo OAuth)
+ai mi models               # lista modelos da Xiaomi
+ai mi -m xiaomi/mimo-v2.6-pro               # V2.6 flagship (1M)
+ai mi -m xiaomi/mimo-v2.6-pro-ultraspeed    # V2.6 Pro ~10x mais rápido
+ai mi -m xiaomi/mimo-v2.6-flash             # V2.6 Flash (MoE 309B/15B)
+ai mi -c                   # continua a última sessão
+```
+
+**Série V2.6** (lançada 21–22/09/2026) — três modelos, janela 1M (compacta em 944K):
+
+| Modelo | Papel |
+|--------|-------|
+| `xiaomi/mimo-v2.6-pro` | flagship 1T+ multimodal + execução de agentes |
+| `xiaomi/mimo-v2.6-pro-ultraspeed` | mesmo checkpoint do Pro, ~10x mais rápido no decode |
+| `xiaomi/mimo-v2.6-flash` | MoE 309B total / 15B ativos, open-weight, rápido e barato |
+
+O catálogo nativo do `mimo` ainda lista V2.5. Para plugar o V2.6 por cima do login Xiaomi, registre no `~/.config/mimocode/mimocode.jsonc`:
+
+```jsonc
+{
+  "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
+  "model": "xiaomi/mimo-v2.6-pro",
+  "provider": {
+    "xiaomi": {
+      "models": {
+        "mimo-v2.6-pro": {
+          "name": "MiMo-V2.6-Pro",
+          "limit": { "context": 1048576, "output": 131072 },
+          "reasoning": true, "tool_call": true,
+          "modalities": { "input": ["text", "image", "video", "audio"], "output": ["text"] }
+        },
+        "mimo-v2.6-pro-ultraspeed": {
+          "name": "MiMo-V2.6-Pro-UltraSpeed",
+          "limit": { "context": 1048576, "output": 131072 },
+          "reasoning": true, "tool_call": true,
+          "modalities": { "input": ["text", "image", "video", "audio"], "output": ["text"] }
+        },
+        "mimo-v2.6-flash": {
+          "name": "MiMo-V2.6-Flash",
+          "limit": { "context": 1048576, "output": 131072 },
+          "reasoning": true, "tool_call": true,
+          "modalities": { "input": ["text", "image", "video", "audio"], "output": ["text"] }
+        }
+      }
+    }
+  }
+}
+```
+
+Valide com `mimo models xiaomi` — os seis (V2.5 + V2.6) devem listar.
+
+**Análise CLI própria vs Claude:** o MiMo **não roda dentro do Claude**. O interop que existe é opcional: `mimo` consegue importar a auth do Claude Code e há uma skill `claude-code` quando a CLI do Claude está instalada — mas o agente, as tools e a TUI são do MiMoCode.
+
+**One-shot:** `ai mi "prompt"` vira `mimo run --dangerously-skip-permissions "prompt"` (o `run` aceita as flags de yolo). Subcomandos (`providers`/`auth`, `models`, `mcp`, `agent`, `upgrade`, `run`, …) e flags informativas passam **verbatim**.
+
+Instalação: `npm install -g @mimo-ai/cli` (binário `mimo`; se o npm bloquear o postinstall: `npm install -g --allow-scripts=@mimo-ai/cli @mimo-ai/cli`). Docs: [mimo.xiaomi.com/coder](https://mimo.xiaomi.com/coder).
+
 ## Prime Agent (sessão persistente)
 
 `ai prime` (ou `ai pa`) abre o **Prime Agent** — agente de terminal com **sessão
@@ -458,6 +530,8 @@ ai sol --conta trabalho  # troca de conta Codex e já lança
 ```
 
 Equivale a `codex -m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` — a compactação automática do histórico começa em 900k, deixando folga antes do teto. Ajustes por env: `AI_CODEX_SOL_MODEL`, `AI_CODEX_SOL_CONTEXT_WINDOW`, `AI_CODEX_SOL_AUTOCOMPACT_LIMIT`.
+
+O `ai x` (Codex padrão, provider oficial) também já sai com 1M por padrão — mesma receita, sem fixar modelo: `-c model_context_window=1000000 -c model_auto_compact_token_limit=900000`. Override por sessão com `ai x -c model_context_window=...`, ou desligue via `AI_CODEX_CONTEXT_WINDOW="" AI_CODEX_AUTOCOMPACT_LIMIT=""`. Providers alternativos (`ai x --via ...`) não recebem essas flags, pois a janela é específica de cada modelo.
 
 Para tornar 1M o **padrão permanente** do Codex (aí sim editando config), adicione no topo do `~/.codex/config.toml`, antes de qualquer `[seção]`:
 
@@ -733,7 +807,7 @@ independente. E numa página lenta (Wikipedia, por exemplo) a recuperação de
 - Passagem de prompt direto via linha de comando
 - Flags configuráveis no topo do script
 - Contas Claude múltiplas com troca sem logout (Keychain, macOS)
-- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Ollama, LM Studio, LiteLLM)
+- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Step Plan/StepFun, Ollama, LM Studio, LiteLLM)
 - Roteamento por linguagem natural via Jev/TypeSafe (`ai ask`)
 - Picker de repos conhecidos quando lançado fora de um repo git
 - Funciona em Linux e no macOS padrão
@@ -771,6 +845,7 @@ npm install -g @qoder-ai/qodercli            # Qoder
 npm install -g @vegamo/deepcode-cli          # Deep Code
 npm install -g @oh-my-pi/pi-coding-agent     # omp (oh-my-pi)
 npm install -g opencode-ai                   # opencode
+npm install -g @mimo-ai/cli                  # MiMoCode (binário `mimo`)
 ```
 
 Não precisa decorar: quando uma CLI falta, o launcher imprime o comando certo **para a plataforma em que você está** (`cli_install_hint`).
@@ -821,6 +896,32 @@ Arquivos criados pelo setup:
 - `${CODEX_HOME:-~/.codex}/fugu.config.toml`
 - `${HOME}/.local/bin/codex-fugu`
 - bloco `[model_providers.sakana]` em `${CODEX_HOME:-~/.codex}/config.toml`
+
+## Rota de provider presa em config global
+
+Dois arquivos **fora** do launcher conseguem prender toda sessão num provider,
+e vencem qualquer coisa que o menu escolha:
+
+| Arquivo | O que sequestra |
+|---|---|
+| `~/.claude/settings.json` | bloco `env` — o Claude Code o aplica por conta própria, **depois** de herdar o ambiente do processo pai |
+| `${CODEX_HOME:-~/.codex}/config.toml` | `model` e `model_provider` no topo do arquivo, que são o default global |
+
+O sintoma é silencioso e não parece um bug de rota: o item "Claude Code" do menu
+abre outro provider, o "Codex" abre outro provider, e como o pin é global ele
+pega junto os itens que roteiam por env (GLM, Muse, DeepSeek). A CLI certa sobe,
+falando com o endpoint errado — sem nenhum aviso.
+
+Quem roteia provider aqui é o launcher, a cada lançamento. Então essas chaves não
+podem morar em config global: ao abrir Claude ou Codex pelo caminho oficial, elas
+são removidas. O que não é rota de provider fica intacto — `permissions`, `model`,
+`hooks`, `IS_SANDBOX`, os `mcp_servers` do Codex e o resto do `config.toml`. A
+primeira remoção deixa `~/.claude/settings.json.ai-launcher.bak` (modo 600, porque
+carrega token).
+
+Só mexe no que é do launcher: um `model_provider` de terceiros no `config.toml`
+não é tocado. Para desligar a limpeza do `settings.json`, use
+`AI_KEEP_CLAUDE_SETTINGS_ENV=1` — mas aí o pin volta a vencer o menu.
 
 ## Windows: o que é diferente
 

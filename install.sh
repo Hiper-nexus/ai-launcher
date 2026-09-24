@@ -30,9 +30,12 @@ if [[ -f "${INSTALL_DIR}/ai" ]]; then
     cp "${INSTALL_DIR}/ai" "${INSTALL_DIR}/ai.bak"
 fi
 
-# Baixar o script
-echo -e "${GREEN}Baixando ai-launcher...${RESET}"
-if command -v curl &>/dev/null; then
+# Instalar o script
+if [[ -f "$(dirname "${BASH_SOURCE[0]}")/ai" && -z "${AI_LAUNCHER_FORCE_DOWNLOAD:-}" ]]; then
+    echo -e "${GREEN}Instalando a partir dos arquivos locais do repositório...${RESET}"
+    cp "$(dirname "${BASH_SOURCE[0]}")/ai" "${INSTALL_DIR}/ai"
+elif command -v curl &>/dev/null; then
+    echo -e "${GREEN}Baixando ai-launcher...${RESET}"
     if ! curl -fsSL "${REPO_RAW}/ai" -o "${INSTALL_DIR}/ai"; then
         echo -e "${RED}Erro ao baixar. Verifique sua conexão.${RESET}"
         # Restaurar backup se existir
@@ -40,6 +43,7 @@ if command -v curl &>/dev/null; then
         exit 1
     fi
 elif command -v wget &>/dev/null; then
+    echo -e "${GREEN}Baixando ai-launcher...${RESET}"
     if ! wget -qO "${INSTALL_DIR}/ai" "${REPO_RAW}/ai"; then
         echo -e "${RED}Erro ao baixar. Verifique sua conexão.${RESET}"
         [[ -f "${INSTALL_DIR}/ai.bak" ]] && mv "${INSTALL_DIR}/ai.bak" "${INSTALL_DIR}/ai"
@@ -105,21 +109,24 @@ echo ""
 echo -e "${GREEN}Instalado com sucesso!${RESET}"
 echo ""
 echo "Uso:"
-echo "  ai          Menu interativo"
-echo "  ai c        Claude Code"
-echo "  ai x        Codex"
+echo "  ai             Menu interativo (opção 5: Macaron Venti)"
+echo "  ai c           Claude Code"
+echo "  ai mint        Macaron V1 (Claude Code)"
+echo "  ai mint-codex  Codex via Macaron V1"
+echo "  ai x           Codex"
 echo "  ai fugu        Sakana Fugu Ultra V2.0"
 echo "  ai fugu-ultra  Sakana Fugu Ultra V2.0"
 echo "  ai fugu-max    Sakana Fugu Max V1.0"
-echo "  ai g        Gemini"
-echo "  ai k        Kimi Code"
-echo "  ai gr       Grok (xAI)"
-echo "  ai --help   Ajuda completa"
+echo "  ai g           Gemini"
+echo "  ai k           Kimi Code"
+echo "  ai gr          Grok (xAI)"
+echo "  ai --help      Ajuda completa"
 echo ""
 echo -e "${YELLOW}Pré-requisitos (instale os que quiser usar):${RESET}"
 echo "  npm install -g @anthropic-ai/claude-code   # Claude"
 echo "  npm install -g @openai/codex               # Codex"
 echo "  npm install -g @google/gemini-cli           # Gemini"
+echo "  npm install -g @mimo-ai/cli                 # MiMoCode (Xiaomi MiMo)"
 echo "  curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash  # Kimi Code"
 echo "  curl -fsSL https://x.ai/cli/install.sh | bash                 # Grok (xAI)"
 echo "  curl -fsSL https://cli.devin.ai/install.sh | bash             # Devin CLI"
