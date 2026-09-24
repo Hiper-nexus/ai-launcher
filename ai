@@ -19,6 +19,14 @@ fi
 
 set -euo pipefail
 
+# Git Bash no Windows, aberto por um pai sem LANG (o pane do Nexus), fica
+# em locale C. ${#texto} conta bytes de UTF-8 e o splash truecolor morre
+# em BANNER_GRAD[i] unbound. C.UTF-8 vem com o Git for Windows.
+case "${LC_ALL:-}${LC_CTYPE:-}${LANG:-}" in
+  *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;;
+  *) export LANG=C.UTF-8; unset LC_ALL LC_CTYPE ;;
+esac
+
 AI_LAUNCHER_VERSION="1.63.0"
 
 # ╔══════════════════════════════════════════════════════╗
@@ -1063,6 +1071,10 @@ PY
     ) || return 0
 
     if [[ -n "$removed" ]]; then
+        # No Windows o os.chmod(0o600) do Python só mexe no bit de somente
+        # leitura; quem tira o token do alcance dos outros é a ACL.
+        secure_file "${file}.ai-launcher.bak"
+        secure_file "$file"
         echo -e "${YELLOW:-}⚠ Rota de provider removida do ~/.claude/settings.json:${RESET:-} ${removed}"
         echo -e "  ${DIM:-}Ela sobrescrevia o provider escolhido no menu. Backup: ${file}.ai-launcher.bak${RESET:-}"
     fi

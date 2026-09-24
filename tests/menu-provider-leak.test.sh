@@ -13,6 +13,9 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# assert_secret_file: 600 no POSIX, ACL só do dono no Windows.
+# shellcheck source=helpers/platform.sh
+source "${ROOT}/tests/helpers/platform.sh"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -91,9 +94,10 @@ settings=$(cat "${TEST_HOME}/.claude/settings.json")
 [[ "$settings" == *"rm -rf /"* ]]        || fail "permissions foram perdidas"
 [[ "$settings" == *"opus[1m]"* ]]        || fail "model do usuário foi perdido"
 [[ -f "${TEST_HOME}/.claude/settings.json.ai-launcher.bak" ]] || fail "backup não foi criado"
-perms=$(stat -f '%Lp' "${TEST_HOME}/.claude/settings.json.ai-launcher.bak" 2>/dev/null \
-        || stat -c '%a' "${TEST_HOME}/.claude/settings.json.ai-launcher.bak" 2>/dev/null)
-[[ "$perms" == "600" ]] || fail "backup com token nasceu ${perms}, esperado 600"
+assert_secret_file "${TEST_HOME}/.claude/settings.json.ai-launcher.bak" \
+    || fail "backup com token não nasceu restrito ao dono"
+assert_secret_file "${TEST_HOME}/.claude/settings.json" \
+    || fail "settings.json reescrito não ficou restrito ao dono"
 
 # idempotente: rodar de novo não quebra nem reescreve o backup
 run_launcher c
