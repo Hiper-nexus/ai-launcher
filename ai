@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.62.1"
+AI_LAUNCHER_VERSION="1.63.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -675,6 +675,21 @@ STEP_MODEL="${AI_STEP_MODEL:-step-5-preview[1m]}"
 STEP_FLASH_MODEL="${AI_STEP_FLASH_MODEL:-step-3.7-flash}"
 STEP_MODEL_LABEL="${STEP_MODEL%%\[*}"
 
+# LongCat (Meituan) — LongCat API Platform, endpoint Anthropic-compatible em
+# api.longcat.ai/anthropic (docs: longcat.ai/platform/docs/claude-code).
+# LongCat-2.5-Preview (lançado em 09/2026) e LongCat-2.0: 1M de contexto e
+# 128K de output nos dois, com raciocínio e tool use. Testado direto em
+# 25/09/2026: o endpoint SÓ aceita a key como Bearer (x-api-key → 401
+# missing_api_key), o id é case-sensitive, e o sufixo [1m] é rejeitado no
+# wire (400 Unsupported model) — mesmo caso do Step Plan: o sufixo só vive
+# no client, que faz o strip antes de chamar e passa a enxergar a janela de
+# 1M. Não há tier barato separado: a sessão toda roda no mesmo modelo, e o
+# slot Fable deixa o 2.0 à mão pelo /model.
+LONGCAT_MODEL="${AI_LONGCAT_MODEL:-LongCat-2.5-Preview[1m]}"
+LONGCAT_V2_MODEL="${AI_LONGCAT_V2_MODEL:-LongCat-2.0[1m]}"
+LONGCAT_MODEL_LABEL="${LONGCAT_MODEL%%\[*}"
+LONGCAT_V2_MODEL_LABEL="${LONGCAT_V2_MODEL%%\[*}"
+
 # Macaron V1 (Mind Lab / Mint Recursive) — modelo HOSPEDADO, não é CLI de
 # agente. Roda DENTRO do Claude Code (API Anthropic-compatible na raiz do
 # endpoint) ou do Codex (wire_api responses). Docs:
@@ -738,6 +753,7 @@ declare -A PROVIDER_URLS=(
     [openrouter]="https://openrouter.ai/api"
     [deepseek]="https://api.deepseek.com/anthropic"
     [step]="https://api.stepfun.ai/step_plan"
+    [longcat]="https://api.longcat.ai/anthropic"
     [ollama]="http://localhost:11434"
     [lmstudio]="http://localhost:1234"
     [litellm]="http://localhost:4000"
@@ -753,6 +769,7 @@ declare -A PROVIDER_MODELS=(
     [openrouter]="anthropic/claude-sonnet-4"
     [deepseek]="deepseek-flash"
     [step]="${STEP_MODEL}"
+    [longcat]="${LONGCAT_MODEL}"
     [ollama]="qwen2.5-coder:32b"
     [lmstudio]="loaded-model"
     [litellm]="gpt-4o"
@@ -778,6 +795,9 @@ declare -A PROVIDER_EXTRA_ENV=(
     # de 1M via sufixo — o client faz o strip antes do wire), Haiku e
     # subagentes no step-3.7-flash (262k, com visão).
     [step]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 CLAUDE_CODE_SUBAGENT_MODEL=${STEP_FLASH_MODEL} ANTHROPIC_DEFAULT_HAIKU_MODEL=${STEP_FLASH_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${STEP_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${STEP_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=${STEP_MODEL}"
+    # LongCat: config da doc oficial (todos os slots no mesmo modelo, output
+    # de 131072) + auto-compact em 1M; Fable no 2.0 para trocar pelo /model.
+    [longcat]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 CLAUDE_CODE_MAX_OUTPUT_TOKENS=131072 CLAUDE_CODE_SUBAGENT_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_HAIKU_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=${LONGCAT_V2_MODEL}"
     [ollama]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [lmstudio]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
@@ -1157,6 +1177,143 @@ glm_flashx_setup_env() {
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="$GLM_FLASHX_MODEL"
     export ANTHROPIC_DEFAULT_SONNET_MODEL="$GLM_FLASHX_MODEL"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="$GLM_FLASHX_MODEL"
+}
+
+# ── LongCat (Meituan) — dentro do Claude Code ─────────────
+# LongCat 2.0 em TODOS os slots: mesmo provider e base_url, modelo trocado
+# (o provider_setup_env exporta o 2.5 nos slots principais; sem o override
+# a sessão misturaria gerações).
+longcat_v2_setup_env() {
+    provider_setup_env "longcat" || return 1
+    export ANTHROPIC_MODEL="$LONGCAT_V2_MODEL"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$LONGCAT_V2_MODEL"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="$LONGCAT_V2_MODEL"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$LONGCAT_V2_MODEL"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="$LONGCAT_V2_MODEL"
+    export CLAUDE_CODE_SUBAGENT_MODEL="$LONGCAT_V2_MODEL"
+}
+
+# Mesma resolução do provider_setup_env: env → slot do providers.conf → default.
+longcat_base_url() {
+    local url="${AI_LONGCAT_BASE_URL:-}"
+    [[ -z "$url" ]] && url=$(provider_load_key longcat-base-url 2>/dev/null || true)
+    printf '%s' "${url:-${PROVIDER_URLS[longcat]}}"
+}
+
+longcat_save_key() {
+    local key="${1:-}"
+    if [[ -z "$key" && -t 0 ]]; then
+        read -rsp "$(echo -e "  ${BOLD}API key da LongCat (ak_...):${RESET} ")" key || true
+        echo ""
+    fi
+    [[ -z "$key" ]] && { echo -e "${RED}Erro: key vazia.${RESET}" >&2; return 1; }
+    provider_save_key longcat "$key" || return 1
+    echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+}
+
+# Confere key e endpoint sem abrir o Claude: lista os modelos da conta e faz
+# uma chamada mínima no /v1/messages — o mesmo caminho e o mesmo header
+# (Bearer) que o Claude Code vai usar. A key vai por env, não por argv.
+longcat_ping() {
+    local key; key=$(provider_load_key longcat) || true
+    if [[ -z "$key" ]]; then
+        echo -e "${RED}Erro: nenhuma API key da LongCat.${RESET}" >&2
+        echo "  Pegue em: https://longcat.ai/platform/api_keys" >&2
+        echo "  Depois:   ai longcat key" >&2
+        return 1
+    fi
+    require_python || return 1
+    echo -e "${BOLD}LongCat — testando $(longcat_base_url)${RESET}"
+    LC_KEY="$key" LC_BASE="$(longcat_base_url)" LC_MODEL="$LONGCAT_MODEL_LABEL" python3 - <<'PY'
+import json, os, sys, time, urllib.error, urllib.request
+key, base, model = os.environ["LC_KEY"], os.environ["LC_BASE"].rstrip("/"), os.environ["LC_MODEL"]
+root = base[: -len("/anthropic")] if base.endswith("/anthropic") else base
+
+def call(url, body=None):
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode() if body else None,
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json",
+                 "anthropic-version": "2023-06-01"})
+    t0 = time.time()
+    with urllib.request.urlopen(req, timeout=90) as r:
+        return json.load(r), time.time() - t0
+
+try:
+    d, _ = call(root + "/openai/v1/models")
+    print("  Modelos na sua conta:")
+    for m in d.get("data", []):
+        print(f"    {m.get('id', '?'):<22} {m.get('context_window', 0):>10,} ctx  {m.get('max_output_tokens', 0):>8,} out")
+    d, dt = call(base + "/v1/messages", {"model": model, "max_tokens": 512,
+                 "messages": [{"role": "user", "content": "Responda só: pong"}]})
+    txt = "".join(c.get("text", "") for c in d.get("content", []) if c.get("type") == "text").strip()
+    print(f"  /v1/messages ({model}): OK em {dt:.1f}s → {txt[:60] or '(só raciocínio)'}")
+except urllib.error.HTTPError as e:
+    print(f"  erro HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
+    sys.exit(1)
+except Exception as e:
+    print("  erro:", str(e)[:160])
+    sys.exit(1)
+PY
+}
+
+# Abre o Claude Code no LongCat. $1 = 2.5 | 2.0; o resto vai para o Claude.
+longcat_launch() {
+    local variant="$1"; shift
+    if [[ "$variant" == "2.0" ]]; then
+        longcat_v2_setup_env || return 1
+        enter_repo_if_needed
+        launch "LongCat (${LONGCAT_V2_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+    else
+        provider_setup_env "longcat" || return 1
+        enter_repo_if_needed
+        launch "LongCat (${LONGCAT_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+    fi
+}
+
+# Entrada da CLI: subcomandos (key/ping) ou lançamento com flags e prompt.
+longcat_dispatch() {
+    local variant="$1"; shift
+    case "${1:-}" in
+        key)             shift; longcat_save_key "${1:-}"; return $? ;;
+        ping|test|models) longcat_ping; return $? ;;
+        menu)            longcat_menu_panel; return $? ;;
+    esac
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    longcat_launch "$variant" "$@"
+}
+
+longcat_menu_panel() {
+    echo -e "${BOLD}${C_LONGCAT}"
+    echo "  ┌──────────────────────────────────────────────────┐"
+    echo "  │   🐱 LongCat (Meituan) — dentro do Claude Code   │"
+    echo "  └──────────────────────────────────────────────────┘"
+    echo -e "${RESET}"
+    echo -e "  ${BOLD}Modelo:${RESET}   ${LONGCAT_MODEL_LABEL} ${DIM}(1M de contexto · 128K de output · raciocínio + tools)${RESET}"
+    echo -e "  ${BOLD}Também:${RESET}   ${LONGCAT_V2_MODEL_LABEL} ${DIM}(no /model, slot Fable)${RESET}"
+    echo -e "  ${BOLD}Endpoint:${RESET} ${DIM}$(longcat_base_url)${RESET}"
+    echo -e "  ${BOLD}Status:${RESET}   $(provider_cli_status_icon longcat claude)"
+    echo ""
+    echo -e "  ${BOLD}Pela linha de comando:${RESET}"
+    echo -e "    ${GREEN}ai longcat${RESET}               Claude Code no ${LONGCAT_MODEL_LABEL} (alias: lc)"
+    echo -e "    ${GREEN}ai longcat${RESET} \"tarefa\"      resposta única (one-shot)"
+    echo -e "    ${GREEN}ai lc2${RESET}                   Claude Code no ${LONGCAT_V2_MODEL_LABEL}"
+    echo -e "    ${GREEN}ai longcat ping${RESET}          testa key e endpoint, lista os modelos"
+    echo -e "    ${GREEN}ai longcat key${RESET}           salva ou troca a key (1x por Mac)"
+    echo ""
+    echo -e "  ${BOLD}1)${RESET} Claude + ${LONGCAT_MODEL_LABEL}    ${BOLD}2)${RESET} Claude + ${LONGCAT_V2_MODEL_LABEL}"
+    echo -e "  ${BOLD}3)${RESET} Testar conexão                  ${BOLD}4)${RESET} Trocar key    ${BOLD}0)${RESET} Voltar"
+    local opt
+    read -rp "  Escolha [1-4/0] (default 1): " opt || true
+    opt=$(normalize_choice "$opt")
+    case "${opt:-1}" in
+        1) longcat_launch 2.5 ;;
+        2) longcat_launch 2.0 ;;
+        3) longcat_ping ;;
+        4) longcat_save_key ;;
+        0) return 0 ;;
+        *) echo "Opção inválida."; return 1 ;;
+    esac
 }
 
 sakana_setup_claude_env() {
@@ -3226,6 +3383,7 @@ C_OLLAMA=$(_fg  245 245 245 255 37)  # branco Ollama
 C_HF=$(_fg      255 214  10 220 33)  # amarelo Hugging Face
 C_FL=$(_fg      132 204  22 148 32)  # lima Featherless
 C_STEP=$(_fg      0 191 165  79 36)  # turquesa StepFun (Step Plan)
+C_LONGCAT=$(_fg 255 170   0 214 33)  # laranja LongCat (Meituan)
 C_AB=$(_fg      239  68  68 196 31)  # vermelho Abliteration (sem censura)
 C_SEC=$(_fg     244  63  94 203 31)  # vermelho segurança
 C_TOOL=$(_fg    250 204  21 220 33)  # âmbar ferramentas
@@ -5690,6 +5848,9 @@ CLIs de IA:
   deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
   deepseek-v41, ds-v41   Abre Claude Code usando DeepSeek V4.1 Flash (GA)
   step, sp, stepfun      Abre Claude Code usando Step Plan (step-5-preview 1M)
+  longcat, lc            Abre Claude Code usando LongCat-2.5-Preview (Meituan, 1M)
+  longcat-2, lc2         Abre Claude Code usando LongCat-2.0 (1M)
+  longcat ping | key     Testa key/endpoint e lista modelos | salva a key
   mint, macaron, venti   Abre Claude Code usando Macaron V1 (macaron-v1-coding-venti)
   mint-codex, mcx        Abre Codex usando Macaron V1 (provider responses)
   codex,  x              Abre Codex CLI (1M por padrão no provider oficial)
@@ -5882,6 +6043,8 @@ Exemplos:
   ai ds-pro                       Claude via DeepSeek V4-Pro
   ai ds-v41                       Claude via DeepSeek V4.1 Flash (beta)
   ai step                         Claude via Step Plan step-5-preview (1M)
+  ai longcat                      Claude via LongCat-2.5-Preview (1M)
+  ai longcat ping                 Testa a key da LongCat e lista os modelos
   ai x                            Codex (1M por padrão; override: -c model_context_window=...)
   ai sol                          Codex GPT-5.6 Sol com janela de 1M de contexto
   ai sol "tarefa gigante"         (auto-compacta em 900k; aliases: x-1m, x1m)
@@ -6406,6 +6569,7 @@ JEV_ROUTE_CRITERIA='{
   "fugu-max":     "Mesma linha do Fugu, mas a versão ECONÔMICA (Max V1.0) em vez do Ultra: quando o usuário quer Fugu/Sakana gastando menos, ou citou fugu-max. Se ele citou Fugu sem falar de custo, prefira `sakana`.",
   "claude-fugu":  "O harness do Claude Code rodando por cima do endpoint Anthropic-compatible da Sakana: quando o usuário quer o Fugu mas dentro do Claude Code (ferramentas, skills e fluxo do Claude), ou citou claude-fugu. Diferente de `sakana`, que abre o Codex.",
   "step":         "Tarefa em que o usuário citou StepFun, Step Plan, ou step-5-preview.",
+  "longcat":      "Tarefa em que o usuário citou LongCat, Meituan, ou LongCat-2.5 / LongCat-2.0. Modelo hospedado rodando dentro do Claude Code.",
   "mint":         "Tarefa em que o usuário citou Macaron, Mint, Mint Recursive, Mind Lab, ou macaron-v1 (venti/grande/tall). Modelo hospedado rodando dentro do Claude Code. Não confundir com MiMo/mimo.",
   "codex":        "Tarefa em que o usuário citou Codex, GPT, OpenAI, ou pediu explicitamente o Codex (janela padrão). Se ele precisa de contexto gigante no Codex, prefira `sol`.",
   "sol":          "Codex com janela de 1M de contexto: tarefa longa demais para o Codex padrão, varredura de repositório inteiro, ou quando o usuário citou Sol, x-1m, ou pediu 1M de contexto no Codex.",
@@ -6927,6 +7091,14 @@ elif [[ ${1:-} == "step" || ${1:-} == "sp" || ${1:-} == "stepfun" ]]; then
     provider_setup_env "step" || exit 1
     enter_repo_if_needed
     launch "Step Plan (${STEP_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+elif [[ ${1:-} == "longcat-2" || ${1:-} == "lc2" || ${1:-} == "longcat-2.0" ]]; then
+    shift
+    longcat_dispatch 2.0 "$@"
+    exit $?
+elif [[ ${1:-} == "longcat" || ${1:-} == "lc" || ${1:-} == "longcat-2.5" || ${1:-} == "lc25" ]]; then
+    shift
+    longcat_dispatch 2.5 "$@"
+    exit $?
 elif [[ ${1:-} == "mint-codex" || ${1:-} == "macaron-codex" || ${1:-} == "mcx" ]]; then
     shift
     launch_macaron_codex "$@"
@@ -7582,6 +7754,7 @@ muse_cli_status=$(muse_status_icon)   # CLI própria: só depende da key
 deepseek_status=$(provider_cli_status_icon deepseek claude)
 macaron_status=$(provider_cli_status_icon macaron claude)
 step_status=$(provider_cli_status_icon step claude)
+longcat_status=$(provider_cli_status_icon longcat claude)
 sakana_status=$(provider_cli_status_icon sakana codex)
 codex_status=$(status_icon codex)
 gemini_status=$(status_icon gemini)
@@ -7672,12 +7845,13 @@ menu_row 28 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status
 menu_row 29 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
 menu_row 30 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
 menu_row 31 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
+menu_row 32 "$C_LONGCAT"  "LongCat"      "${LONGCAT_MODEL_LABEL#LongCat-}" "${longcat_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 32 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 33 "$C_TOOL" "🔌 Providers"
-menu_tool 34 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 35 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 33 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 34 "$C_TOOL" "🔌 Providers"
+menu_tool 35 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 36 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -7702,7 +7876,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-35/0]: " choice
+read -rp "Escolha [1-36/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -7799,10 +7973,12 @@ case $choice in
        provider_setup_env "step" || continue
        enter_repo_if_needed
        launch "Step Plan (${STEP_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   32) enter_repo_if_needed
+   32|longcat|lc)
+       longcat_menu_panel || true ;;
+   33) enter_repo_if_needed
        launch_codex_security ;;
-   33) provider_list ;;
-   34) flags_menu
+   34) provider_list ;;
+   35) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -7822,7 +7998,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
        esac
        ;;
-   35) conta_menu ;;
+   36) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

@@ -43,6 +43,8 @@ ai ds           # DeepSeek V4.1 Flash (GA, model ID: deepseek-flash) via Claude 
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai ds-v41       # DeepSeek V4.1 Flash — alias do ai ds
 ai step         # Step Plan step-5-preview (StepFun, janela de 1M) via Claude Code
+ai longcat      # LongCat-2.5-Preview (Meituan, janela de 1M) via Claude Code (alias: lc; menu: 32)
+ai lc2          # LongCat-2.0 em toda a sessão (alias: longcat-2)
 ai mint         # Macaron V1 (macaron-v1-coding-venti) via Claude Code (aliases: macaron, venti, mac, mv; menu: 5)
 ai mint-codex   # Codex via Macaron V1 (provider responses; alias: mcx)
 ai x            # Codex direto (1M por padrão no provider oficial)
@@ -307,6 +309,29 @@ ai ab claude                 # Claude Code INTEIRO em cima do GLM-5.3 sem censur
 
 Modelos: `abliterated-model-large-v2` (GLM-5.3, default), `abliterated-model-large` (GLM-5.2) e `abliterated-model` (multimodal). Thinking desligado por padrão; `AI_AB_THINKING=1` religa (no large-v2 o raciocínio não desliga, roda em low). Ajustes: `AI_AB_MODEL`, `AI_AB_HOST`. A key fica no `providers.conf` (chmod 600, slot `abliteration`); `ABLITERATION_API_KEY` no ambiente tem prioridade.
 
+## LongCat (Meituan) — dentro do Claude Code
+
+`ai longcat` abre o Claude Code com a sessão inteira no **LongCat-2.5-Preview**, o modelo agêntico da Meituan (lançado em setembro de 2026), servido pela [LongCat API Platform](https://longcat.ai/platform/docs/) num endpoint Anthropic-compatible. Funciona igual ao `ai glm`: o Claude Code é só o harness (ferramentas, skills, MCP) e o raciocínio roda no LongCat. Janela de 1M, até 128K de output, raciocínio e tool use.
+
+```bash
+ai longcat key               # salva a key ak_... (https://longcat.ai/platform/api_keys, 1x por máquina)
+ai longcat ping              # testa key e endpoint e lista os modelos da conta
+ai longcat                   # Claude Code no LongCat-2.5-Preview (alias: lc)
+ai longcat "explique o repo" # one-shot
+ai lc2                       # sessão inteira no LongCat-2.0
+```
+
+No menu, a opção **32** abre um painel com as duas variantes, o teste de conexão e a troca de key; digitar `longcat` no prompt do menu também funciona.
+
+Detalhes testados direto contra a API em 25/09/2026, e que o launcher já resolve:
+
+- a key só é aceita como `Authorization: Bearer` (`ANTHROPIC_AUTH_TOKEN`). Via `x-api-key` volta 401, então um `ANTHROPIC_API_KEY` herdado do shell é removido;
+- o sufixo `[1m]` é rejeitado no endpoint, mas o Claude Code o remove antes de chamar a API. Ele fica só no client, para o `/context` e o auto-compact enxergarem 1M em vez de ~200k;
+- o id do modelo diferencia maiúsculas de minúsculas (`LongCat-2.5-Preview`);
+- todos os slots (Sonnet, Opus, Haiku, subagentes) usam o 2.5. O slot Fable aponta para o 2.0, que fica disponível pelo `/model`. `CLAUDE_CODE_MAX_OUTPUT_TOKENS=131072` segue a doc oficial.
+
+Ajustes: `AI_LONGCAT_MODEL`, `AI_LONGCAT_V2_MODEL`, `AI_LONGCAT_BASE_URL` (ex.: `https://api.longcat.chat/anthropic`, o domínio da China, que também responde). A key fica no `providers.conf` (chmod 600, slot `longcat`), fora do repositório.
+
 ## Qwen (Alibaba Model Studio — duas opções)
 
 O Qwen-Max direto pela API da Alibaba (não é o Qoder). Requer uma key do [Model Studio](https://modelstudio.console.alibabacloud.com) — salve com `ai qw key`. Duas formas de usar o mesmo modelo:
@@ -562,7 +587,7 @@ ai conta status          # uso de cada conta (janela 5h / 7 dias) + horário de 
 ai conta use pessoal     # ativa a conta "pessoal" na hora
 ai conta rm backup       # remove um backup salvo
 ai c --conta trabalho    # troca de conta e já lança o Claude
-ai conta                 # menu interativo (também é a opção 32 do menu principal)
+ai conta                 # menu interativo (também é a opção 36 do menu principal)
 ```
 
 **Auto-switch**: com 2+ contas salvas, `ai c` verifica a janela de 5h antes de lançar — se a conta ativa esgotou, troca automaticamente para outra com quota (fail-open: problema de rede nunca bloqueia o launch). Desligar: `AI_CONTA_AUTO_SWITCH=false`. Trocar mais cedo: `AI_CONTA_AUTO_THRESHOLD=95`.
@@ -776,7 +801,7 @@ independente. E numa página lenta (Wikipedia, por exemplo) a recuperação de
 - Passagem de prompt direto via linha de comando
 - Flags configuráveis no topo do script
 - Contas Claude múltiplas com troca sem logout (Keychain, macOS)
-- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Step Plan/StepFun, Ollama, LM Studio, LiteLLM)
+- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Step Plan/StepFun, LongCat/Meituan, Ollama, LM Studio, LiteLLM)
 - Roteamento por linguagem natural via Jev/TypeSafe (`ai ask`)
 - Picker de repos conhecidos quando lançado fora de um repo git
 - Funciona em Linux e no macOS padrão
