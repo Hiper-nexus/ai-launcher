@@ -10,7 +10,7 @@
 #     Code faz o strip antes de chamar — o sufixo só existe do lado do client,
 #     para ele enxergar a janela de 1M em vez de assumir ~200k.
 # Este teste trava base_url, os slots, a janela de compact, o teto de output
-# da doc oficial, o destino 2.0 e as duas entradas do menu (32 e 'longcat').
+# da doc oficial, o destino 2.0 e as duas entradas do menu (6 e 'longcat').
 
 set -euo pipefail
 
@@ -122,7 +122,7 @@ env_is ANTHROPIC_MODEL "LongCat-2.0"
 env_is CLAUDE_CODE_SUBAGENT_MODEL "LongCat-2.0"
 ok "AI_LONGCAT_MODEL"
 
-echo "── 5. menu: '32' abre o painel, '1' lança o 2.5; 'longcat' no prompt também"
+echo "── 5. menu: '6' (logo abaixo do Macaron) abre o painel; 'longcat' no prompt também"
 # Espera o TEXTO do prompt antes de digitar: resposta que chega antes do read()
 # se perde no pty (era o flake do version-cache).
 run_menu_pty() {
@@ -168,16 +168,22 @@ except subprocess.TimeoutExpired:
 PY
 }
 
-run_menu_pty "Escolha [1-36/0]" "32" "Escolha [1-4/0]" "1"
+run_menu_pty "Escolha [1-36/0]" "6" "Escolha [1-4/0]" "1"
 assert_longcat_25
-ok "menu 32 → painel → 1 (2.5 Preview)"
+ok "menu 6 → painel → 1 (2.5 Preview)"
 
-run_menu_pty "Escolha [1-36/0]" "32" "Escolha [1-4/0]" "2"
+run_menu_pty "Escolha [1-36/0]" "6" "Escolha [1-4/0]" "2"
 env_is ANTHROPIC_MODEL "LongCat-2.0[1m]"
-ok "menu 32 → painel → 2 (2.0)"
+ok "menu 6 → painel → 2 (2.0)"
 
 run_menu_pty "Escolha [1-36/0]" "longcat" "Escolha [1-4/0]" "1"
 assert_longcat_25
 ok "alias 'longcat' no prompt do menu"
 
-echo "PASS: longcat-dispatch (CLI, aliases, 2.0, override, menu 32)"
+echo "── 6. posição: LongCat é o 6, logo abaixo do Macaron (grupo CLAUDE CODE)"
+grep -A1 -E '^menu_row +5 +"\$C_MACARON"' "${ROOT}/ai" | grep -Eq '^menu_row +6 +"\$C_LONGCAT"' ||
+    fail "a linha logo abaixo do Macaron não é o LongCat (menu 6)"
+grep -q '    6|longcat|lc)' "${ROOT}/ai" || fail "dispatch do 6 não é o LongCat"
+ok "menu 6 = LongCat, abaixo do Macaron"
+
+echo "PASS: longcat-dispatch (CLI, aliases, 2.0, override, menu 6)"

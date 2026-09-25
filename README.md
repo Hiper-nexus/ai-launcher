@@ -43,7 +43,7 @@ ai ds           # DeepSeek V4.1 Flash (GA, model ID: deepseek-flash) via Claude 
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai ds-v41       # DeepSeek V4.1 Flash — alias do ai ds
 ai step         # Step Plan step-5-preview (StepFun, janela de 1M) via Claude Code
-ai longcat      # LongCat-2.5-Preview (Meituan, janela de 1M) via Claude Code (alias: lc; menu: 32)
+ai longcat      # LongCat-2.5-Preview (Meituan, janela de 1M) via Claude Code (alias: lc; menu: 6)
 ai lc2          # LongCat-2.0 em toda a sessão (alias: longcat-2)
 ai mint         # Macaron V1 (macaron-v1-coding-venti) via Claude Code (aliases: macaron, venti, mac, mv; menu: 5)
 ai mint-codex   # Codex via Macaron V1 (provider responses; alias: mcx)
@@ -321,7 +321,7 @@ ai longcat "explique o repo" # one-shot
 ai lc2                       # sessão inteira no LongCat-2.0
 ```
 
-No menu, a opção **32** abre um painel com as duas variantes, o teste de conexão e a troca de key; digitar `longcat` no prompt do menu também funciona.
+No menu, a opção **6** (logo abaixo do Macaron, no grupo CLAUDE CODE) abre um painel com as duas variantes, o teste de conexão e a troca de key; digitar `longcat` no prompt do menu também funciona.
 
 Detalhes testados direto contra a API em 25/09/2026, e que o launcher já resolve:
 

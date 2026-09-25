@@ -131,14 +131,14 @@ captured=$(cat "$CAPTURE")
 [[ "$captured" == *"-p fugu"* ]]   || fail "ai fugu perdeu o perfil: ${captured}"
 
 # ── 6. ordem do menu: cada grupo começa pela CLI nativa ───────────────
-# (1 = Claude, 6 = Codex; o usuário lê o cabeçalho do grupo e escolhe o 1º)
+# (1 = Claude, 7 = Codex; o usuário lê o cabeçalho do grupo e escolhe o 1º)
 grep -Eq '^menu_row +1 +"\$C_CLAUDE" +"Claude Code"' "${ROOT}/ai" \
     || fail "menu 1 deixou de ser o Claude Code"
-grep -Eq '^menu_row +6 +"\$C_CODEX" +"Codex"' "${ROOT}/ai" \
-    || fail "menu 6 deixou de ser o Codex"
-grep -Eq '^menu_row +7 +"\$C_SAKANA" +"Sakana Fugu"' "${ROOT}/ai" \
-    || fail "menu 7 deixou de ser o Sakana Fugu"
-grep -q '    6|codex|x)' "${ROOT}/ai" || fail "dispatch do 6 não é o Codex"
-grep -q '    7|sakana|fugu)' "${ROOT}/ai" || fail "dispatch do 7 não é o Fugu"
+grep -Eq '^menu_row +7 +"\$C_CODEX" +"Codex"' "${ROOT}/ai" \
+    || fail "menu 7 deixou de ser o Codex"
+grep -Eq '^menu_row +8 +"\$C_SAKANA" +"Sakana Fugu"' "${ROOT}/ai" \
+    || fail "menu 8 deixou de ser o Sakana Fugu"
+grep -q '    7|codex|x)' "${ROOT}/ai" || fail "dispatch do 7 não é o Codex"
+grep -q '    8|sakana|fugu)' "${ROOT}/ai" || fail "dispatch do 8 não é o Fugu"
 
 echo "PASS"

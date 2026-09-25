@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.63.0"
+AI_LAUNCHER_VERSION="1.63.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -128,7 +128,7 @@ AB_MODEL="${AI_AB_MODEL:-abliterated-model-large-v2}"
 
 # ── Muse Spark (Meta AI) ─────────────────────────────────
 # API compatível com a Messages API da Anthropic (POST /v1/messages, SSE).
-# Dois caminhos: CLI própria (ai ms / menu 18), falando direto com a API, e
+# Dois caminhos: CLI própria (ai ms / menu 27), falando direto com a API, e
 # dentro do Claude Code (ai ms claude / menu 3), via ANTHROPIC_BASE_URL.
 # É um modelo com raciocínio: parte dos tokens de saída vai para blocos
 # thinking/redacted_thinking, por isso o teto de tokens é alto por padrão —
@@ -7813,39 +7813,39 @@ menu_row  2 "$C_GLM"      "GLM ${GLM_MODEL_LABEL#glm-} Z.ai" "${glm_ver}"  "${gl
 menu_row  3 "$C_MUSE"     "Muse Spark"   "${muse_spark_ver}"    "${muse_spark_status}"
 menu_row  4 "$C_DEEPSEEK" "DeepSeek V4.1" "${deepseek_ver}"      "${deepseek_status}"
 menu_row  5 "$C_MACARON"  "Macaron Venti" "${macaron_ver}"      "${macaron_status}"
+menu_row  6 "$C_LONGCAT"  "LongCat"      "${LONGCAT_MODEL_LABEL#LongCat-}" "${longcat_status}"
 
 menu_group "CODEX"
-menu_row  6 "$C_CODEX"    "Codex"        "${codex_ver}"         "${codex_status}"
-menu_row  7 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"
+menu_row  7 "$C_CODEX"    "Codex"        "${codex_ver}"         "${codex_status}"
+menu_row  8 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"
 
 menu_group "OUTRAS CLIs"
-menu_row  8 "$C_GEMINI"   "Gemini"       "${gemini_ver}"        "${gemini_status}"
-menu_row  9 "$C_KIMI"     "Kimi Code"    "${kimi_ver}"          "${kimi_status}"
-menu_row 10 "$C_GROK"     "Grok (xAI)"   "${grok_ver}"          "${grok_status}"
-menu_row 11 "$C_DEEPCODE" "Deep Code"    "${deepcode_ver}"      "${deepcode_status}"
-menu_row 12 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
-menu_row 13 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
-menu_row 14 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
-menu_row 15 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
-menu_row 16 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
-menu_row 17 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
-menu_row 18 "$C_MIMO"     "MiMo Code"    "${mimo_ver}"          "${mimo_status}"
-menu_row 19 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
-menu_row 20 "$C_DEVIN"    "Devin CLI"    "${devin_ver}"         "${devin_status}"
+menu_row  9 "$C_GEMINI"   "Gemini"       "${gemini_ver}"        "${gemini_status}"
+menu_row 10 "$C_KIMI"     "Kimi Code"    "${kimi_ver}"          "${kimi_status}"
+menu_row 11 "$C_GROK"     "Grok (xAI)"   "${grok_ver}"          "${grok_status}"
+menu_row 12 "$C_DEEPCODE" "Deep Code"    "${deepcode_ver}"      "${deepcode_status}"
+menu_row 13 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
+menu_row 14 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
+menu_row 15 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
+menu_row 16 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
+menu_row 17 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
+menu_row 18 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
+menu_row 19 "$C_MIMO"     "MiMo Code"    "${mimo_ver}"          "${mimo_status}"
+menu_row 20 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
+menu_row 21 "$C_DEVIN"    "Devin CLI"    "${devin_ver}"         "${devin_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 21 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 22 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 23 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 24 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 25 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 26 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
-menu_row 27 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
-menu_row 28 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
-menu_row 29 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
-menu_row 30 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
-menu_row 31 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
-menu_row 32 "$C_LONGCAT"  "LongCat"      "${LONGCAT_MODEL_LABEL#LongCat-}" "${longcat_status}"
+menu_row 22 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 23 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 24 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 25 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 26 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 27 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 28 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 29 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
+menu_row 30 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
+menu_row 31 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
+menu_row 32 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
 
 menu_group "FERRAMENTAS"
 menu_tool 33 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
@@ -7902,79 +7902,79 @@ case $choice in
        provider_setup_env "macaron" || continue
        enter_repo_if_needed
        launch "Claude Code + Macaron (${MACARON_MODEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-    6|codex|x)
+    6|longcat|lc)
+       longcat_menu_panel || true ;;
+    7|codex|x)
        xconta_autoswitch_if_needed
        codex_config_clear_foreign_defaults
        codex_force_official_provider
        codex_add_context_flags
        enter_repo_if_needed
        launch "Codex (1M)" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
-    7|sakana|fugu)
+    8|sakana|fugu)
        launch_sakana_fugu "fugu" ;;
-    8|gemini|g)
+    9|gemini|g)
        enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
-    9|kimi|k)
+   10|kimi|k)
        enter_repo_if_needed
        launch "Kimi Code" kimi "$KIMI_PROMPT_FLAG" KIMI_FLAGS ;;
-   10|grok|gr)
+   11|grok|gr)
        enter_repo_if_needed
        launch "Grok" grok "$GROK_PROMPT_FLAG" GROK_FLAGS ;;
-   11|deepcode|dc)
+   12|deepcode|dc)
        enter_repo_if_needed
        launch "Deep Code" deepcode "$DEEPCODE_PROMPT_FLAG" DEEPCODE_FLAGS ;;
-   12|antigravity|agy)
+   13|antigravity|agy)
        enter_repo_if_needed
        agy_add_workspace_flag
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-   13|qoder)
+   14|qoder)
        enter_repo_if_needed
        launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
-   14|cursor)
+   15|cursor)
        enter_repo_if_needed
        launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
-   15|omp)
+   16|omp)
        enter_repo_if_needed
        launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS ;;
-   16|prime)
+   17|prime)
        enter_repo_if_needed
        launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
-   17|opencode)
+   18|opencode)
        enter_repo_if_needed
        opencode_launch ;;
-   18|mimo)
+   19|mimo)
        enter_repo_if_needed
        mimo_launch ;;
-   19|muse)
+   20|muse)
        if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; cli_install_hint muse; continue; fi
        enter_repo_if_needed
        launch "Muse Code" muse "" MUSE_CODE_FLAGS ;;
-   20|devin)
+   21|devin)
        if ! check_installed devin; then echo -e "${RED}Erro: Devin CLI não instalada.${RESET}"; cli_install_hint devin; continue; fi
        enter_repo_if_needed
        devin_launch ;;
-   21) ollama_dispatch || true ;;
-   22) hf_menu_panel || true ;;
-   23) fl_dispatch || true ;;
-   24) qwen_launch || true ;;
-   25) qwen_launch_claude || true ;;
-   26) muse_dispatch || true ;;
-   27) provider_setup_env "deepseek" || continue
+   22) ollama_dispatch || true ;;
+   23) hf_menu_panel || true ;;
+   24) fl_dispatch || true ;;
+   25) qwen_launch || true ;;
+   26) qwen_launch_claude || true ;;
+   27) muse_dispatch || true ;;
+   28) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "deepseek-v4-pro[1m]")"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   28) provider_setup_env "deepseek" || continue
+   29) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "$DEEPSEEK_V41_MODEL")"
        enter_repo_if_needed
        launch "DeepSeek V4.1 Flash" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   29) ab_dispatch || true ;;
-   30) ab_launch_claude ;;
-   31|step)
+   30) ab_dispatch || true ;;
+   31) ab_launch_claude ;;
+   32|step)
        provider_setup_env "step" || continue
        enter_repo_if_needed
        launch "Step Plan (${STEP_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   32|longcat|lc)
-       longcat_menu_panel || true ;;
    33) enter_repo_if_needed
        launch_codex_security ;;
    34) provider_list ;;
