@@ -68,6 +68,8 @@ ai omp models   # Providers/modelos que o omp enxerga hoje
 ai mi           # MiMoCode (Xiaomi MiMo) — CLI própria, não é o Claude
 ai mi "prompt"  # MiMoCode one-shot via 'mimo run'
 ai mi -m xiaomi/mimo-v2.6-pro   # série V2.6 (1M de contexto)
+ai mcode        # MiniMax Code — CLI própria da MiniMax (aliases: mmc, minimax; menu: 20)
+ai mcode "prompt"  # MiniMax Code one-shot via 'mcode exec --permission full'
 ai ol           # Ollama Cloud (roda em ollama.com, não na sua máquina)
 ai ab           # GLM-5.3 sem censura (Abliteration.ai) — chat ou one-shot
 ai c "prompt"   # Claude com prompt
@@ -98,6 +100,7 @@ ai --help       # Ajuda
 | Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
 | omp (oh-my-pi) | `ai omp`, `ai o` | `--yolo` — agente único com 60+ providers; `-m` troca de modelo |
 | MiMoCode (Xiaomi MiMo) | `ai mi`, `ai mimo` | CLI **própria** (binário `mimo`, fork do OpenCode) — não é o Claude com outro modelo. `--dangerously-skip-permissions`; one-shot via `mimo run`; modelos V2.6 (pro / ultraspeed / flash) e V2.5 |
+| MiniMax Code | `ai mcode`, `ai mmc`, `ai minimax` (menu: 20) | CLI **própria** da MiniMax (binário `mcode`, open-source) — não é o Claude com o MiniMax-M3. TUI sem flag de yolo; one-shot via `mcode exec --permission full` |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
@@ -416,6 +419,25 @@ Valide com `mimo models xiaomi` — os seis (V2.5 + V2.6) devem listar.
 
 Instalação: `npm install -g @mimo-ai/cli` (binário `mimo`; se o npm bloquear o postinstall: `npm install -g --allow-scripts=@mimo-ai/cli @mimo-ai/cli`). Docs: [mimo.xiaomi.com/coder](https://mimo.xiaomi.com/coder).
 
+## MiniMax Code (CLI própria da MiniMax)
+
+O MiniMax Code é o agente de terminal **próprio** da MiniMax (binário `mcode`, pacote `@minimax-ai/code`, MIT, open-source desde 09/2026). Assim como o MiMo, **não é o Claude Code com outro modelo**: agente, tools e TUI são dele. Fica no menu **20**, logo abaixo do MiMo Code.
+
+```bash
+ai mcode                          # TUI do MiniMax Code
+ai mcode "corrige este teste"     # one-shot: mcode exec --permission full "…"
+ai mcode -m <provider/model> "…"  # modelo só para esta execução
+ai mcode -c                       # continua a última sessão do workspace
+ai mcode login --region global    # login na conta MiniMax (Token Plan)
+ai mcode provider set-minimax-key # ou use uma API key da MiniMax
+ai mcode exec review              # review das mudanças locais
+ai mcode update                   # atualiza o mcode
+```
+
+**Permissões:** a TUI não tem flag de yolo — a política se escolhe lá dentro. O `--permission smart|full|off` só existe no `exec`, então as `MCODE_FLAGS` (default `--permission full`) valem apenas pro one-shot. Subcomandos (`init`, `exec`, `acp`, `login`, `logout`, `update`, `provider`, `plugin`) e flags informativas passam **verbatim**.
+
+Instalação (Node 22.19+): `npm install -g @minimax-ai/code@latest --allow-scripts=@minimax-ai/code,better-sqlite3` ou `curl -fsSL https://filecdn.minimax.chat/public/install.sh | bash`. Repositório: [MiniMax-AI/minimax-code](https://github.com/MiniMax-AI/minimax-code).
+
 ## Prime Agent (sessão persistente)
 
 `ai prime` (ou `ai pa`) abre o **Prime Agent** — agente de terminal com **sessão
@@ -587,7 +609,7 @@ ai conta status          # uso de cada conta (janela 5h / 7 dias) + horário de 
 ai conta use pessoal     # ativa a conta "pessoal" na hora
 ai conta rm backup       # remove um backup salvo
 ai c --conta trabalho    # troca de conta e já lança o Claude
-ai conta                 # menu interativo (também é a opção 36 do menu principal)
+ai conta                 # menu interativo (também é a opção 37 do menu principal)
 ```
 
 **Auto-switch**: com 2+ contas salvas, `ai c` verifica a janela de 5h antes de lançar — se a conta ativa esgotou, troca automaticamente para outra com quota (fail-open: problema de rede nunca bloqueia o launch). Desligar: `AI_CONTA_AUTO_SWITCH=false`. Trocar mais cedo: `AI_CONTA_AUTO_THRESHOLD=95`.
@@ -840,6 +862,7 @@ npm install -g @vegamo/deepcode-cli          # Deep Code
 npm install -g @oh-my-pi/pi-coding-agent     # omp (oh-my-pi)
 npm install -g opencode-ai                   # opencode
 npm install -g @mimo-ai/cli                  # MiMoCode (binário `mimo`)
+npm install -g @minimax-ai/code              # MiniMax Code (binário `mcode`)
 ```
 
 Não precisa decorar: quando uma CLI falta, o launcher imprime o comando certo **para a plataforma em que você está** (`cli_install_hint`).

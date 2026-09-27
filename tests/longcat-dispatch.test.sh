@@ -168,15 +168,15 @@ except subprocess.TimeoutExpired:
 PY
 }
 
-run_menu_pty "Escolha [1-36/0]" "6" "Escolha [1-4/0]" "1"
+run_menu_pty "Escolha [1-37/0]" "6" "Escolha [1-4/0]" "1"
 assert_longcat_25
 ok "menu 6 → painel → 1 (2.5 Preview)"
 
-run_menu_pty "Escolha [1-36/0]" "6" "Escolha [1-4/0]" "2"
+run_menu_pty "Escolha [1-37/0]" "6" "Escolha [1-4/0]" "2"
 env_is ANTHROPIC_MODEL "LongCat-2.0[1m]"
 ok "menu 6 → painel → 2 (2.0)"
 
-run_menu_pty "Escolha [1-36/0]" "longcat" "Escolha [1-4/0]" "1"
+run_menu_pty "Escolha [1-37/0]" "longcat" "Escolha [1-4/0]" "1"
 assert_longcat_25
 ok "alias 'longcat' no prompt do menu"
 
