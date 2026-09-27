@@ -432,7 +432,10 @@ ai mcode login --region global    # login na conta MiniMax (Token Plan)
 ai mcode provider set-minimax-key # ou use uma API key da MiniMax
 ai mcode exec review              # review das mudanças locais
 ai mcode update                   # atualiza o mcode
+ai mcode menu                     # painel (o mesmo do item 20 do menu)
 ```
+
+**Painel (menu 20):** abrir a TUI, continuar a última sessão, tarefa única, review das mudanças locais, login, salvar API key, listar providers e atualizar o `mcode` — sem decorar subcomando.
 
 **Permissões:** a TUI não tem flag de yolo — a política se escolhe lá dentro. O `--permission smart|full|off` só existe no `exec`, então as `MCODE_FLAGS` (default `--permission full`) valem apenas pro one-shot. Subcomandos (`init`, `exec`, `acp`, `login`, `logout`, `update`, `provider`, `plugin`) e flags informativas passam **verbatim**.
 

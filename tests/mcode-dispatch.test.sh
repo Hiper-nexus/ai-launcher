@@ -76,4 +76,19 @@ assert_args 'exec|review|'           mcode exec review
 assert_args '--version|' mcode --version
 assert_args '--help|'    mcode --help
 
+# Painel ('ai mcode menu', o mesmo do item 20): cada opção cai no dispatch.
+run_panel() {
+    : > "$CAPTURE_ARGS"
+    (
+        cd "$ROOT"
+        printf '%s\n' "$1" | HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" \
+            CAPTURE_ARGS="$CAPTURE_ARGS" "$ROOT/ai" mcode menu >/dev/null
+    )
+    tr '\n' '|' < "$CAPTURE_ARGS"
+}
+[[ "$(run_panel 0)" == "" ]]                 || fail "painel 0 não deveria chamar o mcode"
+[[ "$(run_panel 2)" == "--continue|" ]]      || fail "painel 2: $(run_panel 2)"
+[[ "$(run_panel 4)" == "exec|review|" ]]     || fail "painel 4: $(run_panel 4)"
+[[ "$(run_panel 5)" == "login|--region|global|" ]] || fail "painel 5: $(run_panel 5)"
+
 echo "PASS: dispatch do MiniMax Code"

@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.64.0"
+AI_LAUNCHER_VERSION="1.65.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -3812,6 +3812,51 @@ mcode_launch() {
     fi
 }
 
+# Painel do menu (item 20 / 'ai mcode menu'): atalhos pro que se usa no dia a
+# dia — TUI, continuar, one-shot, review, login/key e update — sem decorar
+# subcomando. Cada opção cai no mcode_launch, então o dispatch é o mesmo da
+# linha de comando (o teste de dispatch cobre os dois caminhos).
+mcode_menu_panel() {
+    echo -e "${BOLD}${C_MCODE}"
+    echo "  ┌──────────────────────────────────────────────────┐"
+    echo "  │   ✦ MiniMax Code — CLI própria da MiniMax        │"
+    echo "  └──────────────────────────────────────────────────┘"
+    echo -e "${RESET}"
+    echo -e "  ${BOLD}Binário:${RESET}  mcode ${DIM}$(get_version mcode)${RESET}"
+    echo -e "  ${BOLD}Status:${RESET}   $(status_icon mcode)"
+    echo -e "  ${BOLD}One-shot:${RESET} ${DIM}mcode exec ${MCODE_FLAGS[*]+"${MCODE_FLAGS[*]}"}${RESET}"
+    echo ""
+    echo -e "  ${BOLD}Pela linha de comando:${RESET}"
+    echo -e "    ${GREEN}ai mcode${RESET}                 TUI do MiniMax Code (aliases: mmc, minimax)"
+    echo -e "    ${GREEN}ai mcode${RESET} \"tarefa\"        resposta única (mcode exec)"
+    echo -e "    ${GREEN}ai mcode -c${RESET}              continua a última sessão do workspace"
+    echo -e "    ${GREEN}ai mcode login${RESET}           login na conta MiniMax (Token Plan)"
+    echo -e "    ${GREEN}ai mcode menu${RESET}            este painel"
+    echo ""
+    echo -e "  ${BOLD}1)${RESET} Abrir TUI              ${BOLD}2)${RESET} Continuar última sessão"
+    echo -e "  ${BOLD}3)${RESET} Tarefa única (prompt)  ${BOLD}4)${RESET} Review das mudanças locais"
+    echo -e "  ${BOLD}5)${RESET} Login (global)         ${BOLD}6)${RESET} Salvar API key MiniMax"
+    echo -e "  ${BOLD}7)${RESET} Listar providers       ${BOLD}8)${RESET} Atualizar mcode"
+    echo -e "  ${BOLD}0)${RESET} Voltar"
+    local opt tarefa
+    read -rp "  Escolha [1-8/0] (default 1): " opt || true
+    opt=$(normalize_choice "$opt")
+    case "${opt:-1}" in
+        1) enter_repo_if_needed; mcode_launch ;;
+        2) enter_repo_if_needed; mcode_launch -c ;;
+        3) read -rp "  Tarefa: " tarefa || true
+           [[ -n "${tarefa// /}" ]] || { echo "Nada a fazer."; return 1; }
+           enter_repo_if_needed; mcode_launch "$tarefa" ;;
+        4) enter_repo_if_needed; mcode_launch exec review ;;
+        5) mcode_launch login --region global ;;
+        6) mcode_launch provider set-minimax-key ;;
+        7) mcode_launch provider list ;;
+        8) mcode_launch update ;;
+        0) return 0 ;;
+        *) echo "Opção inválida."; return 1 ;;
+    esac
+}
+
 # Tira uma flag do DEVIN_FLAGS (e o valor dela, quando houver). O clap do devin
 # recusa repetição — 'devin --permission-mode a --permission-mode b' morre com
 # "cannot be used multiple times" — então quando o usuário passa uma flag que o
@@ -5951,6 +5996,7 @@ CLIs de IA:
   mcode provider           Providers / API key (set-minimax-key)
   mcode -m <provider/model> Escolhe o modelo da sessão
   mcode -c                 Continua a última sessão do workspace
+  mcode menu               Painel do MiniMax Code (o mesmo do item 20)
 
   --via <provider>       Usa provider alternativo (ex: glm no Claude, sakana no Codex)
 
@@ -7417,6 +7463,10 @@ elif [[ ${1:-} == "mcode" || ${1:-} == "mmc" || ${1:-} == "minimax" || ${1:-} ==
     shift
     parse_global_flags "$@"
     set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    if [[ ${1:-} == "menu" ]]; then
+        mcode_menu_panel || true
+        exit 0
+    fi
     enter_repo_if_needed
     mcode_launch "$@"
 elif [[ ${1:-} == "kimi" || ${1:-} == "k" ]]; then
@@ -8038,8 +8088,7 @@ case $choice in
        enter_repo_if_needed
        mimo_launch ;;
    20|mcode|minimax)
-       enter_repo_if_needed
-       mcode_launch ;;
+       mcode_menu_panel || true ;;
    21|muse)
        if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; cli_install_hint muse; continue; fi
        enter_repo_if_needed
