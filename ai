@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.66.0"
+AI_LAUNCHER_VERSION="1.66.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -1655,7 +1655,10 @@ def call(path, body=None):
 try:
     d, _ = call("/models")
     print("  Modelos na sua conta:", ", ".join(m.get("id", "?") for m in d.get("data", [])))
+    # instant: no esforço default o raciocínio às vezes come os 256 tokens e o
+    # content volta vazio (visto em 19/10/2026); aqui só importa a conexão.
     d, dt = call("/chat/completions", {"model": model, "max_completion_tokens": 256,
+                 "reasoning_effort": "instant",
                  "messages": [{"role": "user", "content": "Responda só: pong"}]})
     txt = (d["choices"][0]["message"].get("content") or "").strip()
     print(f"  /v1/chat/completions ({model}): OK em {dt:.1f}s → {txt[:60]}")
