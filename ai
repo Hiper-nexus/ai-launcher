@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.65.1"
+AI_LAUNCHER_VERSION="1.66.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -133,7 +133,7 @@ AB_MODEL="${AI_AB_MODEL:-abliterated-model-large-v2}"
 
 # ── Muse Spark (Meta AI) ─────────────────────────────────
 # API compatível com a Messages API da Anthropic (POST /v1/messages, SSE).
-# Dois caminhos: CLI própria (ai ms / menu 28), falando direto com a API, e
+# Dois caminhos: CLI própria (ai ms / menu 29), falando direto com a API, e
 # dentro do Claude Code (ai ms claude / menu 3), via ANTHROPIC_BASE_URL.
 # É um modelo com raciocínio: parte dos tokens de saída vai para blocos
 # thinking/redacted_thinking, por isso o teto de tokens é alto por padrão —
@@ -702,6 +702,27 @@ LONGCAT_V2_MODEL="${AI_LONGCAT_V2_MODEL:-LongCat-2.0[1m]}"
 LONGCAT_MODEL_LABEL="${LONGCAT_MODEL%%\[*}"
 LONGCAT_V2_MODEL_LABEL="${LONGCAT_V2_MODEL%%\[*}"
 
+# Inception Mercury — modelo de DIFUSÃO hospedado (docs.inceptionlabs.ai).
+# Não tem CLI de código própria e a API é só OpenAI /v1/chat/completions:
+# testado em 19/10/2026, /v1/messages e /v1/responses dão 404. O Codex
+# 0.163 recusa provider de chat ("wire_api = chat is no longer supported"),
+# então o caminho que funciona é o da doc oficial (integrations/claude-code):
+# Claude Code → ponte LiteLLM local (Anthropic Messages → Chat Completions)
+# → Mercury 3. A ponte roda num venv isolado, na versão que a Inception
+# testou, escuta só em 127.0.0.1 e exige um token local: a key da Inception
+# fica só no processo da ponte, nunca chega ao Claude Code.
+# Mercury 3: 1M de contexto, 131K de output, tools em paralelo.
+MERCURY_MODEL="${AI_MERCURY_MODEL:-mercury-3}"
+MERCURY_LITELLM_VERSION="1.99.0"
+MERCURY_PORT="${AI_MERCURY_PORT:-4417}"
+MERCURY_DIR="${HOME}/.local/share/ai-launcher/mercury"
+# O sufixo [1m] só vive no client (o Claude Code tira antes de chamar) e faz
+# ele enxergar a janela de 1M. Outro modelo da família tem janela menor.
+case "$MERCURY_MODEL" in
+    mercury-3) MERCURY_CLAUDE_MODEL="${MERCURY_MODEL}[1m]" ;;
+    *)         MERCURY_CLAUDE_MODEL="$MERCURY_MODEL" ;;
+esac
+
 # Macaron V1 (Mind Lab / Mint Recursive) — modelo HOSPEDADO, não é CLI de
 # agente. Roda DENTRO do Claude Code (API Anthropic-compatible na raiz do
 # endpoint) ou do Codex (wire_api responses). Docs:
@@ -1075,6 +1096,16 @@ provider_setup_env() {
             ;;
     esac
 
+    # Mercury não tem endpoint Anthropic: vai pela ponte local, com token
+    # próprio. O fluxo genérico abaixo mandaria a key da Inception para um
+    # base_url que não existe.
+    case "$provider" in
+        mercury|merc|inception)
+            mercury_setup_env
+            return
+            ;;
+    esac
+
     case "$provider" in
         sakana|fugu|fugu-ultra|sakana-ultra|fugu-ultra-v2.0|sakana-ultra-v2.0|fugu-max|sakana-max|fugu-max-v1.0|sakana-max-v1.0|fugu-ultra-v1.0|fugu-ultra-v1.1|fugu-ultra-20260615|sakana-ultra-v1.0|sakana-ultra-v1.1)
             echo -e "${RED}Provider ${provider} usa Codex, não Claude Code.${RESET}"
@@ -1323,6 +1354,418 @@ longcat_menu_panel() {
         2) longcat_launch 2.0 ;;
         3) longcat_ping ;;
         4) longcat_save_key ;;
+        0) return 0 ;;
+        *) echo "Opção inválida."; return 1 ;;
+    esac
+}
+
+# ── Inception Mercury — Claude Code via ponte LiteLLM local ─
+# Tudo mora em ${MERCURY_DIR} (chmod 700): venv/ (LiteLLM fixado),
+# litellm.yaml, bridge.token (600), bridge.pid, bridge.sig e proxy.log.
+
+# Executável dentro do venv (bin/ no macOS/Linux, Scripts/ no Windows).
+mercury_venv_exe() {
+    local name="$1" venv="${MERCURY_DIR}/venv"
+    if [[ -x "${venv}/bin/${name}" ]]; then
+        printf '%s' "${venv}/bin/${name}"
+    elif [[ -x "${venv}/Scripts/${name}.exe" ]]; then
+        printf '%s' "${venv}/Scripts/${name}.exe"
+    else
+        return 1
+    fi
+}
+
+mercury_bridge_installed() {
+    mercury_venv_exe litellm >/dev/null &&
+        [[ "$(cat "${MERCURY_DIR}/venv/.ai-launcher-litellm" 2>/dev/null)" == "$MERCURY_LITELLM_VERSION" ]]
+}
+
+# Python ≥ 3.11 para o venv (requisito da doc da Inception).
+mercury_find_python() {
+    local c p
+    for c in python3.13 python3.12 python3.11 python3; do
+        p=$(type -P "$c") || continue
+        "$p" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null || continue
+        printf '%s' "$p"
+        return 0
+    done
+    return 1
+}
+
+# Instala (ou reinstala, quando a versão fixada muda) o LiteLLM num venv só
+# dele — nada vai para o Python do sistema. Com uv é rápido e o uv baixa o
+# Python certo se a máquina não tiver.
+mercury_bridge_install() {
+    local venv="${MERCURY_DIR}/venv" spec="litellm[proxy]==${MERCURY_LITELLM_VERSION}" py
+    mkdir -p "$MERCURY_DIR" && chmod 700 "$MERCURY_DIR"
+    echo -e "${CYAN}Instalando a ponte LiteLLM ${MERCURY_LITELLM_VERSION} em ${venv}${RESET} ${DIM}(1x, ~430 MB)${RESET}"
+    rm -rf "$venv"
+    if command -v uv >/dev/null 2>&1; then
+        uv venv -q --python 3.12 "$venv" &&
+            uv pip install -q --python "$(mercury_venv_exe python)" "$spec"
+    elif py=$(mercury_find_python); then
+        "$py" -m venv "$venv" &&
+            "$(mercury_venv_exe python)" -m pip install -q "$spec"
+    else
+        echo -e "${RED}Erro: a ponte precisa de Python 3.11+ (ou do uv).${RESET}" >&2
+        echo "  brew install uv    (ou: brew install python@3.12)" >&2
+        return 1
+    fi || {
+        echo -e "${RED}Erro: falha ao instalar o LiteLLM ${MERCURY_LITELLM_VERSION}.${RESET}" >&2
+        return 1
+    }
+    printf '%s\n' "$MERCURY_LITELLM_VERSION" > "${venv}/.ai-launcher-litellm"
+    echo -e "${GREEN}✔ Ponte instalada.${RESET}"
+}
+
+# Model id e esforço entram no YAML da ponte: só valores conhecidos passam.
+mercury_validate_settings() {
+    if [[ ! "$MERCURY_MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]]; then
+        echo -e "${RED}Erro: AI_MERCURY_MODEL inválido: ${MERCURY_MODEL}${RESET}" >&2
+        return 1
+    fi
+    if [[ ! "$MERCURY_PORT" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}Erro: AI_MERCURY_PORT inválida: ${MERCURY_PORT}${RESET}" >&2
+        return 1
+    fi
+    case "${AI_MERCURY_EFFORT:-}" in
+        ""|instant|low|medium|high) ;;
+        *) echo -e "${RED}Erro: AI_MERCURY_EFFORT tem que ser instant, low, medium ou high.${RESET}" >&2
+           return 1 ;;
+    esac
+}
+
+# Token local da ponte: gerado 1x, chmod 600. É o que o Claude Code manda
+# como Bearer; sem ele a ponte não atende (nem outra conta da máquina).
+mercury_bridge_token() {
+    local f="${MERCURY_DIR}/bridge.token"
+    if [[ ! -s "$f" ]]; then
+        mkdir -p "$MERCURY_DIR" && chmod 700 "$MERCURY_DIR"
+        ( umask 077; printf 'sk-ai-%s\n' "$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')" > "$f" )
+    fi
+    head -1 "$f"
+}
+
+# Config da ponte. Sem cooldown: com um modelo só, o roteador do LiteLLM
+# "esfria" o deployment depois de um erro e as chamadas seguintes voltam 429
+# por 5s — o Claude Code leria isso como queda (visto em 19/10/2026).
+# AI_MERCURY_EFFORT fixa o reasoning_effort (o default do Mercury 3 é low).
+mercury_bridge_config() {
+    cat <<YAML
+model_list:
+  - model_name: ${MERCURY_MODEL}
+    litellm_params:
+      model: inception/${MERCURY_MODEL}
+      api_key: os.environ/INCEPTION_API_KEY
+YAML
+    [[ -n "${AI_MERCURY_EFFORT:-}" ]] && printf '      reasoning_effort: %s\n' "$AI_MERCURY_EFFORT"
+    cat <<'YAML'
+litellm_settings:
+  drop_params: true
+router_settings:
+  disable_cooldowns: true
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+YAML
+}
+
+# Assinatura do que a ponte em execução carrega (key + versão + porta +
+# config). Mudou qualquer um — trocou a key, atualizou o launcher — a ponte
+# velha cai e sobe de novo. A key entra por stdin, nunca por argv.
+mercury_bridge_sig() {
+    local key="$1" hasher=(shasum -a 256)
+    command -v sha256sum >/dev/null 2>&1 && hasher=(sha256sum)
+    { printf '%s\n' "$key" "$MERCURY_LITELLM_VERSION" "$MERCURY_PORT"; mercury_bridge_config; } |
+        "${hasher[@]}" | cut -d' ' -f1
+}
+
+mercury_bridge_url() { printf 'http://127.0.0.1:%s' "$MERCURY_PORT"; }
+
+# PID da ponte, só se o processo ainda estiver vivo.
+mercury_bridge_pid() {
+    local pid
+    pid=$(head -1 "${MERCURY_DIR}/bridge.pid" 2>/dev/null) || return 1
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+    printf '%s' "$pid"
+}
+
+# Pronta = responde /v1/models COM o nosso token e lista o nosso modelo
+# (outro serviço na mesma porta não passa). O token vai por -H @arquivo,
+# fora do argv; a saída é capturada inteira para o pipefail não ler SIGPIPE.
+mercury_bridge_ready() {
+    local token="$1" out
+    out=$(curl -fsS -m 3 -H @<(printf 'Authorization: Bearer %s\n' "$token") \
+        "$(mercury_bridge_url)/v1/models" 2>/dev/null) || return 1
+    [[ "$out" == *"\"${MERCURY_MODEL}\""* ]]
+}
+
+mercury_bridge_wait_ready() {
+    local token="$1" i
+    for i in {1..240}; do   # até 60s; o LiteLLM leva uns 9s para subir
+        mercury_bridge_ready "$token" && return 0
+        mercury_bridge_pid >/dev/null || return 1   # morreu no boot
+        sleep 0.25
+    done
+    return 1
+}
+
+mercury_bridge_stop() {
+    local pid i
+    if pid=$(mercury_bridge_pid); then
+        kill "$pid" 2>/dev/null || true
+        # Espera sair para a porta estar livre se vier um restart em seguida.
+        for i in {1..40}; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.25
+        done
+        [[ "${1:-}" == quiet ]] || echo -e "${GREEN}✔ Ponte do Mercury parada.${RESET}"
+    else
+        [[ "${1:-}" == quiet ]] || echo "A ponte do Mercury não está rodando."
+    fi
+    rm -f "${MERCURY_DIR}/bridge.pid" "${MERCURY_DIR}/bridge.sig"
+}
+
+# Sobe a ponte, ou reaproveita a que já roda com a mesma assinatura. Ela fica
+# no ar depois que o Claude sai (a próxima sessão abre na hora); 'ai mercury
+# stop' derruba. A key vai por env só para o processo da ponte.
+mercury_bridge_start() {
+    local key="$1" token sig bin
+    token=$(mercury_bridge_token) || return 1
+    sig=$(mercury_bridge_sig "$key")
+    if mercury_bridge_pid >/dev/null; then
+        if [[ "$(cat "${MERCURY_DIR}/bridge.sig" 2>/dev/null)" == "$sig" ]] &&
+           mercury_bridge_wait_ready "$token"; then
+            return 0
+        fi
+        mercury_bridge_stop quiet
+    fi
+    if curl -s -o /dev/null -m 2 "$(mercury_bridge_url)/" 2>/dev/null; then
+        echo -e "${RED}Erro: a porta ${MERCURY_PORT} já está em uso por outro serviço.${RESET}" >&2
+        echo "  Use outra: AI_MERCURY_PORT=4418 ai mercury" >&2
+        return 1
+    fi
+    bin=$(mercury_venv_exe litellm) || return 1
+    mercury_bridge_config > "${MERCURY_DIR}/litellm.yaml"
+    chmod 600 "${MERCURY_DIR}/litellm.yaml"
+    echo -e "${CYAN}Subindo a ponte do Mercury em $(mercury_bridge_url)...${RESET}"
+    (
+        cd "$MERCURY_DIR" || exit 1
+        INCEPTION_API_KEY="$key" LITELLM_MASTER_KEY="$token" LITELLM_LOCAL_MODEL_COST_MAP=True \
+            nohup "$bin" --config litellm.yaml --host 127.0.0.1 --port "$MERCURY_PORT" \
+            > proxy.log 2>&1 < /dev/null &
+        printf '%s\n' "$!" > bridge.pid
+    )
+    if ! mercury_bridge_wait_ready "$token"; then
+        echo -e "${RED}Erro: a ponte não subiu. Fim de ${MERCURY_DIR}/proxy.log:${RESET}" >&2
+        tail -n 15 "${MERCURY_DIR}/proxy.log" >&2 || true
+        mercury_bridge_stop quiet
+        return 1
+    fi
+    printf '%s\n' "$sig" > "${MERCURY_DIR}/bridge.sig"
+}
+
+# Key da Inception: slot 'inception' do providers.conf → env INCEPTION_API_KEY.
+mercury_api_key() {
+    local k
+    k=$(provider_load_key inception 2>/dev/null || true)
+    printf '%s' "${k:-${INCEPTION_API_KEY:-}}"
+}
+
+mercury_save_key() {
+    local key="${1:-}"
+    if [[ -z "$key" && -t 0 ]]; then
+        read -rsp "$(echo -e "  ${BOLD}API key da Inception:${RESET} ")" key || true
+        echo ""
+    fi
+    [[ -z "$key" ]] && { echo -e "${RED}Erro: key vazia.${RESET}" >&2; return 1; }
+    provider_save_key inception "$key" || return 1
+    echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+}
+
+# Roda dentro de $(...): tudo que não é a key vai para o stderr.
+mercury_require_key() {
+    local key
+    key=$(mercury_api_key)
+    if [[ -z "$key" && -t 0 ]]; then
+        echo -e "  ${DIM}Key em https://platform.inceptionlabs.ai/dashboard/api-keys (conta nova ganha 100M tokens)${RESET}" >&2
+        mercury_save_key >&2 || return 1
+        key=$(mercury_api_key)
+    fi
+    if [[ -z "$key" ]]; then
+        echo -e "${RED}Erro: nenhuma API key da Inception.${RESET}" >&2
+        echo "  Configure: ai mercury key" >&2
+        return 1
+    fi
+    printf '%s' "$key"
+}
+
+# Env do Claude Code: ponte no ar, base_url e token locais, e a sessão inteira
+# no Mercury (a família não tem tier Haiku/Opus separado).
+mercury_setup_env() {
+    mercury_validate_settings || return 1
+    local key token
+    key=$(mercury_require_key) || return 1
+    mercury_bridge_installed || mercury_bridge_install || return 1
+    mercury_bridge_start "$key" || return 1
+    token=$(mercury_bridge_token) || return 1
+    clear_anthropic_provider_env
+    export ANTHROPIC_BASE_URL="$(mercury_bridge_url)"
+    export ANTHROPIC_AUTH_TOKEN="$token"
+    export ANTHROPIC_MODEL="$MERCURY_CLAUDE_MODEL"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MERCURY_CLAUDE_MODEL"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="$MERCURY_CLAUDE_MODEL"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$MERCURY_CLAUDE_MODEL"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="$MERCURY_CLAUDE_MODEL"
+    export CLAUDE_CODE_SUBAGENT_MODEL="$MERCURY_CLAUDE_MODEL"
+    export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+    export API_TIMEOUT_MS=600000
+    if [[ "$MERCURY_CLAUDE_MODEL" == *"[1m]" ]]; then
+        export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000
+    fi
+    echo -e "${CYAN}Provider:${RESET} mercury → $(mercury_bridge_url) (ponte LiteLLM) → api.inceptionlabs.ai"
+}
+
+# Confere a key direto na Inception (modelos + chat mínimo) e depois o caminho
+# inteiro do Claude Code: ponte local → /v1/messages, com texto e com tool use.
+mercury_ping() {
+    mercury_validate_settings || return 1
+    local key token
+    key=$(mercury_api_key)
+    if [[ -z "$key" ]]; then
+        echo -e "${RED}Erro: nenhuma API key da Inception.${RESET}" >&2
+        echo "  Pegue em: https://platform.inceptionlabs.ai/dashboard/api-keys" >&2
+        echo "  Depois:   ai mercury key" >&2
+        return 1
+    fi
+    require_python || return 1
+    echo -e "${BOLD}Inception — testando https://api.inceptionlabs.ai/v1${RESET}"
+    INC_KEY="$key" INC_MODEL="$MERCURY_MODEL" python3 - <<'PY' || return 1
+import json, os, sys, time, urllib.error, urllib.request
+key, model = os.environ["INC_KEY"], os.environ["INC_MODEL"]
+
+def call(path, body=None):
+    req = urllib.request.Request(
+        "https://api.inceptionlabs.ai/v1" + path,
+        data=json.dumps(body).encode() if body else None,
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+    t0 = time.time()
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.load(r), time.time() - t0
+
+try:
+    d, _ = call("/models")
+    print("  Modelos na sua conta:", ", ".join(m.get("id", "?") for m in d.get("data", [])))
+    d, dt = call("/chat/completions", {"model": model, "max_completion_tokens": 256,
+                 "messages": [{"role": "user", "content": "Responda só: pong"}]})
+    txt = (d["choices"][0]["message"].get("content") or "").strip()
+    print(f"  /v1/chat/completions ({model}): OK em {dt:.1f}s → {txt[:60]}")
+except urllib.error.HTTPError as e:
+    print(f"  erro HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
+    sys.exit(1)
+except Exception as e:
+    print("  erro:", str(e)[:160])
+    sys.exit(1)
+PY
+    mercury_bridge_installed || mercury_bridge_install || return 1
+    mercury_bridge_start "$key" || return 1
+    token=$(mercury_bridge_token) || return 1
+    echo -e "${BOLD}Ponte local — testando $(mercury_bridge_url)/v1/messages${RESET}"
+    BR_URL="$(mercury_bridge_url)" BR_TOKEN="$token" INC_MODEL="$MERCURY_MODEL" python3 - <<'PY'
+import json, os, sys, time, urllib.error, urllib.request
+url, token, model = os.environ["BR_URL"], os.environ["BR_TOKEN"], os.environ["INC_MODEL"]
+
+def messages(body):
+    req = urllib.request.Request(
+        url + "/v1/messages", data=json.dumps(body).encode(),
+        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json",
+                 "anthropic-version": "2023-06-01"})
+    t0 = time.time()
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.load(r), time.time() - t0
+
+try:
+    d, dt = messages({"model": model, "max_tokens": 512,
+                      "messages": [{"role": "user", "content": "Responda só: pong"}]})
+    txt = "".join(c.get("text", "") for c in d.get("content", []) if c.get("type") == "text").strip()
+    print(f"  texto:    OK em {dt:.1f}s → {txt[:60]}")
+    tool = {"name": "somar", "description": "Soma dois inteiros.",
+            "input_schema": {"type": "object", "required": ["a", "b"],
+                             "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}}}
+    d, dt = messages({"model": model, "max_tokens": 512, "tools": [tool],
+                      "messages": [{"role": "user", "content": "Use a ferramenta somar com a=2 e b=3."}]})
+    uses = [c for c in d.get("content", []) if c.get("type") == "tool_use"]
+    if not uses:
+        print(f"  tool use: FALHOU (stop_reason={d.get('stop_reason')})")
+        sys.exit(1)
+    print(f"  tool use: OK em {dt:.1f}s → {uses[0].get('name')}({json.dumps(uses[0].get('input'))})")
+except urllib.error.HTTPError as e:
+    print(f"  erro HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
+    sys.exit(1)
+except Exception as e:
+    print("  erro:", str(e)[:160])
+    sys.exit(1)
+PY
+}
+
+mercury_launch() {
+    mercury_setup_env || return 1
+    enter_repo_if_needed
+    launch "Mercury (${MERCURY_MODEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+}
+
+# Entrada da CLI: subcomandos ou lançamento com flags e prompt.
+mercury_dispatch() {
+    case "${1:-}" in
+        key)              shift; mercury_save_key "${1:-}"; return $? ;;
+        ping|test|models) mercury_ping; return $? ;;
+        stop)             mercury_bridge_stop; return $? ;;
+        install)          mercury_bridge_install; return $? ;;
+        menu)             mercury_menu_panel; return $? ;;
+    esac
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    mercury_launch "$@"
+}
+
+mercury_bridge_status() {
+    local pid
+    if pid=$(mercury_bridge_pid); then
+        echo -e "${GREEN}no ar${RESET} ${DIM}($(mercury_bridge_url), pid ${pid})${RESET}"
+    elif mercury_bridge_installed; then
+        echo -e "${DIM}parada — sobe sozinha ao abrir o Claude${RESET}"
+    else
+        echo -e "${YELLOW}não instalada${RESET} ${DIM}— instala sozinha na 1ª vez (LiteLLM ${MERCURY_LITELLM_VERSION})${RESET}"
+    fi
+}
+
+mercury_menu_panel() {
+    echo -e "${BOLD}${C_MERCURY}"
+    echo "  ┌──────────────────────────────────────────────────┐"
+    echo "  │   ⚡ Inception Mercury — dentro do Claude Code   │"
+    echo "  └──────────────────────────────────────────────────┘"
+    echo -e "${RESET}"
+    echo -e "  ${BOLD}Modelo:${RESET}   ${MERCURY_MODEL} ${DIM}(difusão · 1M de contexto · 131K de output · tools)${RESET}"
+    echo -e "  ${BOLD}Caminho:${RESET}  ${DIM}Claude Code → ponte LiteLLM local → api.inceptionlabs.ai${RESET}"
+    echo -e "  ${BOLD}Ponte:${RESET}    $(mercury_bridge_status)"
+    echo -e "  ${BOLD}Status:${RESET}   $(provider_cli_status_icon inception claude)"
+    echo ""
+    echo -e "  ${BOLD}Pela linha de comando:${RESET}"
+    echo -e "    ${GREEN}ai mercury${RESET}               Claude Code no ${MERCURY_MODEL} (alias: merc)"
+    echo -e "    ${GREEN}ai mercury${RESET} \"tarefa\"      resposta única (one-shot)"
+    echo -e "    ${GREEN}ai mercury ping${RESET}          testa key, API e ponte (texto + tool use)"
+    echo -e "    ${GREEN}ai mercury key${RESET}           salva ou troca a key (1x por Mac)"
+    echo -e "    ${GREEN}ai mercury stop${RESET}          derruba a ponte local"
+    echo ""
+    echo -e "  ${BOLD}1)${RESET} Claude + ${MERCURY_MODEL}    ${BOLD}2)${RESET} Testar conexão    ${BOLD}3)${RESET} Trocar key"
+    echo -e "  ${BOLD}4)${RESET} Parar a ponte         ${BOLD}0)${RESET} Voltar"
+    local opt
+    read -rp "  Escolha [1-4/0] (default 1): " opt || true
+    opt=$(normalize_choice "$opt")
+    case "${opt:-1}" in
+        1) mercury_launch ;;
+        2) mercury_ping ;;
+        3) mercury_save_key ;;
+        4) mercury_bridge_stop ;;
         0) return 0 ;;
         *) echo "Opção inválida."; return 1 ;;
     esac
@@ -3397,6 +3840,7 @@ C_HF=$(_fg      255 214  10 220 33)  # amarelo Hugging Face
 C_FL=$(_fg      132 204  22 148 32)  # lima Featherless
 C_STEP=$(_fg      0 191 165  79 36)  # turquesa StepFun (Step Plan)
 C_LONGCAT=$(_fg 255 170   0 214 33)  # laranja LongCat (Meituan)
+C_MERCURY=$(_fg  44 154 242  33 34)  # azul Inception (Mercury)
 C_AB=$(_fg      239  68  68 196 31)  # vermelho Abliteration (sem censura)
 C_SEC=$(_fg     244  63  94 203 31)  # vermelho segurança
 C_TOOL=$(_fg    250 204  21 220 33)  # âmbar ferramentas
@@ -3815,7 +4259,7 @@ mcode_launch() {
     fi
 }
 
-# Painel do menu (item 20 / 'ai mcode menu'): atalhos pro que se usa no dia a
+# Painel do menu (item 21 / 'ai mcode menu'): atalhos pro que se usa no dia a
 # dia — TUI, continuar, one-shot, review, login/key e update — sem decorar
 # subcomando. Cada opção cai no mcode_launch, então o dispatch é o mesmo da
 # linha de comando (o teste de dispatch cobre os dois caminhos).
@@ -5968,6 +6412,8 @@ CLIs de IA:
   longcat, lc            Abre Claude Code usando LongCat-2.5-Preview (Meituan, 1M)
   longcat-2, lc2         Abre Claude Code usando LongCat-2.0 (1M)
   longcat ping | key     Testa key/endpoint e lista modelos | salva a key
+  mercury, merc          Abre Claude Code usando Mercury 3 (Inception, difusão, 1M)
+  mercury ping|key|stop  Testa key+ponte | salva a key | derruba a ponte local
   mint, macaron, venti   Abre Claude Code usando Macaron V1 (macaron-v1-coding-venti)
   mint-codex, mcx        Abre Codex usando Macaron V1 (provider responses)
   codex,  x              Abre Codex CLI (1M por padrão no provider oficial)
@@ -5999,7 +6445,7 @@ CLIs de IA:
   mcode provider           Providers / API key (set-minimax-key)
   mcode -m <provider/model> Escolhe o modelo da sessão
   mcode -c                 Continua a última sessão do workspace
-  mcode menu               Painel do MiniMax Code (o mesmo do item 20)
+  mcode menu               Painel do MiniMax Code (o mesmo do item 21)
 
   --via <provider>       Usa provider alternativo (ex: glm no Claude, sakana no Codex)
 
@@ -6169,6 +6615,8 @@ Exemplos:
   ai step                         Claude via Step Plan step-5-preview (1M)
   ai longcat                      Claude via LongCat-2.5-Preview (1M)
   ai longcat ping                 Testa a key da LongCat e lista os modelos
+  ai mercury                      Claude via Mercury 3 (ponte LiteLLM local, 1M)
+  ai mercury ping                 Testa key, API e ponte do Mercury (texto + tool use)
   ai x                            Codex (1M por padrão; override: -c model_context_window=...)
   ai sol                          Codex GPT-5.6 Sol com janela de 1M de contexto
   ai sol "tarefa gigante"         (auto-compacta em 900k; aliases: x-1m, x1m)
@@ -6698,6 +7146,7 @@ JEV_ROUTE_CRITERIA='{
   "claude-fugu":  "O harness do Claude Code rodando por cima do endpoint Anthropic-compatible da Sakana: quando o usuário quer o Fugu mas dentro do Claude Code (ferramentas, skills e fluxo do Claude), ou citou claude-fugu. Diferente de `sakana`, que abre o Codex.",
   "step":         "Tarefa em que o usuário citou StepFun, Step Plan, ou step-5-preview.",
   "longcat":      "Tarefa em que o usuário citou LongCat, Meituan, ou LongCat-2.5 / LongCat-2.0. Modelo hospedado rodando dentro do Claude Code.",
+  "mercury":      "Tarefa em que o usuário citou Mercury, Inception, Inception Labs, modelo de difusão, ou mercury-3. Modelo hospedado rodando dentro do Claude Code.",
   "mint":         "Tarefa em que o usuário citou Macaron, Mint, Mint Recursive, Mind Lab, ou macaron-v1 (venti/grande/tall). Modelo hospedado rodando dentro do Claude Code. Não confundir com MiMo/mimo.",
   "codex":        "Tarefa em que o usuário citou Codex, GPT, OpenAI, ou pediu explicitamente o Codex (janela padrão). Se ele precisa de contexto gigante no Codex, prefira `sol`.",
   "sol":          "Codex com janela de 1M de contexto: tarefa longa demais para o Codex padrão, varredura de repositório inteiro, ou quando o usuário citou Sol, x-1m, ou pediu 1M de contexto no Codex.",
@@ -7227,6 +7676,10 @@ elif [[ ${1:-} == "longcat-2" || ${1:-} == "lc2" || ${1:-} == "longcat-2.0" ]]; 
 elif [[ ${1:-} == "longcat" || ${1:-} == "lc" || ${1:-} == "longcat-2.5" || ${1:-} == "lc25" ]]; then
     shift
     longcat_dispatch 2.5 "$@"
+    exit $?
+elif [[ ${1:-} == "mercury" || ${1:-} == "merc" || ${1:-} == "inception" || ${1:-} == "mercury-3" ]]; then
+    shift
+    mercury_dispatch "$@"
     exit $?
 elif [[ ${1:-} == "mint-codex" || ${1:-} == "macaron-codex" || ${1:-} == "mcx" ]]; then
     shift
@@ -7894,6 +8347,7 @@ deepseek_status=$(provider_cli_status_icon deepseek claude)
 macaron_status=$(provider_cli_status_icon macaron claude)
 step_status=$(provider_cli_status_icon step claude)
 longcat_status=$(provider_cli_status_icon longcat claude)
+mercury_status=$(provider_cli_status_icon inception claude)
 sakana_status=$(provider_cli_status_icon sakana codex)
 codex_status=$(status_icon codex)
 gemini_status=$(status_icon gemini)
@@ -7955,45 +8409,46 @@ menu_row  3 "$C_MUSE"     "Muse Spark"   "${muse_spark_ver}"    "${muse_spark_st
 menu_row  4 "$C_DEEPSEEK" "DeepSeek V4.1" "${deepseek_ver}"      "${deepseek_status}"
 menu_row  5 "$C_MACARON"  "Macaron Venti" "${macaron_ver}"      "${macaron_status}"
 menu_row  6 "$C_LONGCAT"  "LongCat"      "${LONGCAT_MODEL_LABEL#LongCat-}" "${longcat_status}"
+menu_row  7 "$C_MERCURY"  "Mercury"      "${MERCURY_MODEL#mercury-}" "${mercury_status}"
 
 menu_group "CODEX"
-menu_row  7 "$C_CODEX"    "Codex"        "${codex_ver}"         "${codex_status}"
-menu_row  8 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"
+menu_row  8 "$C_CODEX"    "Codex"        "${codex_ver}"         "${codex_status}"
+menu_row  9 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"
 
 menu_group "OUTRAS CLIs"
-menu_row  9 "$C_GEMINI"   "Gemini"       "${gemini_ver}"        "${gemini_status}"
-menu_row 10 "$C_KIMI"     "Kimi Code"    "${kimi_ver}"          "${kimi_status}"
-menu_row 11 "$C_GROK"     "Grok (xAI)"   "${grok_ver}"          "${grok_status}"
-menu_row 12 "$C_DEEPCODE" "Deep Code"    "${deepcode_ver}"      "${deepcode_status}"
-menu_row 13 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
-menu_row 14 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
-menu_row 15 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
-menu_row 16 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
-menu_row 17 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
-menu_row 18 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
-menu_row 19 "$C_MIMO"     "MiMo Code"    "${mimo_ver}"          "${mimo_status}"
-menu_row 20 "$C_MCODE"    "MiniMax Code" "${mcode_ver}"         "${mcode_status}"
-menu_row 21 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
-menu_row 22 "$C_DEVIN"    "Devin CLI"    "${devin_ver}"         "${devin_status}"
+menu_row 10 "$C_GEMINI"   "Gemini"       "${gemini_ver}"        "${gemini_status}"
+menu_row 11 "$C_KIMI"     "Kimi Code"    "${kimi_ver}"          "${kimi_status}"
+menu_row 12 "$C_GROK"     "Grok (xAI)"   "${grok_ver}"          "${grok_status}"
+menu_row 13 "$C_DEEPCODE" "Deep Code"    "${deepcode_ver}"      "${deepcode_status}"
+menu_row 14 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
+menu_row 15 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
+menu_row 16 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
+menu_row 17 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
+menu_row 18 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
+menu_row 19 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
+menu_row 20 "$C_MIMO"     "MiMo Code"    "${mimo_ver}"          "${mimo_status}"
+menu_row 21 "$C_MCODE"    "MiniMax Code" "${mcode_ver}"         "${mcode_status}"
+menu_row 22 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
+menu_row 23 "$C_DEVIN"    "Devin CLI"    "${devin_ver}"         "${devin_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 23 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 24 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 25 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 26 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 27 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 28 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
-menu_row 29 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
-menu_row 30 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
-menu_row 31 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
-menu_row 32 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
-menu_row 33 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
+menu_row 24 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 25 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 26 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 27 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 28 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 29 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 30 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 31 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
+menu_row 32 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
+menu_row 33 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
+menu_row 34 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 34 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 35 "$C_TOOL" "🔌 Providers"
-menu_tool 36 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 37 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 35 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 36 "$C_TOOL" "🔌 Providers"
+menu_tool 37 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 38 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -8019,7 +8474,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-37/0]: " choice
+read -rp "Escolha [1-38/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -8047,83 +8502,85 @@ case $choice in
        launch "Claude Code + Macaron (${MACARON_MODEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
     6|longcat|lc)
        longcat_menu_panel || true ;;
-    7|codex|x)
+    7|mercury|merc|inception)
+       mercury_menu_panel || true ;;
+    8|codex|x)
        xconta_autoswitch_if_needed
        codex_config_clear_foreign_defaults
        codex_force_official_provider
        codex_add_context_flags
        enter_repo_if_needed
        launch "Codex (1M)" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
-    8|sakana|fugu)
+    9|sakana|fugu)
        launch_sakana_fugu "fugu" ;;
-    9|gemini|g)
+   10|gemini|g)
        enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
-   10|kimi|k)
+   11|kimi|k)
        enter_repo_if_needed
        launch "Kimi Code" kimi "$KIMI_PROMPT_FLAG" KIMI_FLAGS ;;
-   11|grok|gr)
+   12|grok|gr)
        enter_repo_if_needed
        launch "Grok" grok "$GROK_PROMPT_FLAG" GROK_FLAGS ;;
-   12|deepcode|dc)
+   13|deepcode|dc)
        enter_repo_if_needed
        launch "Deep Code" deepcode "$DEEPCODE_PROMPT_FLAG" DEEPCODE_FLAGS ;;
-   13|antigravity|agy)
+   14|antigravity|agy)
        enter_repo_if_needed
        agy_add_workspace_flag
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-   14|qoder)
+   15|qoder)
        enter_repo_if_needed
        launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
-   15|cursor)
+   16|cursor)
        enter_repo_if_needed
        launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
-   16|omp)
+   17|omp)
        enter_repo_if_needed
        launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS ;;
-   17|prime)
+   18|prime)
        enter_repo_if_needed
        launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
-   18|opencode)
+   19|opencode)
        enter_repo_if_needed
        opencode_launch ;;
-   19|mimo)
+   20|mimo)
        enter_repo_if_needed
        mimo_launch ;;
-   20|mcode|minimax)
+   21|mcode|minimax)
        mcode_menu_panel || true ;;
-   21|muse)
+   22|muse)
        if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; cli_install_hint muse; continue; fi
        enter_repo_if_needed
        launch "Muse Code" muse "" MUSE_CODE_FLAGS ;;
-   22|devin)
+   23|devin)
        if ! check_installed devin; then echo -e "${RED}Erro: Devin CLI não instalada.${RESET}"; cli_install_hint devin; continue; fi
        enter_repo_if_needed
        devin_launch ;;
-   23) ollama_dispatch || true ;;
-   24) hf_menu_panel || true ;;
-   25) fl_dispatch || true ;;
-   26) qwen_launch || true ;;
-   27) qwen_launch_claude || true ;;
-   28) muse_dispatch || true ;;
-   29) provider_setup_env "deepseek" || continue
+   24) ollama_dispatch || true ;;
+   25) hf_menu_panel || true ;;
+   26) fl_dispatch || true ;;
+   27) qwen_launch || true ;;
+   28) qwen_launch_claude || true ;;
+   29) muse_dispatch || true ;;
+   30) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "deepseek-v4-pro[1m]")"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   30) provider_setup_env "deepseek" || continue
+   31) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "$DEEPSEEK_V41_MODEL")"
        enter_repo_if_needed
        launch "DeepSeek V4.1 Flash" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   31) ab_dispatch || true ;;
-   32) ab_launch_claude ;;
-   33|step)
+   32) ab_dispatch || true ;;
+   33) ab_launch_claude ;;
+   34|step)
        provider_setup_env "step" || continue
        enter_repo_if_needed
        launch "Step Plan (${STEP_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   34) enter_repo_if_needed
+   35) enter_repo_if_needed
        launch_codex_security ;;
-   35) provider_list ;;
-   36) flags_menu
+   36) provider_list ;;
+   37) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -8143,7 +8600,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
        esac
        ;;
-   37) conta_menu ;;
+   38) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

@@ -82,7 +82,7 @@ assert_args 'app-server|'            mcode app-server
 assert_args '--version|' mcode --version
 assert_args '--help|'    mcode --help
 
-# Painel ('ai mcode menu', o mesmo do item 20): cada opção cai no dispatch.
+# Painel ('ai mcode menu', o mesmo do item 21): cada opção cai no dispatch.
 run_panel() {
     : > "$CAPTURE_ARGS"
     (

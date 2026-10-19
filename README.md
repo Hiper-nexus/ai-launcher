@@ -45,6 +45,7 @@ ai ds-v41       # DeepSeek V4.1 Flash — alias do ai ds
 ai step         # Step Plan step-5-preview (StepFun, janela de 1M) via Claude Code
 ai longcat      # LongCat-2.5-Preview (Meituan, janela de 1M) via Claude Code (alias: lc; menu: 6)
 ai lc2          # LongCat-2.0 em toda a sessão (alias: longcat-2)
+ai mercury      # Mercury 3 (Inception, difusão, janela de 1M) via Claude Code + ponte LiteLLM local (aliases: merc, inception; menu: 7)
 ai mint         # Macaron V1 (macaron-v1-coding-venti) via Claude Code (aliases: macaron, venti, mac, mv; menu: 5)
 ai mint-codex   # Codex via Macaron V1 (provider responses; alias: mcx)
 ai x            # Codex direto (1M por padrão no provider oficial)
@@ -68,7 +69,7 @@ ai omp models   # Providers/modelos que o omp enxerga hoje
 ai mi           # MiMoCode (Xiaomi MiMo) — CLI própria, não é o Claude
 ai mi "prompt"  # MiMoCode one-shot via 'mimo run'
 ai mi -m xiaomi/mimo-v2.6-pro   # série V2.6 (1M de contexto)
-ai mcode        # MiniMax Code — CLI própria da MiniMax (aliases: mmc, minimax; menu: 20)
+ai mcode        # MiniMax Code — CLI própria da MiniMax (aliases: mmc, minimax; menu: 21)
 ai mcode "prompt"  # MiniMax Code one-shot via 'mcode exec --permission full'
 ai ol           # Ollama Cloud (roda em ollama.com, não na sua máquina)
 ai ab           # GLM-5.3 sem censura (Abliteration.ai) — chat ou one-shot
@@ -93,6 +94,7 @@ ai --help       # Ajuda
 | Codex Sol 1M | `ai sol` | idem + `-m gpt-5.6-sol -c model_context_window=1000000 -c model_auto_compact_token_limit=900000` |
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra`, `ai fugu-max`, `ai fugu-ultra-v1.x`, `ai claude-fugu` | Ultra V2.0 por padrão no perfil Codex `fugu` ou no endpoint Anthropic-compatible |
 | Macaron V1 (Mind Lab) | `ai mint`, `ai macaron`, `ai venti`, `ai mint-codex` (menu: 5) | Modelo **hospedado** (não é CLI de agente) — roda dentro do Claude Code (`ANTHROPIC_BASE_URL=https://mint.macaron.im`) ou do Codex (`wire_api=responses`). Default `macaron-v1-coding-venti`; troque com `AI_MACARON_MODEL=`. Key: `ai p add macaron` |
+| Inception Mercury | `ai mercury`, `ai merc`, `ai inception` (menu: 7) | Modelo **hospedado** de difusão, sem CLI própria e sem endpoint Anthropic — roda no Claude Code por uma ponte LiteLLM local (`127.0.0.1:4417`, token próprio). Key: `ai mercury key` |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--auto` (never-ask; o `--yolo` do kimi ainda pede yes em ação arriscada/plano) |
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
@@ -100,7 +102,7 @@ ai --help       # Ajuda
 | Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
 | omp (oh-my-pi) | `ai omp`, `ai o` | `--yolo` — agente único com 60+ providers; `-m` troca de modelo |
 | MiMoCode (Xiaomi MiMo) | `ai mi`, `ai mimo` | CLI **própria** (binário `mimo`, fork do OpenCode) — não é o Claude com outro modelo. `--dangerously-skip-permissions`; one-shot via `mimo run`; modelos V2.6 (pro / ultraspeed / flash) e V2.5 |
-| MiniMax Code | `ai mcode`, `ai mmc`, `ai minimax` (menu: 20) | CLI **própria** da MiniMax (binário `mcode`, open-source) — não é o Claude com o MiniMax-M3. TUI sem flag de yolo; one-shot via `mcode exec --permission full` |
+| MiniMax Code | `ai mcode`, `ai mmc`, `ai minimax` (menu: 21) | CLI **própria** da MiniMax (binário `mcode`, open-source) — não é o Claude com o MiniMax-M3. TUI sem flag de yolo; one-shot via `mcode exec --permission full` |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
@@ -335,6 +337,31 @@ Detalhes testados direto contra a API em 25/09/2026, e que o launcher já resolv
 
 Ajustes: `AI_LONGCAT_MODEL`, `AI_LONGCAT_V2_MODEL`, `AI_LONGCAT_BASE_URL` (ex.: `https://api.longcat.chat/anthropic`, o domínio da China, que também responde). A key fica no `providers.conf` (chmod 600, slot `longcat`), fora do repositório.
 
+## Inception Mercury — dentro do Claude Code
+
+`ai mercury` abre o Claude Code com a sessão inteira no **Mercury 3**, o modelo de **difusão** da [Inception](https://docs.inceptionlabs.ai/): ele gera os tokens em paralelo em vez de um por vez, então responde muito rápido. Janela de 1M, até 131K de output, tool use (inclusive em paralelo). Conta nova ganha 100M tokens grátis.
+
+```bash
+ai mercury key                # salva a key sk_... (https://platform.inceptionlabs.ai/dashboard/api-keys, 1x por máquina)
+ai mercury ping               # testa key e API, sobe a ponte e confere /v1/messages com texto e tool use
+ai mercury                    # Claude Code no Mercury 3 (aliases: merc, inception, mercury-3)
+ai mercury "explique o repo"  # one-shot
+ai c --via mercury            # mesmo destino pelo --via
+ai mercury stop               # derruba a ponte local
+```
+
+No menu, a opção **7** (logo abaixo do LongCat, no grupo CLAUDE CODE) abre um painel com o lançamento, o teste de conexão, a troca de key e o stop da ponte; digitar `mercury` no prompt do menu também funciona.
+
+**Por que tem uma ponte.** A Inception não tem CLI de código própria e a API dela só fala OpenAI `/v1/chat/completions` (testado em 19/10/2026: `/v1/messages` e `/v1/responses` dão 404). O Codex atual também não serve: ele recusa provider de chat (`wire_api = "chat" is no longer supported`). Então o launcher segue a [integração oficial](https://docs.inceptionlabs.ai/integrations/claude-code): Claude Code → LiteLLM local (traduz Anthropic Messages ↔ Chat Completions) → Mercury 3.
+
+- **Instalação automática na 1ª vez:** LiteLLM `1.99.0` (a versão que a Inception testou) num venv isolado em `~/.local/share/ai-launcher/mercury/venv` (~430 MB, via `uv` se houver; senão Python 3.11+). Nada vai para o Python do sistema.
+- **Só local e com token:** a ponte escuta em `127.0.0.1:4417` e exige um token gerado na máquina (`bridge.token`, chmod 600). O Claude Code recebe esse token; a key da Inception fica só no processo da ponte.
+- **Fica no ar entre sessões** (a 2ª abre na hora). Se a key, a porta ou a config mudarem, a ponte velha cai e sobe outra sozinha. Porta ocupada por outro serviço dá erro, não é confundida com a ponte.
+- **Sem cooldown:** com um modelo só, o LiteLLM bloquearia o modelo por 5s depois de qualquer erro (429 em sequência). O launcher desliga isso.
+- O aviso `[claude-code:unrecognized_model]` é esperado com modelo que não é Claude; as chamadas vão para o Mercury normalmente.
+
+Ajustes: `AI_MERCURY_EFFORT` (`instant`/`low`/`medium`/`high`; o default do Mercury 3 é `low`), `AI_MERCURY_PORT`, `AI_MERCURY_MODEL`. Log da ponte em `~/.local/share/ai-launcher/mercury/proxy.log`. A key fica no `providers.conf` (chmod 600, slot `inception`) ou em `INCEPTION_API_KEY`, fora do repositório.
+
 ## Qwen (Alibaba Model Studio — duas opções)
 
 O Qwen-Max direto pela API da Alibaba (não é o Qoder). Requer uma key do [Model Studio](https://modelstudio.console.alibabacloud.com) — salve com `ai qw key`. Duas formas de usar o mesmo modelo:
@@ -421,7 +448,7 @@ Instalação: `npm install -g @mimo-ai/cli` (binário `mimo`; se o npm bloquear 
 
 ## MiniMax Code (CLI própria da MiniMax)
 
-O MiniMax Code é o agente de terminal **próprio** da MiniMax (binário `mcode`, pacote `@minimax-ai/code`, MIT, open-source desde 09/2026). Assim como o MiMo, **não é o Claude Code com outro modelo**: agente, tools e TUI são dele. Fica no menu **20**, logo abaixo do MiMo Code.
+O MiniMax Code é o agente de terminal **próprio** da MiniMax (binário `mcode`, pacote `@minimax-ai/code`, MIT, open-source desde 09/2026). Assim como o MiMo, **não é o Claude Code com outro modelo**: agente, tools e TUI são dele. Fica no menu **21**, logo abaixo do MiMo Code.
 
 ```bash
 ai mcode                          # TUI do MiniMax Code
@@ -432,10 +459,10 @@ ai mcode login --region global    # login na conta MiniMax (Token Plan)
 ai mcode provider set-minimax-key # ou use uma API key da MiniMax
 ai mcode exec review              # review das mudanças locais
 ai mcode update                   # atualiza o mcode
-ai mcode menu                     # painel (o mesmo do item 20 do menu)
+ai mcode menu                     # painel (o mesmo do item 21 do menu)
 ```
 
-**Painel (menu 20):** abrir a TUI, continuar a última sessão, tarefa única, review das mudanças locais, login, salvar API key, listar providers e atualizar o `mcode` — sem decorar subcomando.
+**Painel (menu 21):** abrir a TUI, continuar a última sessão, tarefa única, review das mudanças locais, login, salvar API key, listar providers e atualizar o `mcode` — sem decorar subcomando.
 
 **Permissões:** a TUI não tem flag de yolo — a política se escolhe lá dentro. O `--permission smart|full|off` só existe no `exec`, então as `MCODE_FLAGS` (default `--permission full`) valem apenas pro one-shot. Subcomandos (`init`, `exec`, `acp`, `login`, `logout`, `update`, `provider`, `plugin`) e flags informativas passam **verbatim**.
 
@@ -612,7 +639,7 @@ ai conta status          # uso de cada conta (janela 5h / 7 dias) + horário de 
 ai conta use pessoal     # ativa a conta "pessoal" na hora
 ai conta rm backup       # remove um backup salvo
 ai c --conta trabalho    # troca de conta e já lança o Claude
-ai conta                 # menu interativo (também é a opção 37 do menu principal)
+ai conta                 # menu interativo (também é a opção 38 do menu principal)
 ```
 
 **Auto-switch**: com 2+ contas salvas, `ai c` verifica a janela de 5h antes de lançar — se a conta ativa esgotou, troca automaticamente para outra com quota (fail-open: problema de rede nunca bloqueia o launch). Desligar: `AI_CONTA_AUTO_SWITCH=false`. Trocar mais cedo: `AI_CONTA_AUTO_THRESHOLD=95`.
@@ -826,7 +853,7 @@ independente. E numa página lenta (Wikipedia, por exemplo) a recuperação de
 - Passagem de prompt direto via linha de comando
 - Flags configuráveis no topo do script
 - Contas Claude múltiplas com troca sem logout (Keychain, macOS)
-- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Step Plan/StepFun, LongCat/Meituan, Ollama, LM Studio, LiteLLM)
+- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Step Plan/StepFun, LongCat/Meituan, Inception Mercury, Ollama, LM Studio, LiteLLM)
 - Roteamento por linguagem natural via Jev/TypeSafe (`ai ask`)
 - Picker de repos conhecidos quando lançado fora de um repo git
 - Funciona em Linux e no macOS padrão
