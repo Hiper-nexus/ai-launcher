@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.66.1"
+AI_LAUNCHER_VERSION="1.66.2"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -1489,11 +1489,24 @@ mercury_bridge_pid() {
     printf '%s' "$pid"
 }
 
-# Pronta = responde /v1/models COM o nosso token e lista o nosso modelo
-# (outro serviço na mesma porta não passa). O token vai por -H @arquivo,
-# fora do argv; a saída é capturada inteira para o pipefail não ler SIGPIPE.
+# Quem escuta na porta tem que ser o processo que o launcher subiu. Sem isso,
+# outra conta da máquina poderia ocupar a porta durante o boot da ponte (~9s)
+# e receber o token — e depois o código das sessões. Sem lsof (Windows), fica
+# só a proteção do token.
+mercury_bridge_owns_port() {
+    local pid="$1" listeners
+    command -v lsof >/dev/null 2>&1 || return 0
+    listeners=$(lsof -nP -iTCP:"$MERCURY_PORT" -sTCP:LISTEN -t 2>/dev/null) || return 1
+    [[ "$listeners" == "$pid" ]]
+}
+
+# Pronta = a porta é do nosso processo e ele responde /v1/models COM o nosso
+# token, listando o nosso modelo. O token vai por -H @arquivo, fora do argv;
+# a saída é capturada inteira para o pipefail não ler SIGPIPE.
 mercury_bridge_ready() {
-    local token="$1" out
+    local token="$1" pid out
+    pid=$(mercury_bridge_pid) || return 1
+    mercury_bridge_owns_port "$pid" || return 1
     out=$(curl -fsS -m 3 -H @<(printf 'Authorization: Bearer %s\n' "$token") \
         "$(mercury_bridge_url)/v1/models" 2>/dev/null) || return 1
     [[ "$out" == *"\"${MERCURY_MODEL}\""* ]]

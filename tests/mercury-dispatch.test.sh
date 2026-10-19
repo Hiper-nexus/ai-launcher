@@ -30,6 +30,8 @@ cleanup() {
     pid=$(head -1 "${MERCURY_HOME}/bridge.pid" 2>/dev/null || true)
     [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
     [[ -n "$OTHER_PID" ]] && kill "$OTHER_PID" 2>/dev/null || true
+    pid=$(cat "${TMP_DIR}/squat-pid" 2>/dev/null || true)
+    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
     rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -49,7 +51,7 @@ chmod 600 "${TEST_HOME}/.local/share/ai-launcher/providers.conf"
 # launcher tentaria instalar a de verdade).
 cat > "${MERCURY_HOME}/venv/bin/litellm" <<'PY'
 #!/usr/bin/env python3
-import http.server, json, os, re, sys
+import http.server, json, os, re, sys, time
 args = sys.argv[1:]
 port = int(args[args.index("--port") + 1])
 cfg = open(args[args.index("--config") + 1]).read()
@@ -61,14 +63,30 @@ with open(os.environ["BRIDGE_CAPTURE"], "a") as f:
         os.getpid(), os.environ.get("INCEPTION_API_KEY", ""),
         args[args.index("--host") + 1], effort.group(1) if effort else ""))
 
+squat = os.environ.get("FAKE_BRIDGE_MODE") == "squat"
+
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.headers.get("Authorization") != "Bearer " + token:
+        if squat:
+            # O invasor responde qualquer coisa e anota o que recebeu.
+            with open(os.environ["SQUAT_HITS"], "a") as f:
+                f.write("auth=%s\n" % self.headers.get("Authorization", ""))
+        elif self.headers.get("Authorization") != "Bearer " + token:
             self.send_response(401); self.end_headers(); return
         body = json.dumps({"data": [{"id": model}]}).encode()
         self.send_response(200); self.end_headers(); self.wfile.write(body)
     def log_message(self, *a):
         pass
+
+if squat:
+    # Outro processo (outra conta, no ataque real) fica com a porta durante o
+    # boot da ponte; o processo que o launcher subiu morre logo depois.
+    if os.fork() == 0:
+        with open(os.environ["SQUAT_PID"], "w") as f:
+            f.write(str(os.getpid()))
+        http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+    time.sleep(2)
+    sys.exit(1)
 
 http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
 PY
@@ -199,6 +217,22 @@ kill "$OTHER_PID" 2>/dev/null || true
 wait "$OTHER_PID" 2>/dev/null || true
 OTHER_PID=""
 ok "porta alheia recusada"
+
+echo "── 7b. porta tomada por outro processo DURANTE o boot: o token não sai"
+if command -v lsof >/dev/null 2>&1; then
+    SQUAT_HITS="${TMP_DIR}/squat-hits"
+    SQUAT_PID_FILE="${TMP_DIR}/squat-pid"
+    : > "$SQUAT_HITS"
+    ( export FAKE_BRIDGE_MODE=squat SQUAT_HITS SQUAT_PID="$SQUAT_PID_FILE"; run_launcher mercury ) &&
+        fail "lançou com a porta na mão de outro processo"
+    [[ ! -s "$CAPTURE_ENV" ]] || fail "claude rodou apontando para o invasor"
+    ! grep -q 'Bearer' "$SQUAT_HITS" || fail "o token local vazou para o invasor: $(cat "$SQUAT_HITS")"
+    kill "$(cat "$SQUAT_PID_FILE" 2>/dev/null)" 2>/dev/null || true
+    for _ in {1..40}; do curl -s -o /dev/null "http://127.0.0.1:${PORT}/" || break; sleep 0.25; done
+    ok "listener com PID diferente do da ponte é ignorado"
+else
+    echo "  (sem lsof: só o token protege — pulado)"
+fi
 
 echo "── 8. sem key e sem terminal: erro, sem abrir o Claude"
 printf 'glm=outra\n' > "${TEST_HOME}/.local/share/ai-launcher/providers.conf"
