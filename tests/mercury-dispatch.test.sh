@@ -41,7 +41,7 @@ free_port() {
 }
 PORT=$(free_port)
 export AI_MERCURY_PORT="$PORT"
-unset AI_MERCURY_EFFORT AI_MERCURY_MODEL INCEPTION_API_KEY 2>/dev/null || true
+unset AI_MERCURY_EFFORT AI_MERCURY_MODEL AI_MERCURY_VISION INCEPTION_API_KEY 2>/dev/null || true
 
 mkdir -p "$TEST_HOME" "$FAKE_BIN" "${MERCURY_HOME}/venv/bin"
 printf 'inception=sk_chave-de-teste\n' > "${TEST_HOME}/.local/share/ai-launcher/providers.conf"
@@ -59,9 +59,11 @@ model = re.search(r"model_name: (\S+)", cfg).group(1)
 token = os.environ["LITELLM_MASTER_KEY"]
 effort = re.search(r"reasoning_effort: (\S+)", cfg)
 with open(os.environ["BRIDGE_CAPTURE"], "a") as f:
-    f.write("pid=%d key=%s host=%s effort=%s\n" % (
+    f.write("pid=%d key=%s host=%s vmodel=%s vurl=%s vkey=%s effort=%s\n" % (
         os.getpid(), os.environ.get("INCEPTION_API_KEY", ""),
-        args[args.index("--host") + 1], effort.group(1) if effort else ""))
+        args[args.index("--host") + 1], os.environ.get("MERCURY_VISION_MODEL", ""),
+        os.environ.get("MERCURY_VISION_URL", ""), os.environ.get("MERCURY_VISION_KEY", ""),
+        effort.group(1) if effort else ""))
 
 squat = os.environ.get("FAKE_BRIDGE_MODE") == "squat"
 
@@ -189,6 +191,127 @@ tail -1 "$BRIDGE_CAPTURE" | grep -q 'effort=high$' || fail "reasoning_effort nã
 ( export AI_MERCURY_EFFORT='high\n  api_base: http://evil'; run_launcher mercury ) && fail "esforço inválido foi aceito"
 [[ ! -s "$CAPTURE_ENV" ]] || fail "claude rodou com esforço inválido"
 ok "effort válido vai para o YAML; inválido para antes"
+
+echo "── 4b. visão: descritor sai das keys do launcher e vai só para a ponte"
+# Só a key da Inception: sem descritor, a ponte sobe com o aviso em texto.
+grep -q 'vmodel= vurl= vkey= ' <(tail -1 "$BRIDGE_CAPTURE") || fail "descritor sem key: $(tail -1 "$BRIDGE_CAPTURE")"
+grep -q '^  callbacks: mercury_vision.proxy_handler_instance$' "${MERCURY_HOME}/litellm.yaml" ||
+    fail "hook de visão fora da config da ponte"
+[[ "$(stat -f '%Lp' "${MERCURY_HOME}/mercury_vision.py" 2>/dev/null || stat -c '%a' "${MERCURY_HOME}/mercury_vision.py")" == 600 ]] ||
+    fail "mercury_vision.py não é 600"
+printf 'deepseek=sk-ds-teste\nlongcat=ak_lc-teste\n' >> "${TEST_HOME}/.local/share/ai-launcher/providers.conf"
+run_launcher mercury
+tail -1 "$BRIDGE_CAPTURE" | grep -q 'vmodel=deepseek-flash vurl=https://api.deepseek.com/anthropic vkey=sk-ds-teste ' ||
+    fail "DeepSeek Flash não virou o descritor: $(tail -1 "$BRIDGE_CAPTURE")"
+env_is ANTHROPIC_AUTH_TOKEN "$(head -1 "${MERCURY_HOME}/bridge.token")"
+( export AI_MERCURY_VISION=longcat; run_launcher mercury )
+tail -1 "$BRIDGE_CAPTURE" | grep -q 'vmodel=LongCat-2.5-Preview vurl=https://api.longcat.ai/anthropic vkey=ak_lc-teste ' ||
+    fail "AI_MERCURY_VISION=longcat ignorado: $(tail -1 "$BRIDGE_CAPTURE")"
+( export AI_MERCURY_VISION=off; run_launcher mercury )
+tail -1 "$BRIDGE_CAPTURE" | grep -q 'vmodel= vurl= vkey= ' || fail "AI_MERCURY_VISION=off não desligou o descritor"
+for bad in glm macaron; do
+    # glm não lê imagem (inventou no teste); macaron é válido, mas sem key aqui.
+    : > "$CAPTURE_ENV"
+    ( export AI_MERCURY_VISION="$bad"; run_launcher mercury ) && fail "AI_MERCURY_VISION=${bad} foi aceito"
+    [[ ! -s "$CAPTURE_ENV" ]] || fail "claude rodou com AI_MERCURY_VISION=${bad}"
+done
+run_launcher mercury
+ok "deepseek por padrão, longcat/off por env, slot sem key ou sem visão recusado"
+
+echo "── 4c. hook: imagem vira descrição (colada, em tool_result, data URL), com cache"
+MERCURY_HOOK="${MERCURY_HOME}/mercury_vision.py" python3 - <<'PY' || fail "hook de visão"
+import asyncio, copy, importlib.util, os, sys, types
+
+calls = []
+
+class Resp:
+    def __init__(self, status, payload):
+        self.status, self.payload = status, payload
+    def raise_for_status(self):
+        if self.status >= 400:
+            raise RuntimeError("HTTP %d" % self.status)
+    def json(self):
+        return self.payload
+
+class Client:
+    def __init__(self, timeout=None):
+        pass
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *exc):
+        return False
+    async def post(self, url, json=None, headers=None):
+        calls.append((url, json, headers))
+        src = json["messages"][0]["content"][0]["source"]
+        ident = src.get("data") or src.get("url")
+        if ident == "QUEBRADA":
+            return Resp(500, {})
+        return Resp(200, {"content": [{"type": "thinking", "thinking": "..."},
+                                      {"type": "text", "text": "DESC:%s:%s" % (src.get("media_type", "url"), ident)}]})
+
+def load(env):
+    httpx = types.ModuleType("httpx"); httpx.AsyncClient = Client
+    custom = types.ModuleType("litellm.integrations.custom_logger"); custom.CustomLogger = object
+    sys.modules.update({"httpx": httpx, "litellm": types.ModuleType("litellm"),
+                        "litellm.integrations": types.ModuleType("litellm.integrations"),
+                        "litellm.integrations.custom_logger": custom})
+    for k in ("MERCURY_VISION_URL", "MERCURY_VISION_KEY", "MERCURY_VISION_MODEL"):
+        os.environ.pop(k, None)
+    os.environ.update(env)
+    spec = importlib.util.spec_from_file_location("mercury_vision", os.environ["MERCURY_HOOK"])
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.proxy_handler_instance
+
+def run(hook, data):
+    return asyncio.run(hook.async_pre_call_hook(None, None, data, "anthropic_messages"))
+
+def img(data, media="image/png"):
+    return {"type": "image", "source": {"type": "base64", "media_type": media, "data": data}}
+
+def fail(msg):
+    sys.exit("FAIL hook: " + msg)
+
+REQUEST = {"messages": [
+    {"role": "user", "content": [img("AAA"), {"type": "text", "text": "oi"}]},
+    {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]},
+    {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": [img("BBB")]}]},
+    {"role": "user", "content": [img("AAA"), {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,CCC"}},
+                                 img("QUEBRADA")]},
+    {"role": "user", "content": "só texto"},
+]}
+
+hook = load({"MERCURY_VISION_URL": "https://visao.test/anthropic/", "MERCURY_VISION_KEY": "sk-visao",
+             "MERCURY_VISION_MODEL": "deepseek-flash"})
+out = run(hook, copy.deepcopy(REQUEST))
+m = out["messages"]
+text = lambda b: b.get("text", "") if b.get("type") == "text" else fail("bloco não virou texto: %r" % b)
+"DESC:image/png:AAA" in text(m[0]["content"][0]) or fail("imagem colada sem descrição")
+"deepseek-flash" in text(m[0]["content"][0]) or fail("descrição sem o nome do descritor")
+m[0]["content"][1] == {"type": "text", "text": "oi"} or fail("texto do usuário mexido")
+"DESC:image/png:BBB" in text(m[2]["content"][0]["content"][0]) or fail("imagem em tool_result sem descrição")
+"DESC:image/png:AAA" in text(m[3]["content"][0]) or fail("imagem repetida sem descrição")
+"DESC:image/jpeg:CCC" in text(m[3]["content"][1]) or fail("data URL (formato OpenAI) sem descrição")
+"falhou" in text(m[3]["content"][2]) or fail("erro do descritor não virou aviso")
+m[4]["content"] == "só texto" or fail("mensagem só de texto mexida")
+len(calls) == 4 or fail("esperado 4 chamadas (AAA uma vez só), houve %d" % len(calls))
+url, body, headers = calls[0]
+url == "https://visao.test/anthropic/v1/messages" or fail("URL do descritor: " + url)
+body["model"] == "deepseek-flash" or fail("modelo do descritor: " + body["model"])
+headers["Authorization"] == "Bearer sk-visao" or fail("key do descritor não foi como Bearer")
+
+calls.clear()
+run(hook, copy.deepcopy(REQUEST))
+len(calls) == 1 or fail("cache: esperado só a QUEBRADA de novo, houve %d chamadas" % len(calls))
+
+run(hook, {"messages": None}) == {"messages": None} or fail("pedido sem mensagens mexido")
+
+hook = load({})
+out = run(hook, copy.deepcopy(REQUEST))
+"nenhum modelo de visão configurado" in out["messages"][0]["content"][0]["text"] or fail("sem descritor não virou aviso")
+print("  hook ok")
+PY
+ok "colada, tool_result, data URL, dedupe, cache, falha e sem descritor"
 
 echo "── 5. prompt passa adiante; '--via mercury' no 'ai c' usa a mesma ponte"
 run_launcher mercury "explique este repo"

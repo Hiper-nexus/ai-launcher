@@ -360,7 +360,14 @@ No menu, a opção **7** (logo abaixo do LongCat, no grupo CLAUDE CODE) abre um 
 - **Sem cooldown:** com um modelo só, o LiteLLM bloquearia o modelo por 5s depois de qualquer erro (429 em sequência). O launcher desliga isso.
 - O aviso `[claude-code:unrecognized_model]` é esperado com modelo que não é Claude; as chamadas vão para o Mercury normalmente.
 
-Ajustes: `AI_MERCURY_EFFORT` (`instant`/`low`/`medium`/`high`; o default do Mercury 3 é `low`), `AI_MERCURY_PORT`, `AI_MERCURY_MODEL`. Log da ponte em `~/.local/share/ai-launcher/mercury/proxy.log`. A key fica no `providers.conf` (chmod 600, slot `inception`) ou em `INCEPTION_API_KEY`, fora do repositório.
+**Imagens.** O Mercury só lê texto: [a tabela de modelos](https://docs.inceptionlabs.ai/get-started/models) lista só "Text" para Mercury 3, 2.5 e 2, e a API devolve `400 Image inputs are not supported for this model` para qualquer imagem. Não existe flag para isso, nem no Claude Code nem na API. Para não perder o recurso, a ponte tem um hook que troca cada imagem (colada no prompt ou devolvida pelo `Read`) por uma descrição em texto feita por um modelo com visão das keys que você já tem, e o Mercury trabalha em cima dela:
+
+- **Quem descreve:** o primeiro com key, nesta ordem: DeepSeek V4.1 Flash, Macaron Venti, LongCat 2.5, Muse Spark. No teste de 19/10/2026 (imagem metade verde, metade azul) os quatro acertaram; o Flash levou 2s. GLM 5.3 e DeepSeek V4-Pro não leem imagem (um inventou uma paisagem, o outro disse que não via) e ficam de fora.
+- **Cache:** o Claude Code reenvia o histórico a cada turno; cada imagem é descrita uma vez só.
+- **Privacidade:** a imagem vai para o provider do descritor. `AI_MERCURY_VISION=off` desliga; aí a imagem vira um aviso em texto e o Mercury diz que não conseguiu ver. Escolha outro com `AI_MERCURY_VISION=macaron` (ou `longcat`, `muse-spark`).
+- Em nenhum caso a sessão trava com o erro 400: se o descritor falhar, a imagem vira aviso e o pedido segue.
+
+Ajustes: `AI_MERCURY_EFFORT` (`instant`/`low`/`medium`/`high`; o default do Mercury 3 é `low`), `AI_MERCURY_VISION`, `AI_MERCURY_PORT`, `AI_MERCURY_MODEL`. Log da ponte em `~/.local/share/ai-launcher/mercury/proxy.log`. A key fica no `providers.conf` (chmod 600, slot `inception`) ou em `INCEPTION_API_KEY`, fora do repositório.
 
 ## Qwen (Alibaba Model Studio — duas opções)
 

@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.66.2"
+AI_LAUNCHER_VERSION="1.67.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -1462,6 +1462,7 @@ YAML
     cat <<'YAML'
 litellm_settings:
   drop_params: true
+  callbacks: mercury_vision.proxy_handler_instance
 router_settings:
   disable_cooldowns: true
 general_settings:
@@ -1469,13 +1470,196 @@ general_settings:
 YAML
 }
 
-# Assinatura do que a ponte em execução carrega (key + versão + porta +
-# config). Mudou qualquer um — trocou a key, atualizou o launcher — a ponte
-# velha cai e sobe de novo. A key entra por stdin, nunca por argv.
+# ── Visão: o Mercury só lê texto ──
+# Testado em 19/10/2026: mercury-3, 2.5 e 2 respondem 400 "Image inputs are
+# not supported for this model" para qualquer imagem — não há flag, nem no
+# Claude Code nem na API. Um hook na ponte troca cada imagem por uma descrição
+# feita por um modelo com visão das keys que o launcher já tem. No teste de
+# cores (metade verde, metade azul) acertaram DeepSeek V4.1 Flash (2s),
+# Macaron Venti (9s), LongCat 2.5 (15s) e Muse Spark (23s); GLM 5.3 inventou
+# uma paisagem e V4-Pro disse que não via. Sem descritor (sem key ou
+# AI_MERCURY_VISION=off), a imagem vira um aviso em texto: a sessão não trava.
+MERCURY_VISION_ORDER=(deepseek macaron longcat muse-spark)
+
+# Modelo de visão (nome no wire) de cada slot.
+mercury_vision_model() {
+    case "$1" in
+        deepseek)   printf 'deepseek-flash' ;;
+        macaron)    printf '%s' "$MACARON_MODEL" ;;
+        longcat)    printf '%s' "$LONGCAT_MODEL_LABEL" ;;
+        muse-spark) printf '%s' "$MUSE_MODEL" ;;
+        *)          return 1 ;;
+    esac
+}
+
+# Descritor: AI_MERCURY_VISION (slot ou 'off') → 1º slot da ordem com key.
+# Imprime o slot, ou nada quando não há descritor.
+mercury_vision_slot() {
+    local want="${AI_MERCURY_VISION:-}" s
+    if [[ "$want" == off ]]; then
+        return 0
+    elif [[ -n "$want" ]]; then
+        if ! mercury_vision_model "$want" >/dev/null; then
+            echo -e "${RED}Erro: AI_MERCURY_VISION aceita ${MERCURY_VISION_ORDER[*]} ou off.${RESET}" >&2
+            return 1
+        fi
+        if [[ -z "$(provider_load_key "$want" 2>/dev/null || true)" ]]; then
+            echo -e "${RED}Erro: AI_MERCURY_VISION=${want}, mas não há key de ${want}.${RESET}" >&2
+            return 1
+        fi
+        printf '%s' "$want"
+        return 0
+    fi
+    for s in "${MERCURY_VISION_ORDER[@]}"; do
+        if [[ -n "$(provider_load_key "$s" 2>/dev/null || true)" ]]; then
+            printf '%s' "$s"
+            return 0
+        fi
+    done
+}
+
+# Endpoint Anthropic do slot, com o mesmo override do provider_setup_env.
+mercury_vision_base_url() {
+    local url
+    url=$(provider_load_key "${1}-base-url" 2>/dev/null || true)
+    printf '%s' "${url:-${PROVIDER_URLS[$1]:-}}"
+}
+
+# Hook do LiteLLM (gravado em ${MERCURY_DIR}/mercury_vision.py a cada subida).
+mercury_vision_hook() {
+    cat <<'PY'
+"""Hook da ponte do Mercury. Gerado pelo ai-launcher: não edite aqui.
+
+O Mercury só lê texto. Cada imagem do pedido (colada no prompt ou devolvida
+por uma ferramenta, dentro de tool_result) vira a descrição feita pelo modelo
+de visão em MERCURY_VISION_*, ou um aviso se não houver descritor. O Claude
+Code reenvia o histórico inteiro a cada turno: a descrição fica em cache pelo
+hash da imagem e cada imagem é descrita uma vez só (repetida no mesmo pedido
+também: as descrições rodam em paralelo, então o pedido é deduplicado antes).
+"""
+import asyncio
+import hashlib
+import os
+
+import httpx
+from litellm.integrations.custom_logger import CustomLogger
+
+URL = os.environ.get("MERCURY_VISION_URL", "").rstrip("/")
+KEY = os.environ.get("MERCURY_VISION_KEY", "")
+MODEL = os.environ.get("MERCURY_VISION_MODEL", "")
+PROMPT = (
+    "Você é os olhos de um assistente de programação que não enxerga imagens. "
+    "Descreva esta imagem com precisão para ele: primeiro transcreva literalmente "
+    "todo texto visível (código, mensagens de erro, logs, rótulos de interface), "
+    "depois descreva o layout, os elementos de interface, as cores e os números "
+    "relevantes. Não invente nada que não esteja na imagem. Responda em português, "
+    "mantendo os textos transcritos no idioma original."
+)
+_cache = {}
+
+
+def _image_source(block):
+    """(media_type, base64) ou ("url", url) de um bloco de imagem Anthropic/OpenAI."""
+    kind = block.get("type")
+    if kind == "image":
+        src = block.get("source") or {}
+        if src.get("type") == "base64":
+            return src.get("media_type") or "image/png", src.get("data") or ""
+        if src.get("type") == "url":
+            return "url", src.get("url") or ""
+    if kind == "image_url":
+        url = block.get("image_url")
+        url = url.get("url", "") if isinstance(url, dict) else (url or "")
+        if url.startswith("data:") and ";base64," in url:
+            head, data = url.split(";base64,", 1)
+            return head[5:] or "image/png", data
+        return "url", url
+    return None
+
+
+async def _describe(kind, data):
+    if not (URL and KEY and MODEL):
+        return None, "nenhum modelo de visão configurado"
+    digest = hashlib.sha256((kind + "\0" + data).encode()).hexdigest()
+    if digest in _cache:
+        return _cache[digest], None
+    if kind == "url":
+        source = {"type": "url", "url": data}
+    else:
+        source = {"type": "base64", "media_type": kind, "data": data}
+    body = {"model": MODEL, "max_tokens": 4096, "messages": [{"role": "user", "content": [
+        {"type": "image", "source": source}, {"type": "text", "text": PROMPT}]}]}
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            resp = await client.post(URL + "/v1/messages", json=body, headers={
+                "Authorization": "Bearer " + KEY, "x-api-key": KEY,
+                "anthropic-version": "2023-06-01"})
+        resp.raise_for_status()
+        text = "".join(b.get("text", "") for b in resp.json().get("content", [])
+                       if b.get("type") == "text").strip()
+    except Exception as exc:  # o pedido segue com o aviso, nunca cai
+        return None, "%s: %s" % (type(exc).__name__, str(exc)[:120])
+    if not text:
+        return None, "o modelo de visão respondeu vazio"
+    _cache[digest] = text
+    return text, None
+
+
+async def _as_text(kind, data):
+    text, err = await _describe(kind, data)
+    if text:
+        return {"type": "text", "text": (
+            "[Imagem anexada. O Mercury não lê imagens; descrição automática feita por %s:]\n"
+            "%s\n[fim da descrição da imagem]" % (MODEL, text))}
+    return {"type": "text", "text": (
+        "[Imagem anexada, mas o Mercury não lê imagens e a descrição automática "
+        "falhou (%s). Diga ao usuário que não conseguiu ver a imagem.]" % err)}
+
+
+def _find_images(content, found):
+    if not isinstance(content, list):
+        return
+    for i, block in enumerate(content):
+        if not isinstance(block, dict):
+            continue
+        if _image_source(block) is not None:
+            found.append((content, i))
+        elif block.get("type") == "tool_result":
+            _find_images(block.get("content"), found)
+
+
+class MercuryVision(CustomLogger):
+    async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
+        try:
+            found = []
+            for message in data.get("messages") or []:
+                if isinstance(message, dict):
+                    _find_images(message.get("content"), found)
+            if found:
+                sources = [_image_source(lst[i]) for lst, i in found]
+                unique = list(dict.fromkeys(sources))
+                texts = await asyncio.gather(*(_as_text(*src) for src in unique))
+                by_source = dict(zip(unique, texts))
+                for (lst, i), src in zip(found, sources):
+                    lst[i] = by_source[src]
+        except Exception:
+            pass  # o hook nunca derruba o pedido
+        return data
+
+
+proxy_handler_instance = MercuryVision()
+PY
+}
+
+# Assinatura do que a ponte em execução carrega (key, descritor de visão,
+# versão, porta, config e hook). Mudou qualquer um — trocou a key, atualizou
+# o launcher — a ponte velha cai e sobe de novo. Segredos entram por stdin,
+# nunca por argv.
 mercury_bridge_sig() {
-    local key="$1" hasher=(shasum -a 256)
+    local key="$1" vision="$2" hasher=(shasum -a 256)
     command -v sha256sum >/dev/null 2>&1 && hasher=(sha256sum)
-    { printf '%s\n' "$key" "$MERCURY_LITELLM_VERSION" "$MERCURY_PORT"; mercury_bridge_config; } |
+    { printf '%s\n' "$key" "$vision" "$MERCURY_LITELLM_VERSION" "$MERCURY_PORT"
+      mercury_bridge_config; mercury_vision_hook; } |
         "${hasher[@]}" | cut -d' ' -f1
 }
 
@@ -1542,9 +1726,15 @@ mercury_bridge_stop() {
 # no ar depois que o Claude sai (a próxima sessão abre na hora); 'ai mercury
 # stop' derruba. A key vai por env só para o processo da ponte.
 mercury_bridge_start() {
-    local key="$1" token sig bin
+    local key="$1" token sig bin vslot vurl="" vkey="" vmodel=""
     token=$(mercury_bridge_token) || return 1
-    sig=$(mercury_bridge_sig "$key")
+    vslot=$(mercury_vision_slot) || return 1
+    if [[ -n "$vslot" ]]; then
+        vurl=$(mercury_vision_base_url "$vslot")
+        vkey=$(provider_load_key "$vslot")
+        vmodel=$(mercury_vision_model "$vslot")
+    fi
+    sig=$(mercury_bridge_sig "$key" "${vslot}|${vurl}|${vmodel}|${vkey}")
     if mercury_bridge_pid >/dev/null; then
         if [[ "$(cat "${MERCURY_DIR}/bridge.sig" 2>/dev/null)" == "$sig" ]] &&
            mercury_bridge_wait_ready "$token"; then
@@ -1559,11 +1749,13 @@ mercury_bridge_start() {
     fi
     bin=$(mercury_venv_exe litellm) || return 1
     mercury_bridge_config > "${MERCURY_DIR}/litellm.yaml"
-    chmod 600 "${MERCURY_DIR}/litellm.yaml"
+    mercury_vision_hook > "${MERCURY_DIR}/mercury_vision.py"
+    chmod 600 "${MERCURY_DIR}/litellm.yaml" "${MERCURY_DIR}/mercury_vision.py"
     echo -e "${CYAN}Subindo a ponte do Mercury em $(mercury_bridge_url)...${RESET}"
     (
         cd "$MERCURY_DIR" || exit 1
         INCEPTION_API_KEY="$key" LITELLM_MASTER_KEY="$token" LITELLM_LOCAL_MODEL_COST_MAP=True \
+        MERCURY_VISION_URL="$vurl" MERCURY_VISION_KEY="$vkey" MERCURY_VISION_MODEL="$vmodel" \
             nohup "$bin" --config litellm.yaml --host 127.0.0.1 --port "$MERCURY_PORT" \
             > proxy.log 2>&1 < /dev/null &
         printf '%s\n' "$!" > bridge.pid
@@ -1575,6 +1767,11 @@ mercury_bridge_start() {
         return 1
     fi
     printf '%s\n' "$sig" > "${MERCURY_DIR}/bridge.sig"
+    if [[ -n "$vslot" ]]; then
+        echo -e "${DIM}Imagens: descritas por ${vmodel} (${vslot}) antes de ir para o Mercury.${RESET}"
+    else
+        echo -e "${DIM}Imagens: sem modelo de visão — viram aviso em texto (o Mercury não lê imagem).${RESET}"
+    fi
 }
 
 # Key da Inception: slot 'inception' do providers.conf → env INCEPTION_API_KEY.
@@ -1754,6 +1951,17 @@ mercury_bridge_status() {
     fi
 }
 
+# O Mercury não lê imagem: mostra quem descreve as imagens para ele.
+mercury_vision_status() {
+    local slot
+    slot=$(mercury_vision_slot 2>/dev/null) || { echo -e "${RED}AI_MERCURY_VISION inválido${RESET}"; return 0; }
+    if [[ -n "$slot" ]]; then
+        echo -e "descritas por $(mercury_vision_model "$slot") ${DIM}(${slot}; troque com AI_MERCURY_VISION)${RESET}"
+    else
+        echo -e "${YELLOW}sem modelo de visão${RESET} ${DIM}— viram aviso em texto${RESET}"
+    fi
+}
+
 mercury_menu_panel() {
     echo -e "${BOLD}${C_MERCURY}"
     echo "  ┌──────────────────────────────────────────────────┐"
@@ -1763,6 +1971,7 @@ mercury_menu_panel() {
     echo -e "  ${BOLD}Modelo:${RESET}   ${MERCURY_MODEL} ${DIM}(difusão · 1M de contexto · 131K de output · tools)${RESET}"
     echo -e "  ${BOLD}Caminho:${RESET}  ${DIM}Claude Code → ponte LiteLLM local → api.inceptionlabs.ai${RESET}"
     echo -e "  ${BOLD}Ponte:${RESET}    $(mercury_bridge_status)"
+    echo -e "  ${BOLD}Imagens:${RESET}  $(mercury_vision_status)"
     echo -e "  ${BOLD}Status:${RESET}   $(provider_cli_status_icon inception claude)"
     echo ""
     echo -e "  ${BOLD}Pela linha de comando:${RESET}"
@@ -6430,6 +6639,7 @@ CLIs de IA:
   longcat ping | key     Testa key/endpoint e lista modelos | salva a key
   mercury, merc          Abre Claude Code usando Mercury 3 (Inception, difusão, 1M)
   mercury ping|key|stop  Testa key+ponte | salva a key | derruba a ponte local
+                         (imagens: descritas por DeepSeek Flash; AI_MERCURY_VISION=off desliga)
   mint, macaron, venti   Abre Claude Code usando Macaron V1 (macaron-v1-coding-venti)
   mint-codex, mcx        Abre Codex usando Macaron V1 (provider responses)
   codex,  x              Abre Codex CLI (1M por padrão no provider oficial)
