@@ -51,12 +51,17 @@ assert_args '|' mcode
 assert_args '|' mmc
 assert_args '|' minimax
 
-# Com prompt: vira 'exec' e o --permission vem DEPOIS do subcomando.
-assert_args 'exec|--permission|full|refatora isso|' mcode "refatora isso"
-assert_args 'exec|--permission|full|refatora isso|' mmc "refatora isso"
+# Com prompt: vira 'exec' e o --permission vem DEPOIS do subcomando. O '--'
+# fecha as opções antes do prompt.
+assert_args 'exec|--permission|full|--|refatora isso|' mcode "refatora isso"
+assert_args 'exec|--permission|full|--|refatora isso|' mmc "refatora isso"
+
+# Prompt que começa com '-' não pode virar opção do commander ('unknown
+# option'): o mesmo bug que o devin_launch já documenta.
+assert_args 'exec|--permission|full|--|-x é texto, não flag|' mcode "-x é texto, não flag"
 
 # -m vira --model no exec (o exec não aceita -m).
-assert_args 'exec|--permission|full|--model|minimax/MiniMax-M3|tarefa|' \
+assert_args 'exec|--permission|full|--model|minimax/MiniMax-M3|--|tarefa|' \
     mcode -m minimax/MiniMax-M3 "tarefa"
 
 # Sem prompt, -m fica -m na TUI.
@@ -64,13 +69,14 @@ assert_args '-m|minimax/MiniMax-M3|' mcode -m minimax/MiniMax-M3
 
 # -c vira --continue (nome que os dois modos aceitam).
 assert_args '--continue|' mcode -c
-assert_args 'exec|--permission|full|--continue|segue|' mcode -c "segue"
+assert_args 'exec|--permission|full|--continue|--|segue|' mcode -c "segue"
 
 # Subcomandos passam verbatim: sem --permission e sem virar prompt.
 assert_args 'login|--region|global|' mcode login --region global
 assert_args 'provider|list|'         mcode provider list
 assert_args 'update|'                mcode update
 assert_args 'exec|review|'           mcode exec review
+assert_args 'app-server|'            mcode app-server
 
 # Flags informativas idem — 'ai mcode --version' não pode virar prompt.
 assert_args '--version|' mcode --version

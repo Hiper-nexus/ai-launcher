@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.65.0"
+AI_LAUNCHER_VERSION="1.65.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -3766,10 +3766,11 @@ mcode_launch() {
         cli_install_hint mcode
         exit 1
     fi
-    # Lista espelha o 'mcode --help' real (0.5.5). Flag informativa também
-    # passa verbatim — senão 'ai mcode --version' viraria prompt.
+    # Lista espelha o 'mcode --help' real (0.6.12 — o app-server é novo). Flag
+    # informativa também passa verbatim — senão 'ai mcode --version' viraria
+    # prompt.
     case "${1:-}" in
-        init|exec|acp|login|logout|update|provider|plugin|help| \
+        init|exec|acp|app-server|login|logout|update|provider|plugin|help| \
         -V|--version|-h|--help)
             exec mcode "$@"
             ;;
@@ -3801,7 +3802,9 @@ mcode_launch() {
         [[ -n "$model" ]] && flags+=(--model "$model")
         echo -e "${GREEN}Iniciando MiniMax Code:${RESET} mcode exec ${flags[*]+"${flags[*]}"} \"${prompt}\""
         echo ""
-        exec mcode exec ${flags[@]+"${flags[@]}"} ${extra[@]+"${extra[@]}"} "$prompt"
+        # '--' fecha as opções: prompt que começa com '-' não vira flag (o
+        # commander do mcode responde "unknown option" e não roda nada).
+        exec mcode exec ${flags[@]+"${flags[@]}"} ${extra[@]+"${extra[@]}"} -- "$prompt"
     else
         local -a tui=()
         [[ -n "$model" ]] && tui+=(-m "$model")
