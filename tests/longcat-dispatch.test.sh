@@ -2,7 +2,8 @@
 
 # ai longcat: Claude Code roteado pela LongCat API Platform (Meituan).
 #
-# Os pontos delicados, todos testados direto contra a API em 25/09/2026:
+# Os pontos delicados, todos testados direto contra a API em 25/09/2026 e
+# 02/11/2026 (quando o LongCat-2.5 saiu do Preview):
 #   - o endpoint Anthropic SÓ aceita a key como Bearer (ANTHROPIC_AUTH_TOKEN);
 #     via x-api-key (ANTHROPIC_API_KEY) volta 401 missing_api_key;
 #   - o id do modelo é case-sensitive (longcat-2.5-preview → 400);
@@ -73,23 +74,23 @@ env_is() {
 # Tudo que o destino 2.5 precisa ter, seja pela CLI ou pelo menu.
 assert_longcat_25() {
     env_is ANTHROPIC_BASE_URL             "https://api.longcat.ai/anthropic"
-    env_is ANTHROPIC_MODEL                "LongCat-2.5-Preview[1m]"
-    env_is ANTHROPIC_DEFAULT_SONNET_MODEL "LongCat-2.5-Preview[1m]"
-    env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "LongCat-2.5-Preview[1m]"
-    env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "LongCat-2.5-Preview[1m]"
-    env_is CLAUDE_CODE_SUBAGENT_MODEL     "LongCat-2.5-Preview[1m]"
+    env_is ANTHROPIC_MODEL                "LongCat-2.5[1m]"
+    env_is ANTHROPIC_DEFAULT_SONNET_MODEL "LongCat-2.5[1m]"
+    env_is ANTHROPIC_DEFAULT_OPUS_MODEL   "LongCat-2.5[1m]"
+    env_is ANTHROPIC_DEFAULT_HAIKU_MODEL  "LongCat-2.5[1m]"
+    env_is CLAUDE_CODE_SUBAGENT_MODEL     "LongCat-2.5[1m]"
     # O slot Fable deixa o 2.0 alcançável pelo /model sem sair da sessão.
     env_is ANTHROPIC_DEFAULT_FABLE_MODEL  "LongCat-2.0[1m]"
     env_is CLAUDE_CODE_AUTO_COMPACT_WINDOW "1000000"
-    # Teto de output da doc oficial (longcat.ai/platform/docs/claude-code).
-    env_is CLAUDE_CODE_MAX_OUTPUT_TOKENS  "131072"
+    # Teto real do 2.5: 262144 aceito, 300000 → 400 (testado em 02/11/2026).
+    env_is CLAUDE_CODE_MAX_OUTPUT_TOKENS  "262144"
     env_is CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC "1"
     # Bearer only: a key vai no AUTH_TOKEN e o API_KEY não pode sobrar.
     env_is ANTHROPIC_AUTH_TOKEN "ak_chave-de-teste"
     env_is ANTHROPIC_API_KEY    ""
 }
 
-echo "── 1. aliases da CLI levam ao LongCat 2.5 Preview"
+echo "── 1. aliases da CLI levam ao LongCat 2.5"
 for alias_cmd in longcat lc longcat-2.5 lc25; do
     # Um ANTHROPIC_API_KEY herdado do shell faria o client mandar x-api-key.
     ( export ANTHROPIC_API_KEY="sk-ant-herdada"; run_launcher "$alias_cmd" )
@@ -170,7 +171,7 @@ PY
 
 run_menu_pty "Escolha [1-38/0]" "6" "Escolha [1-4/0]" "1"
 assert_longcat_25
-ok "menu 6 → painel → 1 (2.5 Preview)"
+ok "menu 6 → painel → 1 (2.5)"
 
 run_menu_pty "Escolha [1-38/0]" "6" "Escolha [1-4/0]" "2"
 env_is ANTHROPIC_MODEL "LongCat-2.0[1m]"

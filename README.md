@@ -43,7 +43,7 @@ ai ds           # DeepSeek V4.1 Flash (GA, model ID: deepseek-flash) via Claude 
 ai ds-pro       # DeepSeek V4-Pro (GA) via Claude Code
 ai ds-v41       # DeepSeek V4.1 Flash — alias do ai ds
 ai step         # Step Plan step-5-preview (StepFun, janela de 1M) via Claude Code
-ai longcat      # LongCat-2.5-Preview (Meituan, janela de 1M) via Claude Code (alias: lc; menu: 6)
+ai longcat      # LongCat-2.5 (Meituan, janela de 1M) via Claude Code (alias: lc; menu: 6)
 ai lc2          # LongCat-2.0 em toda a sessão (alias: longcat-2)
 ai mercury      # Mercury 3 (Inception, difusão, janela de 1M) via Claude Code + ponte LiteLLM local (aliases: merc, inception; menu: 7)
 ai mint         # Macaron V1 (macaron-v1-coding-venti) via Claude Code (aliases: macaron, venti, mac, mv; menu: 5)
@@ -316,24 +316,24 @@ Modelos: `abliterated-model-large-v2` (GLM-5.3, default), `abliterated-model-lar
 
 ## LongCat (Meituan) — dentro do Claude Code
 
-`ai longcat` abre o Claude Code com a sessão inteira no **LongCat-2.5-Preview**, o modelo agêntico da Meituan (lançado em setembro de 2026), servido pela [LongCat API Platform](https://longcat.ai/platform/docs/) num endpoint Anthropic-compatible. Funciona igual ao `ai glm`: o Claude Code é só o harness (ferramentas, skills, MCP) e o raciocínio roda no LongCat. Janela de 1M, até 128K de output, raciocínio e tool use.
+`ai longcat` abre o Claude Code com a sessão inteira no **LongCat-2.5**, o modelo agêntico da Meituan (release geral de novembro de 2026, substituindo o 2.5-Preview de setembro), servido pela [LongCat API Platform](https://longcat.ai/platform/docs/) num endpoint Anthropic-compatible. Funciona igual ao `ai glm`: o Claude Code é só o harness (ferramentas, skills, MCP) e o raciocínio roda no LongCat. Janela de 1M, até 256K de output, raciocínio e tool use.
 
 ```bash
 ai longcat key               # salva a key ak_... (https://longcat.ai/platform/api_keys, 1x por máquina)
 ai longcat ping              # testa key e endpoint e lista os modelos da conta
-ai longcat                   # Claude Code no LongCat-2.5-Preview (alias: lc)
+ai longcat                   # Claude Code no LongCat-2.5 (alias: lc)
 ai longcat "explique o repo" # one-shot
 ai lc2                       # sessão inteira no LongCat-2.0
 ```
 
 No menu, a opção **6** (logo abaixo do Macaron, no grupo CLAUDE CODE) abre um painel com as duas variantes, o teste de conexão e a troca de key; digitar `longcat` no prompt do menu também funciona.
 
-Detalhes testados direto contra a API em 25/09/2026, e que o launcher já resolve:
+Detalhes testados direto contra a API em 25/09/2026 e 02/11/2026, e que o launcher já resolve:
 
 - a key só é aceita como `Authorization: Bearer` (`ANTHROPIC_AUTH_TOKEN`). Via `x-api-key` volta 401, então um `ANTHROPIC_API_KEY` herdado do shell é removido;
 - o sufixo `[1m]` é rejeitado no endpoint, mas o Claude Code o remove antes de chamar a API. Ele fica só no client, para o `/context` e o auto-compact enxergarem 1M em vez de ~200k;
-- o id do modelo diferencia maiúsculas de minúsculas (`LongCat-2.5-Preview`);
-- todos os slots (Sonnet, Opus, Haiku, subagentes) usam o 2.5. O slot Fable aponta para o 2.0, que fica disponível pelo `/model`. `CLAUDE_CODE_MAX_OUTPUT_TOKENS=131072` segue a doc oficial.
+- o id do modelo diferencia maiúsculas de minúsculas (`LongCat-2.5`);
+- todos os slots (Sonnet, Opus, Haiku, subagentes) usam o 2.5. O slot Fable aponta para o 2.0, que fica disponível pelo `/model`. `CLAUDE_CODE_MAX_OUTPUT_TOKENS=262144` é o teto real do 2.5 (300000 volta 400; o 2.0 fica em 131072).
 
 Ajustes: `AI_LONGCAT_MODEL`, `AI_LONGCAT_V2_MODEL`, `AI_LONGCAT_BASE_URL` (ex.: `https://api.longcat.chat/anthropic`, o domínio da China, que também responde). A key fica no `providers.conf` (chmod 600, slot `longcat`), fora do repositório.
 

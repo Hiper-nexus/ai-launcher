@@ -205,7 +205,7 @@ tail -1 "$BRIDGE_CAPTURE" | grep -q 'vmodel=deepseek-flash vurl=https://api.deep
     fail "DeepSeek Flash não virou o descritor: $(tail -1 "$BRIDGE_CAPTURE")"
 env_is ANTHROPIC_AUTH_TOKEN "$(head -1 "${MERCURY_HOME}/bridge.token")"
 ( export AI_MERCURY_VISION=longcat; run_launcher mercury )
-tail -1 "$BRIDGE_CAPTURE" | grep -q 'vmodel=LongCat-2.5-Preview vurl=https://api.longcat.ai/anthropic vkey=ak_lc-teste ' ||
+tail -1 "$BRIDGE_CAPTURE" | grep -q 'vmodel=LongCat-2.5 vurl=https://api.longcat.ai/anthropic vkey=ak_lc-teste ' ||
     fail "AI_MERCURY_VISION=longcat ignorado: $(tail -1 "$BRIDGE_CAPTURE")"
 ( export AI_MERCURY_VISION=off; run_launcher mercury )
 tail -1 "$BRIDGE_CAPTURE" | grep -q 'vmodel= vurl= vkey= ' || fail "AI_MERCURY_VISION=off não desligou o descritor"

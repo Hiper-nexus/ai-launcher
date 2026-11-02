@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.67.0"
+AI_LAUNCHER_VERSION="1.67.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -689,15 +689,16 @@ STEP_MODEL_LABEL="${STEP_MODEL%%\[*}"
 
 # LongCat (Meituan) — LongCat API Platform, endpoint Anthropic-compatible em
 # api.longcat.ai/anthropic (docs: longcat.ai/platform/docs/claude-code).
-# LongCat-2.5-Preview (lançado em 09/2026) e LongCat-2.0: 1M de contexto e
-# 128K de output nos dois, com raciocínio e tool use. Testado direto em
-# 25/09/2026: o endpoint SÓ aceita a key como Bearer (x-api-key → 401
-# missing_api_key), o id é case-sensitive, e o sufixo [1m] é rejeitado no
-# wire (400 Unsupported model) — mesmo caso do Step Plan: o sufixo só vive
-# no client, que faz o strip antes de chamar e passa a enxergar a janela de
-# 1M. Não há tier barato separado: a sessão toda roda no mesmo modelo, e o
-# slot Fable deixa o 2.0 à mão pelo /model.
-LONGCAT_MODEL="${AI_LONGCAT_MODEL:-LongCat-2.5-Preview[1m]}"
+# LongCat-2.5 (release geral de 11/2026; antes o 2.5-Preview de 09/2026) e
+# LongCat-2.0: 1M de contexto nos dois, com raciocínio e tool use. O 2.5 gera
+# até 262144 de output (testado em 02/11/2026: 262144 aceito, 300000 → 400),
+# o 2.0 fica em 131072. Testado direto em 25/09/2026: o endpoint SÓ aceita a
+# key como Bearer (x-api-key → 401 missing_api_key), o id é case-sensitive, e
+# o sufixo [1m] é rejeitado no wire (400 Unsupported model) — mesmo caso do
+# Step Plan: o sufixo só vive no client, que faz o strip antes de chamar e
+# passa a enxergar a janela de 1M. Não há tier barato separado: a sessão toda
+# roda no mesmo modelo, e o slot Fable deixa o 2.0 à mão pelo /model.
+LONGCAT_MODEL="${AI_LONGCAT_MODEL:-LongCat-2.5[1m]}"
 LONGCAT_V2_MODEL="${AI_LONGCAT_V2_MODEL:-LongCat-2.0[1m]}"
 LONGCAT_MODEL_LABEL="${LONGCAT_MODEL%%\[*}"
 LONGCAT_V2_MODEL_LABEL="${LONGCAT_V2_MODEL%%\[*}"
@@ -828,9 +829,10 @@ declare -A PROVIDER_EXTRA_ENV=(
     # de 1M via sufixo — o client faz o strip antes do wire), Haiku e
     # subagentes no step-3.7-flash (262k, com visão).
     [step]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 CLAUDE_CODE_SUBAGENT_MODEL=${STEP_FLASH_MODEL} ANTHROPIC_DEFAULT_HAIKU_MODEL=${STEP_FLASH_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${STEP_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${STEP_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=${STEP_MODEL}"
-    # LongCat: config da doc oficial (todos os slots no mesmo modelo, output
-    # de 131072) + auto-compact em 1M; Fable no 2.0 para trocar pelo /model.
-    [longcat]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 CLAUDE_CODE_MAX_OUTPUT_TOKENS=131072 CLAUDE_CODE_SUBAGENT_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_HAIKU_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=${LONGCAT_V2_MODEL}"
+    # LongCat: todos os slots no mesmo modelo (output de 262144, o teto que a
+    # API do 2.5 aceita — 300000 volta 400) + auto-compact em 1M; Fable no 2.0
+    # (131072 de saída) para trocar pelo /model.
+    [longcat]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 CLAUDE_CODE_MAX_OUTPUT_TOKENS=262144 CLAUDE_CODE_SUBAGENT_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_HAIKU_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=${LONGCAT_V2_MODEL}"
     [ollama]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [lmstudio]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
@@ -1332,7 +1334,7 @@ longcat_menu_panel() {
     echo "  │   🐱 LongCat (Meituan) — dentro do Claude Code   │"
     echo "  └──────────────────────────────────────────────────┘"
     echo -e "${RESET}"
-    echo -e "  ${BOLD}Modelo:${RESET}   ${LONGCAT_MODEL_LABEL} ${DIM}(1M de contexto · 128K de output · raciocínio + tools)${RESET}"
+    echo -e "  ${BOLD}Modelo:${RESET}   ${LONGCAT_MODEL_LABEL} ${DIM}(1M de contexto · 256K de output · raciocínio + tools)${RESET}"
     echo -e "  ${BOLD}Também:${RESET}   ${LONGCAT_V2_MODEL_LABEL} ${DIM}(no /model, slot Fable)${RESET}"
     echo -e "  ${BOLD}Endpoint:${RESET} ${DIM}$(longcat_base_url)${RESET}"
     echo -e "  ${BOLD}Status:${RESET}   $(provider_cli_status_icon longcat claude)"
@@ -6634,7 +6636,7 @@ CLIs de IA:
   deepseek-pro, ds-pro   Abre Claude Code usando DeepSeek V4-Pro
   deepseek-v41, ds-v41   Abre Claude Code usando DeepSeek V4.1 Flash (GA)
   step, sp, stepfun      Abre Claude Code usando Step Plan (step-5-preview 1M)
-  longcat, lc            Abre Claude Code usando LongCat-2.5-Preview (Meituan, 1M)
+  longcat, lc            Abre Claude Code usando LongCat-2.5 (Meituan, 1M)
   longcat-2, lc2         Abre Claude Code usando LongCat-2.0 (1M)
   longcat ping | key     Testa key/endpoint e lista modelos | salva a key
   mercury, merc          Abre Claude Code usando Mercury 3 (Inception, difusão, 1M)
@@ -6839,7 +6841,7 @@ Exemplos:
   ai ds-pro                       Claude via DeepSeek V4-Pro
   ai ds-v41                       Claude via DeepSeek V4.1 Flash (beta)
   ai step                         Claude via Step Plan step-5-preview (1M)
-  ai longcat                      Claude via LongCat-2.5-Preview (1M)
+  ai longcat                      Claude via LongCat-2.5 (1M)
   ai longcat ping                 Testa a key da LongCat e lista os modelos
   ai mercury                      Claude via Mercury 3 (ponte LiteLLM local, 1M)
   ai mercury ping                 Testa key, API e ponte do Mercury (texto + tool use)
