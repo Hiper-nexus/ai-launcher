@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.68.0"
+AI_LAUNCHER_VERSION="1.68.1"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -8702,6 +8702,8 @@ if [[ ! -t 0 ]]; then
     exit 1
 fi
 
+MENU_ROWS_WITH_FLAGS=78   # altura do menu completo, com a lista de flags
+
 while true; do
 preload_versions & disown 2>/dev/null || true   # background: 1ª renderização
                                                 # instantânea; disown evita SIGHUP
@@ -8822,24 +8824,30 @@ menu_tool 39 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
-printf "  %bFLAGS${RESET}\n" "$C_RULE"
-flag_row() { printf "  %b%-7s${RESET} ${DIM}%s${RESET}\n" "$1" "$2" "$3"; }
-flag_row "$C_CLAUDE" "Claude" "${CLAUDE_FLAGS[*]+"${CLAUDE_FLAGS[*]}"}"
-flag_row "$C_CODEX"  "Codex"  "${CODEX_FLAGS[*]+"${CODEX_FLAGS[*]}"}"
-flag_row "$C_GEMINI" "Gemini" "${GEMINI_FLAGS[*]+"${GEMINI_FLAGS[*]}"}"
-flag_row "$C_AGY"    "Agy"    "${AGY_FLAGS[*]+"${AGY_FLAGS[*]}"}"
-flag_row "$C_KIMI"   "Kimi"   "${KIMI_FLAGS[*]+"${KIMI_FLAGS[*]}"}"
-flag_row "$C_QWEN"   "Qwen"   "${QWEN_FLAGS[*]+"${QWEN_FLAGS[*]}"}"
-flag_row "$C_GROK"   "Grok"   "${GROK_FLAGS[*]+"${GROK_FLAGS[*]}"}"
-flag_row "$C_QODER"  "Qoder"  "${QODER_FLAGS[*]+"${QODER_FLAGS[*]}"}"
-flag_row "$C_CURSOR" "Cursor" "${CURSOR_FLAGS[*]+"${CURSOR_FLAGS[*]}"}"
-flag_row "$C_DEVIN"  "Devin"  "${DEVIN_FLAGS[*]+"${DEVIN_FLAGS[*]}"}"
-flag_row "$C_MUSE"   "Muse"   "${MUSE_CODE_FLAGS[*]+"${MUSE_CODE_FLAGS[*]}"}"
-flag_row "$C_OMP"    "omp"    "${OMP_FLAGS[*]+"${OMP_FLAGS[*]}"}"
-flag_row "$C_OPENCODE" "opencode" "${OPENCODE_FLAGS[*]+"${OPENCODE_FLAGS[*]}"}"
-flag_row "$C_MIMO"   "MiMo"   "${MIMO_FLAGS[*]+"${MIMO_FLAGS[*]}"}"
-flag_row "$C_MCODE"  "mcode"  "${MCODE_FLAGS[*]+"${MCODE_FLAGS[*]}"}"
-echo ""
+# A lista de flags ocupa 17 linhas e só entra quando o menu inteiro cabe: numa
+# janela de 57 linhas ela empurrava o grupo CLAUDE CODE para fora da tela. As
+# flags continuam disponíveis no Toggle Flags.
+menu_rows=$(stty size 2>/dev/null | cut -d' ' -f1) || true
+if (( ${menu_rows:-0} >= MENU_ROWS_WITH_FLAGS )); then
+    printf "  %bFLAGS${RESET}\n" "$C_RULE"
+    flag_row() { printf "  %b%-7s${RESET} ${DIM}%s${RESET}\n" "$1" "$2" "$3"; }
+    flag_row "$C_CLAUDE" "Claude" "${CLAUDE_FLAGS[*]+"${CLAUDE_FLAGS[*]}"}"
+    flag_row "$C_CODEX"  "Codex"  "${CODEX_FLAGS[*]+"${CODEX_FLAGS[*]}"}"
+    flag_row "$C_GEMINI" "Gemini" "${GEMINI_FLAGS[*]+"${GEMINI_FLAGS[*]}"}"
+    flag_row "$C_AGY"    "Agy"    "${AGY_FLAGS[*]+"${AGY_FLAGS[*]}"}"
+    flag_row "$C_KIMI"   "Kimi"   "${KIMI_FLAGS[*]+"${KIMI_FLAGS[*]}"}"
+    flag_row "$C_QWEN"   "Qwen"   "${QWEN_FLAGS[*]+"${QWEN_FLAGS[*]}"}"
+    flag_row "$C_GROK"   "Grok"   "${GROK_FLAGS[*]+"${GROK_FLAGS[*]}"}"
+    flag_row "$C_QODER"  "Qoder"  "${QODER_FLAGS[*]+"${QODER_FLAGS[*]}"}"
+    flag_row "$C_CURSOR" "Cursor" "${CURSOR_FLAGS[*]+"${CURSOR_FLAGS[*]}"}"
+    flag_row "$C_DEVIN"  "Devin"  "${DEVIN_FLAGS[*]+"${DEVIN_FLAGS[*]}"}"
+    flag_row "$C_MUSE"   "Muse"   "${MUSE_CODE_FLAGS[*]+"${MUSE_CODE_FLAGS[*]}"}"
+    flag_row "$C_OMP"    "omp"    "${OMP_FLAGS[*]+"${OMP_FLAGS[*]}"}"
+    flag_row "$C_OPENCODE" "opencode" "${OPENCODE_FLAGS[*]+"${OPENCODE_FLAGS[*]}"}"
+    flag_row "$C_MIMO"   "MiMo"   "${MIMO_FLAGS[*]+"${MIMO_FLAGS[*]}"}"
+    flag_row "$C_MCODE"  "mcode"  "${MCODE_FLAGS[*]+"${MCODE_FLAGS[*]}"}"
+    echo ""
+fi
 
 show_last_used
 echo ""
