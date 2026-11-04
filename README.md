@@ -46,6 +46,7 @@ ai step         # Step Plan step-5-preview (StepFun, janela de 1M) via Claude Co
 ai longcat      # LongCat-2.5 (Meituan, janela de 1M) via Claude Code (alias: lc; menu: 6)
 ai lc2          # LongCat-2.0 em toda a sessão (alias: longcat-2)
 ai mercury      # Mercury 3 (Inception, difusão, janela de 1M) via Claude Code + ponte LiteLLM local (aliases: merc, inception; menu: 7)
+ai hy4          # Hy4 (Tencent Hunyuan, janela de 1M, com visão) via Claude Code (aliases: hy, hunyuan, tencent; menu: 8)
 ai mint         # Macaron V1 (macaron-v1-coding-venti) via Claude Code (aliases: macaron, venti, mac, mv; menu: 5)
 ai mint-codex   # Codex via Macaron V1 (provider responses; alias: mcx)
 ai x            # Codex direto (1M por padrão no provider oficial)
@@ -69,7 +70,7 @@ ai omp models   # Providers/modelos que o omp enxerga hoje
 ai mi           # MiMoCode (Xiaomi MiMo) — CLI própria, não é o Claude
 ai mi "prompt"  # MiMoCode one-shot via 'mimo run'
 ai mi -m xiaomi/mimo-v2.6-pro   # série V2.6 (1M de contexto)
-ai mcode        # MiniMax Code — CLI própria da MiniMax (aliases: mmc, minimax; menu: 21)
+ai mcode        # MiniMax Code — CLI própria da MiniMax (aliases: mmc, minimax; menu: 22)
 ai mcode "prompt"  # MiniMax Code one-shot via 'mcode exec --permission full'
 ai ol           # Ollama Cloud (roda em ollama.com, não na sua máquina)
 ai ab           # GLM-5.3 sem censura (Abliteration.ai) — chat ou one-shot
@@ -95,6 +96,7 @@ ai --help       # Ajuda
 | Sakana Fugu | `ai fugu`, `ai fugu-ultra`, `ai fugu-max`, `ai fugu-ultra-v1.x`, `ai claude-fugu` | Ultra V2.0 por padrão no perfil Codex `fugu` ou no endpoint Anthropic-compatible |
 | Macaron V1 (Mind Lab) | `ai mint`, `ai macaron`, `ai venti`, `ai mint-codex` (menu: 5) | Modelo **hospedado** (não é CLI de agente) — roda dentro do Claude Code (`ANTHROPIC_BASE_URL=https://mint.macaron.im`) ou do Codex (`wire_api=responses`). Default `macaron-v1-coding-venti`; troque com `AI_MACARON_MODEL=`. Key: `ai p add macaron` |
 | Inception Mercury | `ai mercury`, `ai merc`, `ai inception` (menu: 7) | Modelo **hospedado** de difusão, sem CLI própria e sem endpoint Anthropic — roda no Claude Code por uma ponte LiteLLM local (`127.0.0.1:4417`, token próprio). Key: `ai mercury key` |
+| Tencent Hy4 | `ai hy4`, `ai hy`, `ai hunyuan`, `ai tencent` (menu: 8) | Modelo **hospedado** da Tencent Hunyuan, com endpoint Anthropic no Token Plan internacional: roda direto no Claude Code, sem ponte. Key: `pbpaste \| ai hy4 key` |
 | Gemini | `ai g` | `--yolo` |
 | Kimi Code | `ai k` | `--auto` (never-ask; o `--yolo` do kimi ainda pede yes em ação arriscada/plano) |
 | Grok (xAI) | `ai gr` | `--always-approve --permission-mode bypassPermissions` |
@@ -102,7 +104,7 @@ ai --help       # Ajuda
 | Cursor Agent | `ai cu` | `--yolo --sandbox disabled --approve-mcps --trust` |
 | omp (oh-my-pi) | `ai omp`, `ai o` | `--yolo` — agente único com 60+ providers; `-m` troca de modelo |
 | MiMoCode (Xiaomi MiMo) | `ai mi`, `ai mimo` | CLI **própria** (binário `mimo`, fork do OpenCode) — não é o Claude com outro modelo. `--dangerously-skip-permissions`; one-shot via `mimo run`; modelos V2.6 (pro / ultraspeed / flash) e V2.5 |
-| MiniMax Code | `ai mcode`, `ai mmc`, `ai minimax` (menu: 21) | CLI **própria** da MiniMax (binário `mcode`, open-source) — não é o Claude com o MiniMax-M3. TUI sem flag de yolo; one-shot via `mcode exec --permission full` |
+| MiniMax Code | `ai mcode`, `ai mmc`, `ai minimax` (menu: 22) | CLI **própria** da MiniMax (binário `mcode`, open-source) — não é o Claude com o MiniMax-M3. TUI sem flag de yolo; one-shot via `mcode exec --permission full` |
 | Antigravity | `ai a` | _(nenhuma)_ |
 | Ollama Cloud | `ai ol` | roda em `ollama.com`, modelo `minimax-m3` |
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
@@ -369,6 +371,33 @@ No menu, a opção **7** (logo abaixo do LongCat, no grupo CLAUDE CODE) abre um 
 
 Ajustes: `AI_MERCURY_EFFORT` (`instant`/`low`/`medium`/`high`; o default do Mercury 3 é `low`), `AI_MERCURY_VISION`, `AI_MERCURY_PORT`, `AI_MERCURY_MODEL`. Log da ponte em `~/.local/share/ai-launcher/mercury/proxy.log`. A key fica no `providers.conf` (chmod 600, slot `inception`) ou em `INCEPTION_API_KEY`, fora do repositório.
 
+## Tencent Hy4 — dentro do Claude Code
+
+`ai hy4` abre o Claude Code com a sessão inteira no **Hy4**, o modelo da Tencent Hunyuan lançado em 04/11/2026 (sucessor do `hy4-preview`), servido pelo Token Plan internacional da [TokenHub](https://www.tencentcloud.com/document/product/1300). Funciona igual ao `ai glm`: o Claude Code é só o harness (ferramentas, skills, MCP) e o raciocínio roda no Hy4. Janela de 1M, input de até 960K, 64K de output, raciocínio, tool use e visão.
+
+```bash
+pbpaste | ai hy4 key      # salva a key sk-tp-... copiada (1x por máquina; assim ela não aparece no ps)
+ai hy4 ping               # testa key e endpoint com uma chamada real
+ai hy4                    # Claude Code no Hy4 (aliases: hy, hunyuan, tencent)
+ai hy4 "explique o repo"  # one-shot
+```
+
+No menu, a opção **8** (logo abaixo do Mercury, no grupo CLAUDE CODE) abre um painel com o lançamento, o teste de conexão e a troca de key; digitar `hy4` no prompt do menu também funciona.
+
+Detalhes testados direto contra a API em 04/11/2026, e que o launcher já resolve:
+
+- a key `sk-tp-...` do Token Plan só faz inferência no caminho `/plan` do host internacional (`tokenhub-intl.tencentcloudmaas.com`). No `/v1/messages` comum das três regiões, e no Token Plan da China (`api.lkeap.cloud.tencent.com`), ela volta 401;
+- o sufixo `[1m]` é recusado no endpoint (403), mas o Claude Code o remove antes de chamar a API. Ele fica só no client, para o `/context` e o auto-compact enxergarem 1M em vez de ~200k;
+- o auto-compact fica em 960000, o input máximo da doc: compactar em 1M estouraria o limite da API;
+- `CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000` é o teto da doc. A API aceitou `max_tokens` de até 128000 sem erro, mas isso não é contrato;
+- `/v1/models` e `count_tokens` dão 404 em `/plan`, por isso o `ai hy4 ping` faz uma chamada real em vez de listar modelos;
+- o launcher **não** define `ENABLE_TOOL_SEARCH=false`, ao contrário do que a doc da Tencent pede. O endpoint aceita o carregamento sob demanda das ferramentas, e o `false` manda todas elas em cada pedido: na mesma tarefa, o input sem cache foi de 224K para 47K tokens, o que pesa na cota do plano;
+- o aviso `[claude-code:unrecognized_model]` é esperado com modelo que não é Claude; as chamadas vão para o Hy4 normalmente.
+
+Conferido com o Claude Code de verdade: `Read`, `Write`, `Bash`, subagente, leitura de imagem pelo `Read` e ferramenta MCP carregada pelo `ToolSearch`.
+
+Ajustes: `AI_HY4_MODEL` (ex.: `hy4-preview[1m]`, que a key do plano também acessa) e `AI_HY4_BASE_URL` (a doc da Tencent indica `https://tokenhub-intl.tencentcloudmaas.com` para key comum da TokenHub, sem `sk-tp-`). A key fica no `providers.conf` (chmod 600, slot `hy4`), fora do repositório.
+
 ## Qwen (Alibaba Model Studio — duas opções)
 
 O Qwen-Max direto pela API da Alibaba (não é o Qoder). Requer uma key do [Model Studio](https://modelstudio.console.alibabacloud.com) — salve com `ai qw key`. Duas formas de usar o mesmo modelo:
@@ -455,7 +484,7 @@ Instalação: `npm install -g @mimo-ai/cli` (binário `mimo`; se o npm bloquear 
 
 ## MiniMax Code (CLI própria da MiniMax)
 
-O MiniMax Code é o agente de terminal **próprio** da MiniMax (binário `mcode`, pacote `@minimax-ai/code`, MIT, open-source desde 09/2026). Assim como o MiMo, **não é o Claude Code com outro modelo**: agente, tools e TUI são dele. Fica no menu **21**, logo abaixo do MiMo Code.
+O MiniMax Code é o agente de terminal **próprio** da MiniMax (binário `mcode`, pacote `@minimax-ai/code`, MIT, open-source desde 09/2026). Assim como o MiMo, **não é o Claude Code com outro modelo**: agente, tools e TUI são dele. Fica no menu **22**, logo abaixo do MiMo Code.
 
 ```bash
 ai mcode                          # TUI do MiniMax Code
@@ -466,10 +495,10 @@ ai mcode login --region global    # login na conta MiniMax (Token Plan)
 ai mcode provider set-minimax-key # ou use uma API key da MiniMax
 ai mcode exec review              # review das mudanças locais
 ai mcode update                   # atualiza o mcode
-ai mcode menu                     # painel (o mesmo do item 21 do menu)
+ai mcode menu                     # painel (o mesmo do item 22 do menu)
 ```
 
-**Painel (menu 21):** abrir a TUI, continuar a última sessão, tarefa única, review das mudanças locais, login, salvar API key, listar providers e atualizar o `mcode` — sem decorar subcomando.
+**Painel (menu 22):** abrir a TUI, continuar a última sessão, tarefa única, review das mudanças locais, login, salvar API key, listar providers e atualizar o `mcode` — sem decorar subcomando.
 
 **Permissões:** a TUI não tem flag de yolo — a política se escolhe lá dentro. O `--permission smart|full|off` só existe no `exec`, então as `MCODE_FLAGS` (default `--permission full`) valem apenas pro one-shot. Subcomandos (`init`, `exec`, `acp`, `login`, `logout`, `update`, `provider`, `plugin`) e flags informativas passam **verbatim**.
 
@@ -646,7 +675,7 @@ ai conta status          # uso de cada conta (janela 5h / 7 dias) + horário de 
 ai conta use pessoal     # ativa a conta "pessoal" na hora
 ai conta rm backup       # remove um backup salvo
 ai c --conta trabalho    # troca de conta e já lança o Claude
-ai conta                 # menu interativo (também é a opção 38 do menu principal)
+ai conta                 # menu interativo (também é a opção 39 do menu principal)
 ```
 
 **Auto-switch**: com 2+ contas salvas, `ai c` verifica a janela de 5h antes de lançar — se a conta ativa esgotou, troca automaticamente para outra com quota (fail-open: problema de rede nunca bloqueia o launch). Desligar: `AI_CONTA_AUTO_SWITCH=false`. Trocar mais cedo: `AI_CONTA_AUTO_THRESHOLD=95`.
@@ -860,7 +889,7 @@ independente. E numa página lenta (Wikipedia, por exemplo) a recuperação de
 - Passagem de prompt direto via linha de comando
 - Flags configuráveis no topo do script
 - Contas Claude múltiplas com troca sem logout (Keychain, macOS)
-- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Step Plan/StepFun, LongCat/Meituan, Inception Mercury, Ollama, LM Studio, LiteLLM)
+- Providers alternativos (GLM/Z.ai, Muse Spark, Sakana Fugu, OpenRouter, DeepSeek, Step Plan/StepFun, LongCat/Meituan, Inception Mercury, Tencent Hy4, Ollama, LM Studio, LiteLLM)
 - Roteamento por linguagem natural via Jev/TypeSafe (`ai ask`)
 - Picker de repos conhecidos quando lançado fora de um repo git
 - Funciona em Linux e no macOS padrão

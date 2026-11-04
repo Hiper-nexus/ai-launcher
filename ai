@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.67.1"
+AI_LAUNCHER_VERSION="1.68.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -133,7 +133,7 @@ AB_MODEL="${AI_AB_MODEL:-abliterated-model-large-v2}"
 
 # ── Muse Spark (Meta AI) ─────────────────────────────────
 # API compatível com a Messages API da Anthropic (POST /v1/messages, SSE).
-# Dois caminhos: CLI própria (ai ms / menu 29), falando direto com a API, e
+# Dois caminhos: CLI própria (ai ms / menu 30), falando direto com a API, e
 # dentro do Claude Code (ai ms claude / menu 3), via ANTHROPIC_BASE_URL.
 # É um modelo com raciocínio: parte dos tokens de saída vai para blocos
 # thinking/redacted_thinking, por isso o teto de tokens é alto por padrão —
@@ -703,6 +703,16 @@ LONGCAT_V2_MODEL="${AI_LONGCAT_V2_MODEL:-LongCat-2.0[1m]}"
 LONGCAT_MODEL_LABEL="${LONGCAT_MODEL%%\[*}"
 LONGCAT_V2_MODEL_LABEL="${LONGCAT_V2_MODEL%%\[*}"
 
+# Tencent Hy4 — modelo agêntico da Tencent Hunyuan (release geral de 04/11/2026,
+# sucessor do hy4-preview): 1M de contexto, 960K de input, 64K de output, com
+# raciocínio, tools e visão. Roda direto no Claude Code pelo Token Plan
+# internacional: a key sk-tp-... só vale no caminho /plan desse host (testado em
+# 04/11/2026; na TokenHub comum e no host da China ela volta 401). O sufixo [1m]
+# só existe no client: o Claude Code faz o strip antes da chamada, e a API recusa
+# hy4[1m] com 403.
+HY4_MODEL="${AI_HY4_MODEL:-hy4[1m]}"
+HY4_MODEL_LABEL="${HY4_MODEL%%\[*}"
+
 # Inception Mercury — modelo de DIFUSÃO hospedado (docs.inceptionlabs.ai).
 # Não tem CLI de código própria e a API é só OpenAI /v1/chat/completions:
 # testado em 19/10/2026, /v1/messages e /v1/responses dão 404. O Codex
@@ -788,6 +798,7 @@ declare -A PROVIDER_URLS=(
     [deepseek]="https://api.deepseek.com/anthropic"
     [step]="https://api.stepfun.ai/step_plan"
     [longcat]="https://api.longcat.ai/anthropic"
+    [hy4]="https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic"
     [ollama]="http://localhost:11434"
     [lmstudio]="http://localhost:1234"
     [litellm]="http://localhost:4000"
@@ -804,6 +815,7 @@ declare -A PROVIDER_MODELS=(
     [deepseek]="deepseek-flash"
     [step]="${STEP_MODEL}"
     [longcat]="${LONGCAT_MODEL}"
+    [hy4]="${HY4_MODEL}"
     [ollama]="qwen2.5-coder:32b"
     [lmstudio]="loaded-model"
     [litellm]="gpt-4o"
@@ -833,6 +845,13 @@ declare -A PROVIDER_EXTRA_ENV=(
     # API do 2.5 aceita — 300000 volta 400) + auto-compact em 1M; Fable no 2.0
     # (131072 de saída) para trocar pelo /model.
     [longcat]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 CLAUDE_CODE_MAX_OUTPUT_TOKENS=262144 CLAUDE_CODE_SUBAGENT_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_HAIKU_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${LONGCAT_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=${LONGCAT_V2_MODEL}"
+    # Hy4: todos os slots no mesmo modelo. Auto-compact em 960000, o input
+    # máximo da doc (compactar em 1M estouraria), e output em 64000, o teto
+    # documentado: a API deixa passar mais, mas isso não é contrato.
+    # ENABLE_TOOL_SEARCH fica de fora de propósito: a doc da Tencent pede false,
+    # mas o endpoint aceita o fluxo adiado (testado em 04/11/2026) e o false
+    # manda todas as ferramentas em cada pedido, ~5x mais input.
+    [hy4]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=960000 CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 CLAUDE_CODE_SUBAGENT_MODEL=${HY4_MODEL} ANTHROPIC_DEFAULT_HAIKU_MODEL=${HY4_MODEL} ANTHROPIC_DEFAULT_SONNET_MODEL=${HY4_MODEL} ANTHROPIC_DEFAULT_OPUS_MODEL=${HY4_MODEL} ANTHROPIC_DEFAULT_FABLE_MODEL=${HY4_MODEL}"
     [ollama]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [lmstudio]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 API_TIMEOUT_MS=600000"
     [litellm]="CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
@@ -1356,6 +1375,119 @@ longcat_menu_panel() {
         2) longcat_launch 2.0 ;;
         3) longcat_ping ;;
         4) longcat_save_key ;;
+        0) return 0 ;;
+        *) echo "Opção inválida."; return 1 ;;
+    esac
+}
+
+# ── Tencent Hy4 — dentro do Claude Code ──────────────────
+hy4_base_url() {
+    local url="${AI_HY4_BASE_URL:-}"
+    [[ -z "$url" ]] && url=$(provider_load_key hy4-base-url 2>/dev/null || true)
+    printf '%s' "${url:-${PROVIDER_URLS[hy4]}}"
+}
+
+# Aceita a key por argumento, stdin ou prompt. O stdin é o caminho que não deixa
+# a key visível no ps: pbpaste | ai hy4 key
+hy4_save_key() {
+    local key="${1:-}"
+    if [[ -z "$key" ]]; then
+        if [[ -t 0 ]]; then
+            read -rsp "$(echo -e "  ${BOLD}API key do Token Plan da Tencent (sk-tp-...):${RESET} ")" key || true
+            echo ""
+        else
+            IFS= read -r key || true
+        fi
+    fi
+    key="${key//[[:space:]]/}"
+    [[ -z "$key" ]] && { echo -e "${RED}Erro: key vazia.${RESET}" >&2; return 1; }
+    provider_save_key hy4 "$key" || return 1
+    echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+}
+
+# Confere key e endpoint sem abrir o Claude. /v1/models e count_tokens dão 404
+# em /plan, então a prova é uma chamada real no /v1/messages: mesmo caminho e
+# mesmo header do Claude Code, com o modelo sem o sufixo [1m]. A key vai por
+# env, não por argv.
+hy4_ping() {
+    local key; key=$(provider_load_key hy4) || true
+    if [[ -z "$key" ]]; then
+        echo -e "${RED}Erro: nenhuma API key do Hy4.${RESET}" >&2
+        echo "  Pegue em: https://console.tencentcloud.com/tokenhub" >&2
+        echo "  Depois:   ai hy4 key" >&2
+        return 1
+    fi
+    require_python || return 1
+    echo -e "${BOLD}Hy4 — testando $(hy4_base_url)${RESET}"
+    HY4_KEY="$key" HY4_BASE="$(hy4_base_url)" HY4_PING_MODEL="$HY4_MODEL_LABEL" python3 - <<'PY_HY4'
+import json, os, sys, time, urllib.error, urllib.request
+key, base, model = os.environ["HY4_KEY"], os.environ["HY4_BASE"].rstrip("/"), os.environ["HY4_PING_MODEL"]
+req = urllib.request.Request(
+    base + "/v1/messages",
+    data=json.dumps({"model": model, "max_tokens": 1024,
+                     "messages": [{"role": "user", "content": "Responda só: pong"}]}).encode(),
+    headers={"Authorization": "Bearer " + key, "Content-Type": "application/json",
+             "anthropic-version": "2023-06-01", "User-Agent": "ai-launcher"})
+t0 = time.time()
+try:
+    with urllib.request.urlopen(req, timeout=90) as r:
+        d = json.load(r)
+except urllib.error.HTTPError as e:
+    print(f"  erro HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
+    if e.code == 401:
+        print("  Key sk-tp-... só vale em /plan, na região internacional. Key comum da TokenHub:")
+        print("  AI_HY4_BASE_URL=https://tokenhub-intl.tencentcloudmaas.com ai hy4")
+    sys.exit(1)
+except Exception as e:
+    print("  erro:", str(e)[:160])
+    sys.exit(1)
+txt = "".join(c.get("text", "") for c in d.get("content", []) if c.get("type") == "text").strip()
+print(f"  /v1/messages ({model}): OK em {time.time() - t0:.1f}s → {txt[:60] or '(só raciocínio)'}")
+PY_HY4
+}
+
+# Abre o Claude Code no Hy4; os argumentos vão para o Claude.
+hy4_launch() {
+    provider_setup_env "hy4" || return 1
+    enter_repo_if_needed
+    launch "Hy4 (Tencent)" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS "$@"
+}
+
+# Entrada da CLI: subcomandos (key/ping/menu) ou lançamento com flags e prompt.
+hy4_dispatch() {
+    case "${1:-}" in
+        key)       shift; hy4_save_key "${1:-}"; return $? ;;
+        ping|test) hy4_ping; return $? ;;
+        menu)      hy4_menu_panel; return $? ;;
+    esac
+    parse_global_flags "$@"
+    set -- "${_REMAINING_ARGS[@]+"${_REMAINING_ARGS[@]}"}"
+    hy4_launch "$@"
+}
+
+hy4_menu_panel() {
+    echo -e "${BOLD}${C_HY4}"
+    echo "  ┌──────────────────────────────────────────────────┐"
+    echo "  │   🐧 Hy4 (Tencent) — dentro do Claude Code       │"
+    echo "  └──────────────────────────────────────────────────┘"
+    echo -e "${RESET}"
+    echo -e "  ${BOLD}Modelo:${RESET}   ${HY4_MODEL_LABEL} ${DIM}(1M de contexto · 64K de output · raciocínio + tools + visão)${RESET}"
+    echo -e "  ${BOLD}Endpoint:${RESET} ${DIM}$(hy4_base_url)${RESET}"
+    echo -e "  ${BOLD}Status:${RESET}   $(provider_cli_status_icon hy4 claude)"
+    echo ""
+    echo -e "    ${GREEN}ai hy4${RESET}                   Claude Code no ${HY4_MODEL_LABEL} (aliases: hy, hunyuan, tencent)"
+    echo -e "    ${GREEN}ai hy4${RESET} \"tarefa\"          resposta única (one-shot)"
+    echo -e "    ${GREEN}ai hy4 ping${RESET}              testa key e endpoint com uma chamada real"
+    echo -e "    ${GREEN}pbpaste | ai hy4 key${RESET}     salva ou troca a key (1x por Mac)"
+    echo ""
+    echo -e "  ${BOLD}1)${RESET} Claude + ${HY4_MODEL_LABEL}    ${BOLD}2)${RESET} Testar conexão    ${BOLD}3)${RESET} Trocar key    ${BOLD}0)${RESET} Voltar"
+    local opt
+    read -rp "  Escolha [1-3/0] (default 1): " opt || true
+    opt=$(normalize_choice "$opt")
+    case "${opt:-1}" in
+        1) hy4_launch ;;
+        2) hy4_ping ;;
+        3) hy4_save_key ;;
         0) return 0 ;;
         *) echo "Opção inválida."; return 1 ;;
     esac
@@ -4068,6 +4200,7 @@ C_FL=$(_fg      132 204  22 148 32)  # lima Featherless
 C_STEP=$(_fg      0 191 165  79 36)  # turquesa StepFun (Step Plan)
 C_LONGCAT=$(_fg 255 170   0 214 33)  # laranja LongCat (Meituan)
 C_MERCURY=$(_fg  44 154 242  33 34)  # azul Inception (Mercury)
+C_HY4=$(_fg      93 135 255  69 34)  # azul Tencent (Hy4)
 C_AB=$(_fg      239  68  68 196 31)  # vermelho Abliteration (sem censura)
 C_SEC=$(_fg     244  63  94 203 31)  # vermelho segurança
 C_TOOL=$(_fg    250 204  21 220 33)  # âmbar ferramentas
@@ -4486,7 +4619,7 @@ mcode_launch() {
     fi
 }
 
-# Painel do menu (item 21 / 'ai mcode menu'): atalhos pro que se usa no dia a
+# Painel do menu (item 22 / 'ai mcode menu'): atalhos pro que se usa no dia a
 # dia — TUI, continuar, one-shot, review, login/key e update — sem decorar
 # subcomando. Cada opção cai no mcode_launch, então o dispatch é o mesmo da
 # linha de comando (o teste de dispatch cobre os dois caminhos).
@@ -6642,6 +6775,8 @@ CLIs de IA:
   mercury, merc          Abre Claude Code usando Mercury 3 (Inception, difusão, 1M)
   mercury ping|key|stop  Testa key+ponte | salva a key | derruba a ponte local
                          (imagens: descritas por DeepSeek Flash; AI_MERCURY_VISION=off desliga)
+  hy4, hy, hunyuan       Abre Claude Code usando Hy4 (Tencent, 1M, com visão; alias: tencent)
+  hy4 ping | key         Testa key/endpoint | salva a key (pbpaste | ai hy4 key)
   mint, macaron, venti   Abre Claude Code usando Macaron V1 (macaron-v1-coding-venti)
   mint-codex, mcx        Abre Codex usando Macaron V1 (provider responses)
   codex,  x              Abre Codex CLI (1M por padrão no provider oficial)
@@ -6673,7 +6808,7 @@ CLIs de IA:
   mcode provider           Providers / API key (set-minimax-key)
   mcode -m <provider/model> Escolhe o modelo da sessão
   mcode -c                 Continua a última sessão do workspace
-  mcode menu               Painel do MiniMax Code (o mesmo do item 21)
+  mcode menu               Painel do MiniMax Code (o mesmo do item 22)
 
   --via <provider>       Usa provider alternativo (ex: glm no Claude, sakana no Codex)
 
@@ -7375,6 +7510,7 @@ JEV_ROUTE_CRITERIA='{
   "step":         "Tarefa em que o usuário citou StepFun, Step Plan, ou step-5-preview.",
   "longcat":      "Tarefa em que o usuário citou LongCat, Meituan, ou LongCat-2.5 / LongCat-2.0. Modelo hospedado rodando dentro do Claude Code.",
   "mercury":      "Tarefa em que o usuário citou Mercury, Inception, Inception Labs, modelo de difusão, ou mercury-3. Modelo hospedado rodando dentro do Claude Code.",
+  "hy4":          "Tarefa em que o usuário citou Hy4, Hunyuan, Tencent, ou tencent/hy4. Modelo hospedado rodando dentro do Claude Code, com visão e janela de 1M.",
   "mint":         "Tarefa em que o usuário citou Macaron, Mint, Mint Recursive, Mind Lab, ou macaron-v1 (venti/grande/tall). Modelo hospedado rodando dentro do Claude Code. Não confundir com MiMo/mimo.",
   "codex":        "Tarefa em que o usuário citou Codex, GPT, OpenAI, ou pediu explicitamente o Codex (janela padrão). Se ele precisa de contexto gigante no Codex, prefira `sol`.",
   "sol":          "Codex com janela de 1M de contexto: tarefa longa demais para o Codex padrão, varredura de repositório inteiro, ou quando o usuário citou Sol, x-1m, ou pediu 1M de contexto no Codex.",
@@ -7908,6 +8044,10 @@ elif [[ ${1:-} == "longcat" || ${1:-} == "lc" || ${1:-} == "longcat-2.5" || ${1:
 elif [[ ${1:-} == "mercury" || ${1:-} == "merc" || ${1:-} == "inception" || ${1:-} == "mercury-3" ]]; then
     shift
     mercury_dispatch "$@"
+    exit $?
+elif [[ ${1:-} == "hy4" || ${1:-} == "hy" || ${1:-} == "hunyuan" || ${1:-} == "tencent" ]]; then
+    shift
+    hy4_dispatch "$@"
     exit $?
 elif [[ ${1:-} == "mint-codex" || ${1:-} == "macaron-codex" || ${1:-} == "mcx" ]]; then
     shift
@@ -8576,6 +8716,7 @@ macaron_status=$(provider_cli_status_icon macaron claude)
 step_status=$(provider_cli_status_icon step claude)
 longcat_status=$(provider_cli_status_icon longcat claude)
 mercury_status=$(provider_cli_status_icon inception claude)
+hy4_status=$(provider_cli_status_icon hy4 claude)
 sakana_status=$(provider_cli_status_icon sakana codex)
 codex_status=$(status_icon codex)
 gemini_status=$(status_icon gemini)
@@ -8638,45 +8779,46 @@ menu_row  4 "$C_DEEPSEEK" "DeepSeek V4.1" "${deepseek_ver}"      "${deepseek_sta
 menu_row  5 "$C_MACARON"  "Macaron Venti" "${macaron_ver}"      "${macaron_status}"
 menu_row  6 "$C_LONGCAT"  "LongCat"      "${LONGCAT_MODEL_LABEL#LongCat-}" "${longcat_status}"
 menu_row  7 "$C_MERCURY"  "Mercury"      "${MERCURY_MODEL#mercury-}" "${mercury_status}"
+menu_row  8 "$C_HY4"      "Hy4 Tencent"  "${HY4_MODEL_LABEL}"  "${hy4_status}"
 
 menu_group "CODEX"
-menu_row  8 "$C_CODEX"    "Codex"        "${codex_ver}"         "${codex_status}"
-menu_row  9 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"
+menu_row  9 "$C_CODEX"    "Codex"        "${codex_ver}"         "${codex_status}"
+menu_row 10 "$C_SAKANA"   "Sakana Fugu"  "${sakana_ver}"        "${sakana_status}"
 
 menu_group "OUTRAS CLIs"
-menu_row 10 "$C_GEMINI"   "Gemini"       "${gemini_ver}"        "${gemini_status}"
-menu_row 11 "$C_KIMI"     "Kimi Code"    "${kimi_ver}"          "${kimi_status}"
-menu_row 12 "$C_GROK"     "Grok (xAI)"   "${grok_ver}"          "${grok_status}"
-menu_row 13 "$C_DEEPCODE" "Deep Code"    "${deepcode_ver}"      "${deepcode_status}"
-menu_row 14 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
-menu_row 15 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
-menu_row 16 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
-menu_row 17 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
-menu_row 18 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
-menu_row 19 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
-menu_row 20 "$C_MIMO"     "MiMo Code"    "${mimo_ver}"          "${mimo_status}"
-menu_row 21 "$C_MCODE"    "MiniMax Code" "${mcode_ver}"         "${mcode_status}"
-menu_row 22 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
-menu_row 23 "$C_DEVIN"    "Devin CLI"    "${devin_ver}"         "${devin_status}"
+menu_row 11 "$C_GEMINI"   "Gemini"       "${gemini_ver}"        "${gemini_status}"
+menu_row 12 "$C_KIMI"     "Kimi Code"    "${kimi_ver}"          "${kimi_status}"
+menu_row 13 "$C_GROK"     "Grok (xAI)"   "${grok_ver}"          "${grok_status}"
+menu_row 14 "$C_DEEPCODE" "Deep Code"    "${deepcode_ver}"      "${deepcode_status}"
+menu_row 15 "$C_AGY"      "Antigravity"  "${agy_ver}"           "${agy_status}"
+menu_row 16 "$C_QODER"    "Qoder CLI"    "${qoder_ver}"         "${qoder_status}"
+menu_row 17 "$C_CURSOR"   "Cursor Agent" "${cursor_ver}"        "${cursor_status}"
+menu_row 18 "$C_OMP"      "omp/oh-my-pi" "${omp_ver}"           "${omp_status}"
+menu_row 19 "$C_PRIME"    "Prime Agent"  "${prime_ver}"         "${prime_status}"
+menu_row 20 "$C_OPENCODE" "opencode"     "${opencode_ver}"      "${opencode_status}"
+menu_row 21 "$C_MIMO"     "MiMo Code"    "${mimo_ver}"          "${mimo_status}"
+menu_row 22 "$C_MCODE"    "MiniMax Code" "${mcode_ver}"         "${mcode_status}"
+menu_row 23 "$C_MUSE"     "Muse Code"    "${muse_code_ver}"     "${muse_code_status}"
+menu_row 24 "$C_DEVIN"    "Devin CLI"    "${devin_ver}"         "${devin_status}"
 
 menu_group "APIs / MODELOS"
-menu_row 24 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
-menu_row 25 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
-menu_row 26 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
-menu_row 27 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 28 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
-menu_row 29 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
-menu_row 30 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
-menu_row 31 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
-menu_row 32 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
-menu_row 33 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
-menu_row 34 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
+menu_row 25 "$C_OLLAMA"   "Ollama Cloud" "${OLLAMA_CLOUD_MODEL}" "${ollama_status}"
+menu_row 26 "$C_HF"       "HF sem cens." "${_hf_menu_label}"     "${hf_status}"
+menu_row 27 "$C_FL"       "Featherless"  "${_fl_menu_label}"     "${fl_status}"
+menu_row 28 "$C_QWEN"     "Qwen Code"    "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 29 "$C_QWEN"     "Claude+Qwen"  "${QWEN_MODEL}"         "${qwen_status}"
+menu_row 30 "$C_MUSE"     "Muse Spark"   "${MUSE_MODEL}"         "${muse_cli_status}"
+menu_row 31 "$C_DEEPSEEK" "DeepSeek V4-Pro" "${deepseek_ver}"  "${deepseek_status}"
+menu_row 32 "$C_DEEPSEEK" "DS V4.1 Flash"  "${deepseek_ver}"  "${deepseek_status}"
+menu_row 33 "$C_AB"       "Abliteration" "${_ab_menu_label}"    "${abl_status}"
+menu_row 34 "$C_AB"       "Claude+Ablit" "${_ab_menu_label}"    "${abl_status}"
+menu_row 35 "$C_STEP"     "Step Plan"    "${STEP_MODEL_LABEL}"  "${step_status}"
 
 menu_group "FERRAMENTAS"
-menu_tool 35 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
-menu_tool 36 "$C_TOOL" "🔌 Providers"
-menu_tool 37 "$C_TOOL" "⚙️  Toggle Flags"
-menu_tool 38 "$C_TOOL" "👤 Contas (Claude / Codex)"
+menu_tool 36 "$C_SEC"  "🛡️  Codex Security" "${secscan_ver}" "${secscan_status}"
+menu_tool 37 "$C_TOOL" "🔌 Providers"
+menu_tool 38 "$C_TOOL" "⚙️  Toggle Flags"
+menu_tool 39 "$C_TOOL" "👤 Contas (Claude / Codex)"
 echo -e "  ${DIM} 0) Sair${RESET}"
 echo ""
 
@@ -8702,7 +8844,7 @@ echo ""
 show_last_used
 echo ""
 
-read -rp "Escolha [1-38/0]: " choice
+read -rp "Escolha [1-39/0]: " choice
 choice=$(normalize_choice "$choice")
 
 case $choice in
@@ -8732,83 +8874,85 @@ case $choice in
        longcat_menu_panel || true ;;
     7|mercury|merc|inception)
        mercury_menu_panel || true ;;
-    8|codex|x)
+    8|hy4|hy|hunyuan|tencent)
+       hy4_menu_panel || true ;;
+    9|codex|x)
        xconta_autoswitch_if_needed
        codex_config_clear_foreign_defaults
        codex_force_official_provider
        codex_add_context_flags
        enter_repo_if_needed
        launch "Codex (1M)" codex "$CODEX_PROMPT_FLAG" CODEX_FLAGS ;;
-    9|sakana|fugu)
+   10|sakana|fugu)
        launch_sakana_fugu "fugu" ;;
-   10|gemini|g)
+   11|gemini|g)
        enter_repo_if_needed
        launch "Gemini" gemini "$GEMINI_PROMPT_FLAG" GEMINI_FLAGS ;;
-   11|kimi|k)
+   12|kimi|k)
        enter_repo_if_needed
        launch "Kimi Code" kimi "$KIMI_PROMPT_FLAG" KIMI_FLAGS ;;
-   12|grok|gr)
+   13|grok|gr)
        enter_repo_if_needed
        launch "Grok" grok "$GROK_PROMPT_FLAG" GROK_FLAGS ;;
-   13|deepcode|dc)
+   14|deepcode|dc)
        enter_repo_if_needed
        launch "Deep Code" deepcode "$DEEPCODE_PROMPT_FLAG" DEEPCODE_FLAGS ;;
-   14|antigravity|agy)
+   15|antigravity|agy)
        enter_repo_if_needed
        agy_add_workspace_flag
        launch "Antigravity" agy "$AGY_PROMPT_FLAG" AGY_FLAGS ;;
-   15|qoder)
+   16|qoder)
        enter_repo_if_needed
        launch "Qoder CLI" qodercli "$QODER_PROMPT_FLAG" QODER_FLAGS ;;
-   16|cursor)
+   17|cursor)
        enter_repo_if_needed
        launch "Cursor Agent" cursor-agent "$CURSOR_PROMPT_FLAG" CURSOR_FLAGS ;;
-   17|omp)
+   18|omp)
        enter_repo_if_needed
        launch "omp (oh-my-pi)" omp "$OMP_PROMPT_FLAG" OMP_FLAGS ;;
-   18|prime)
+   19|prime)
        enter_repo_if_needed
        launch "Prime Agent" prime-agent "$PRIME_PROMPT_FLAG" PRIME_FLAGS ;;
-   19|opencode)
+   20|opencode)
        enter_repo_if_needed
        opencode_launch ;;
-   20|mimo)
+   21|mimo)
        enter_repo_if_needed
        mimo_launch ;;
-   21|mcode|minimax)
+   22|mcode|minimax)
        mcode_menu_panel || true ;;
-   22|muse)
+   23|muse)
        if ! check_installed muse; then echo -e "${RED}Erro: Muse CLI não instalada.${RESET}"; cli_install_hint muse; continue; fi
        enter_repo_if_needed
        launch "Muse Code" muse "" MUSE_CODE_FLAGS ;;
-   23|devin)
+   24|devin)
        if ! check_installed devin; then echo -e "${RED}Erro: Devin CLI não instalada.${RESET}"; cli_install_hint devin; continue; fi
        enter_repo_if_needed
        devin_launch ;;
-   24) ollama_dispatch || true ;;
-   25) hf_menu_panel || true ;;
-   26) fl_dispatch || true ;;
-   27) qwen_launch || true ;;
-   28) qwen_launch_claude || true ;;
-   29) muse_dispatch || true ;;
-   30) provider_setup_env "deepseek" || continue
+   25) ollama_dispatch || true ;;
+   26) hf_menu_panel || true ;;
+   27) fl_dispatch || true ;;
+   28) qwen_launch || true ;;
+   29) qwen_launch_claude || true ;;
+   30) muse_dispatch || true ;;
+   31) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "deepseek-v4-pro[1m]")"
        enter_repo_if_needed
        launch "DeepSeek V4-Pro" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   31) provider_setup_env "deepseek" || continue
+   32) provider_setup_env "deepseek" || continue
        export ANTHROPIC_MODEL="$(deepseek_wire_model "$DEEPSEEK_V41_MODEL")"
        enter_repo_if_needed
        launch "DeepSeek V4.1 Flash" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   32) ab_dispatch || true ;;
-   33) ab_launch_claude ;;
-   34|step)
+   33) ab_dispatch || true ;;
+   34) ab_launch_claude ;;
+   35|step)
        provider_setup_env "step" || continue
        enter_repo_if_needed
        launch "Step Plan (${STEP_MODEL_LABEL})" claude "$CLAUDE_PROMPT_FLAG" CLAUDE_FLAGS ;;
-   35) enter_repo_if_needed
+   36) enter_repo_if_needed
        launch_codex_security ;;
-   36) provider_list ;;
-   37) flags_menu
+   37) provider_list ;;
+   38) flags_menu
        echo ""
        echo -e "  ${BOLD}Depois das flags:${RESET}"
        echo "  1) Lançar Claude agora"
@@ -8828,7 +8972,7 @@ case $choice in
            *) echo "Opção inválida."; exit 1 ;;
        esac
        ;;
-   38) conta_menu ;;
+   39) conta_menu ;;
     0) echo "Saindo."; exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac

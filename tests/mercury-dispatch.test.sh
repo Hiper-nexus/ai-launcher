@@ -418,11 +418,11 @@ if proc.poll() is None:
 PY
 }
 
-run_menu_pty "Escolha [1-38/0]" "7" "Escolha [1-4/0]" "1"
+run_menu_pty "Escolha [1-39/0]" "7" "Escolha [1-4/0]" "1"
 assert_mercury_env
 ok "menu 7 → painel → 1 (Claude + Mercury 3)"
 
-run_menu_pty "Escolha [1-38/0]" "mercury" "Escolha [1-4/0]" "1"
+run_menu_pty "Escolha [1-39/0]" "mercury" "Escolha [1-4/0]" "1"
 assert_mercury_env
 ok "alias 'mercury' no prompt do menu"
 
