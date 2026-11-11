@@ -6991,11 +6991,25 @@ sys.exit(1 if ERROS else 0)
 PY
 }
 
+# Python que vai nos configs: um link que sobrevive a upgrade. O que está no
+# PATH costuma ser .../python@3.12/libexec/bin/python3, que some quando o
+# Homebrew troca de versão — e o MCP quebraria em todas as CLIs de uma vez.
+gd_python() {
+    local c
+    if [[ -n "${AI_GD_PYTHON:-}" ]]; then printf '%s' "$AI_GD_PYTHON"; return 0; fi
+    for c in /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+        if [[ -x "$c" ]] && "$c" -c 'import sys; assert sys.version_info >= (3, 8)' 2>/dev/null; then
+            printf '%s' "$c"; return 0
+        fi
+    done
+    ai_python
+}
+
 gd_setup() {
     require_python || return 1
     gd_install_server || return 1
     local py srv rc=0
-    py=$(gd_native_path "$(ai_python)") || return 1
+    py=$(gd_native_path "$(gd_python)") || return 1
     srv=$(gd_native_path "$GD_SERVER")
     echo -e "${BOLD}Gemini Decision → MCP '${GD_MCP_NAME}'${RESET} ${DIM}(${srv})${RESET}"
     gd_helper register "$HOME" "$py" "$srv" "$GD_MCP_NAME" || rc=1

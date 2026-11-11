@@ -373,7 +373,7 @@ PY
 chmod +x "$FAKE_BIN/claude"
 
 ai_l() {
-    HOME="$L" PATH="${FAKE_BIN}:$PATH" FAKE_CLAUDE_LOG="${TMP_DIR}/claude.log" \
+    HOME="$L" PATH="${FAKE_BIN}:$PATH" FAKE_CLAUDE_LOG="${TMP_DIR}/claude.log" AI_GD_PYTHON="$PY_BIN" \
         GEMINI_DECISION_BASE_URL="${BASE:-http://127.0.0.1:9}" GEMINI_DECISION_LOG=off \
         "$ROOT/ai" gd "$@"
 }
@@ -479,7 +479,7 @@ printf 'regras\n<!-- gemini-decision:inicio órfão sem fim\n' > "$L2/.codex/AGE
 cp "$L2/.codex/AGENTS.md" "${TMP_DIR}/agents-orfao"
 chamadas=$(wc -l < "${TMP_DIR}/claude.log")
 set +e
-saida=$(HOME="$L2" PATH="${FAKE_BIN}:$PATH" FAKE_CLAUDE_LOG="${TMP_DIR}/claude.log" AI_GD_NO_CLAUDE_CLI=1 \
+saida=$(HOME="$L2" PATH="${FAKE_BIN}:$PATH" FAKE_CLAUDE_LOG="${TMP_DIR}/claude.log" AI_GD_NO_CLAUDE_CLI=1 AI_GD_PYTHON="$PY_BIN" \
     "$ROOT/ai" gd setup 2>&1); rc=$?
 set -e
 [[ $rc -eq 1 ]] || fail "setup com marcador órfão devolveu $rc: $saida"
