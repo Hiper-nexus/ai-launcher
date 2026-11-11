@@ -853,10 +853,11 @@ imagem, PDF, áudio ou vídeo, com até 1000 perguntas por chamada. O preço é
 US$ 0,10 por 1M tokens de entrada, e a saída não é cobrada.
 
 Ele chega aos agentes como o servidor MCP `gemini_decision`
-(`mcp/gemini-decision-server.py`, só stdlib), com três tools:
+(`mcp/gemini-decision-server.py`, só stdlib), com quatro tools:
 
 | Tool | Para quê |
 |------|----------|
+| `route` | Escolhe provedor, modelo e esforço para delegar uma tarefa, lendo o catálogo real do T3 da máquina (`~/.t3/caches`). Classifica a complexidade e usa o tier certo: leves (GLM Flash, Haiku, Luna, Gemini Flash) para o simples, intermediários (Sonnet) para o cotidiano e os de topo só para o complexo. Faz rodízio entre provedores, para nenhuma LLM ficar parada. Deixa de fora as variantes Fast e Highspeed, os modelos sem censura e os provedores desligados ou com erro. Os modelos que nenhuma regra reconhece são classificados pelo próprio Gemini Decision, com cache. |
 | `ui_check` | Confere screenshots contra critérios de aceite. Já vem com checagens de texto cortado, imagem quebrada, erro visível, overflow e tela vazia. Com `reference` (mock aprovado), também mede a fidelidade ao design. |
 | `rank` | Ordena candidatos pelo quanto atendem a um requisito: componentes do BoardUI, do shadcnuikit ou do projeto antes de criar do zero, arquivos a ler, abordagens. |
 | `decide` | Perguntas livres sobre um log, um diff, o PDF de uma spec ou o vídeo de um fluxo. |
@@ -869,6 +870,7 @@ ai gd          # status: key, CLIs com o MCP, instruções, uso de hoje
 ai gd remove   # desfaz o setup (a key fica)
 ai gd ui home-1440.png home-375.png -c "O CTA principal aparece sem rolar" --ref mock.png
 ai gd ask "O vídeo mostra o checkout concluindo sem erro?" fluxo.webm
+ai gd call route '{"task":"renomear userName em src/","units":3}'
 ```
 
 `ai gd setup` registra o servidor em todas as CLIs instaladas que o T3 roda:

@@ -91,8 +91,10 @@ class H(http.server.BaseHTTPRequestHandler):
                               "confidence": 0.9}
                 else:
                     ops = sorted(v["criteria"])
-                    ans[k] = {"type": "choice", "choice": ops[0],
-                              "probabilities": {o: (0.9 if o == ops[0] else 0.1 / (len(ops) - 1)) for o in ops},
+                    pref = [o for o in os.environ.get("MOCK_CHOICE", "").split(",") if o in ops]
+                    esc = pref[0] if pref else ops[0]
+                    ans[k] = {"type": "choice", "choice": esc,
+                              "probabilities": {o: (0.9 if o == esc else 0.1 / (len(ops) - 1)) for o in ops},
                               "confidence": 0.9}
             out = json.dumps({"answers": ans, "usage": {"total_input_tokens": 321, "total_output_tokens": 0}}).encode()
             self.send_response(200)
@@ -106,7 +108,7 @@ open(os.environ["MOCK_PORT"], "w").write(str(srv.server_port))
 srv.serve_forever()
 PY
     MOCK_LOG="${TMP_DIR}/pedidos.jsonl" MOCK_PORT="${TMP_DIR}/port" \
-        MOCK_MODE="${MOCK_MODE:-smart}" MOCK_FAIL="${MOCK_FAIL:-}" \
+        MOCK_MODE="${MOCK_MODE:-smart}" MOCK_FAIL="${MOCK_FAIL:-}" MOCK_CHOICE="${MOCK_CHOICE:-}" \
         "$PY_BIN" "${TMP_DIR}/mock.py" &
     MOCK_PID=$!
     local i
@@ -164,7 +166,7 @@ import json, sys
 ds = {d["id"]: d for d in (json.loads(l) for l in sys.stdin if l.strip().startswith("{"))}
 assert ds[1]["result"]["serverInfo"]["name"] == "gemini_decision", ds[1]
 tools = ds[2]["result"]["tools"]
-assert sorted(t["name"] for t in tools) == ["decide", "rank", "ui_check"], [t["name"] for t in tools]
+assert sorted(t["name"] for t in tools) == ["decide", "rank", "route", "ui_check"], [t["name"] for t in tools]
 def andar(s, onde):
     if isinstance(s, dict):
         if s.get("type") == "object":
@@ -179,7 +181,7 @@ for t in tools:
     assert t["description"], t["name"]
     andar(t["inputSchema"], t["name"])
 ' || fail "handshake/tools errados: $saida"
-ok "initialize, três tools e schemas portáveis"
+ok "initialize, quatro tools e schemas portáveis"
 
 echo
 echo "── 2. decide monta o pedido nativo"
@@ -483,6 +485,81 @@ set -e
 echo "$saida" | grep -q "✗.*Salvar" || fail "falha não aparece na saída: $saida"
 stop_mock
 ok "rc=1 e a falha listada"
+
+echo
+echo "── 16. route usa o catálogo real do T3: tier certo, rodízio, só prontos"
+T3F="${TMP_DIR}/t3"; mkdir -p "$T3F/userdata" "$T3F/caches"
+echo "env-teste-1" > "$T3F/userdata/environment-id"
+cat > "$T3F/userdata/settings.json" <<'JSON'
+{"providerInstances": {
+  "claude": {"driver": "claudeAgent", "enabled": true, "displayName": "Claude"},
+  "glm": {"driver": "acpRegistry", "enabled": true, "displayName": "GLM Agent"},
+  "gpt": {"driver": "codex", "enabled": true, "displayName": "Codex"},
+  "hy4": {"driver": "claudeAgent", "enabled": true, "displayName": "Tencent Hy4",
+          "environment": [{"name": "ANTHROPIC_BASE_URL", "value": "", "sensitive": false}]},
+  "desligado": {"driver": "claudeAgent", "enabled": false},
+  "quebrado": {"driver": "acpRegistry", "enabled": true},
+  "venice": {"driver": "opencode", "enabled": true}
+}}
+JSON
+EF='{"optionDescriptors":[{"id":"effort","options":[{"id":"low"},{"id":"medium"},{"id":"high"},{"id":"max"}]}]}'
+modelos() { "$PY_BIN" -c 'import json,sys; c=json.loads(sys.argv[1]); print(json.dumps({"status": sys.argv[2], "models": [dict(slug=m, name=m, isDefault=(i==0), capabilities=c) for i,m in enumerate(sys.argv[3:])]}))' "$EF" "$@"; }
+modelos ready claude-opus-5-5 claude-sonnet-5-5 claude-haiku-5-5 > "$T3F/caches/claude.json"
+modelos ready glm-5.3 glm-5.3-flash glm-5-turbo > "$T3F/caches/glm.json"
+modelos ready gpt-6-sol gpt-6-luna gpt-6-luna-fast > "$T3F/caches/gpt.json"
+modelos ready claude-opus-5-5 claude-haiku-5-5 > "$T3F/caches/hy4.json"
+modelos ready claude-haiku-5-5 > "$T3F/caches/desligado.json"
+modelos error claude-haiku-5-5 > "$T3F/caches/quebrado.json"
+modelos ready venice-uncensored-flash > "$T3F/caches/venice.json"
+modelos ready gpt-6-luna > "$T3F/caches/sem-instancia.json"
+GDD="${TMP_DIR}/gddata"
+MOCK_CHOICE="simples,geral,standard" start_mock
+rota() {
+    env -i PATH="/usr/bin:/bin" HOME="$H" T3CODE_HOME="$T3F" GEMINI_DECISION_DATA_DIR="$GDD" \
+        GEMINI_DECISION_BASE_URL="$BASE" GEMINI_DECISION_LOG=off "$PY_BIN" "$SERVER" call route "$1"
+}
+r=$(rota '{"task":"renomear uma variável em três arquivos","units":3}') || fail "route falhou: $r"
+echo "$r" | "$PY_BIN" -c '
+import json, sys
+r = json.load(sys.stdin)
+d = r["destinos"]
+assert r["complexidade"] == "simples" and r["tier"] == "light", r
+assert r["ambiente"] == "env-teste-1", r
+assert {(x["providerInstanceId"], x["model"]) for x in d} == {
+    ("claude", "claude-haiku-5-5"), ("glm", "glm-5.3-flash"), ("gpt", "gpt-6-luna")}, d
+claude = [x for x in d if x["providerInstanceId"] == "claude"][0]
+assert claude["effort"] == "low", claude
+todos = json.dumps(r)
+for proibido in ("desligado", "quebrado", "venice", "sem-instancia", "luna-fast"):
+    assert proibido not in todos, proibido
+' || fail "route simples errado: $r"
+ok "simples → Haiku, GLM 5.3 Flash e Luna, um por provedor, esforço low; desligado/erro/sem censura/Fast/sem instância fora"
+vistos=""
+for i in 1 2 3; do
+    r=$(rota '{"task":"ajustar um texto"}') || fail "route falhou"
+    vistos="$vistos $(echo "$r" | "$PY_BIN" -c 'import json,sys; print(json.load(sys.stdin)["destinos"][0]["providerInstanceId"])')"
+done
+[[ "$(echo $vistos | tr ' ' '\n' | sort -u | wc -l | tr -d ' ')" == "3" ]] || fail "sem rodízio entre provedores: $vistos"
+ok "rodízio: três chamadas seguidas foram para três provedores diferentes ($vistos )"
+r=$(rota '{"task":"redesenhar a arquitetura de autenticação","complexity":"complexa","units":2}') || fail "route complexa falhou"
+echo "$r" | "$PY_BIN" -c '
+import json, sys
+r = json.load(sys.stdin)
+assert r["tier"] == "flagship", r
+assert {x["model"] for x in r["destinos"]} == {"claude-opus-5-5", "gpt-6-sol"}, r["destinos"]
+assert [x["effort"] for x in r["destinos"] if x["model"] == "claude-opus-5-5"] == ["high"], r["destinos"]
+' || fail "route complexa errado: $r"
+"$PY_BIN" -c '
+import json, sys
+c = json.load(open(sys.argv[1]))
+assert c.get("glm agent|glm-5-turbo") == "standard" and c.get("tencent hy4|claude-opus-5-5") == "standard", c
+' "$GDD/gd-model-tiers.json" || fail "tier dos desconhecidos não foi classificado/cacheado"
+stop_mock
+ok "complexa → Opus e Sol com esforço high (nunca max); desconhecidos classificados pelo Gemini Decision e cacheados"
+saida=$(env -i PATH="/usr/bin:/bin" HOME="$H" T3CODE_HOME="${TMP_DIR}/nao-existe" GEMINI_DECISION_LOG=off \
+    "$PY_BIN" "$SERVER" call route '{"task":"x"}' 2>&1) && fail "route sem T3 deveria falhar"
+echo "$saida" | grep -q "T3 não encontrado" || fail "erro sem T3 ilegível: $saida"
+ok "sem T3: erro claro"
 
 echo
 echo "── 14. sem a CLI do Claude: edição direta; arquivo ruim não para os outros"

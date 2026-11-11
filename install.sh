@@ -123,6 +123,15 @@ if (( BASH_VERSINFO[0] < 4 )); then
     fi
 fi
 
+# Máquina que já tem a key do Gemini Decision: reaplica o MCP e o bloco de
+# instruções em todas as CLIs a cada atualização (idempotente). Sem key, nada
+# muda — quem só usa o launcher não ganha MCP que não pediu.
+if grep -q '^gemini-decision=' "${HOME}/.local/share/ai-launcher/providers.conf" 2>/dev/null; then
+    echo ""
+    echo -e "${CYAN}Gemini Decision: atualizando o MCP nas CLIs desta máquina...${RESET}"
+    "${INSTALL_DIR}/ai" gd setup || echo -e "${YELLOW}Aviso: ai gd setup terminou com erro (acima).${RESET}"
+fi
+
 echo ""
 echo -e "${GREEN}Instalado com sucesso!${RESET}"
 echo ""

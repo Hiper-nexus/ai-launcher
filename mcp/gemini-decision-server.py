@@ -6,7 +6,10 @@ probabilidade calibrada em ~200 ms (sim/não, uma opção de uma lista, uma nota
 numa rubrica), sobre texto, imagem, PDF, áudio e vídeo. Saída custa zero;
 entrada custa US$ 0,10 por 1M tokens.
 
-Três tools, pensadas para desenvolvimento web (T3 ou qualquer CLI com MCP):
+Quatro tools, pensadas para desenvolvimento web no T3 (ou qualquer CLI com MCP):
+
+  route     tarefa → provedor + modelo + esforço do catálogo real do T3, no
+            tier certo (leve/intermediário/topo) e em rodízio entre provedores
 
   ui_check  screenshots × critérios de aceite → o que passou, falhou, ficou em
             dúvida; com mock aprovado, mede a fidelidade ao design
@@ -15,7 +18,7 @@ Três tools, pensadas para desenvolvimento web (T3 ou qualquer CLI com MCP):
   decide    perguntas livres noul/choice/score sobre texto e arquivos
 
     ┌──────────────────────────────────────────────────────────┐
-    │ CUSTO DE CONTEXTO: as três tools somam ~1,2 mil tokens   │
+    │ CUSTO DE CONTEXTO: as quatro tools somam ~1,6 mil tokens │
     │ por sessão em cada CLI onde o servidor for registrado.   │
     └──────────────────────────────────────────────────────────┘
 
@@ -40,6 +43,7 @@ Variáveis de ambiente:
 
 import base64
 import concurrent.futures
+import glob
 import tempfile
 import json
 import os
@@ -51,7 +55,7 @@ import urllib.request
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "gemini_decision"
-SERVER_VERSION = "1.2.0"
+SERVER_VERSION = "1.3.0"
 
 BASE = os.environ.get(
     "GEMINI_DECISION_BASE_URL", "https://generativelanguage.googleapis.com"
@@ -672,7 +676,307 @@ def tool_rank(args):
     }
 
 
+# ── Roteamento de delegação no T3 ────────────────────────
+# O T3 tem centenas de modelos prontos, mas a delegação cai quase sempre no
+# modelo padrão do provedor (GLM 5.3, Opus...). `route` lê o catálogo REAL do
+# T3 desta máquina (caches de status + settings), classifica a tarefa com o
+# Gemini Decision e devolve provedor + modelo + esforço do tier certo, em
+# rodízio entre provedores — para GLM Flash, Haiku, Luna, Sonnet & cia. serem
+# usados de fato.
+TIERS = ("light", "standard", "flagship")
+COMPLEXIDADES = {
+    "simples": "Unidade pequena e bem delimitada: ler e resumir, ajuste localizado, "
+               "renomear, formatar, coletar informação, checagem mecânica, teste simples.",
+    "cotidiana": "Trabalho comum de engenharia: implementar ou corrigir algo de escopo "
+                 "médio, escrever testes, revisão normal, componente de UI.",
+    "complexa": "Raciocínio difícil ou risco alto: arquitetura, segurança, bug obscuro, "
+                "concorrência, mudança transversal em muitos arquivos, migração de dados.",
+}
+TIER_DA_COMPLEXIDADE = {"simples": "light", "cotidiana": "standard", "complexa": "flagship"}
+# Se o tier pedido estiver vazio: primeiro o mais próximo e mais barato.
+RECUO = {"light": ("standard", "flagship"), "standard": ("flagship", "light"),
+         "flagship": ("standard", "light")}
+PAPEIS = {
+    "frontend": "Interface, componentes, CSS, acessibilidade, experiência visual.",
+    "backend": "APIs, banco de dados, autenticação, lógica de servidor.",
+    "testes": "Planejar, escrever, executar ou analisar testes.",
+    "revisao": "Revisão crítica de código, riscos ou evidências.",
+    "investigacao": "Pesquisar, diagnosticar ou mapear sem implementar.",
+    "geral": "Coordenação ou tarefa que não se encaixa nas demais.",
+}
+# Preferência do usuário para frontend (CLAUDE.md global).
+PREF_FRONTEND = re.compile(r"kimi|opus-5-5|gpt-6-astra|argon|sonnet-5-5", re.I)
+ESFORCO = {"light": ("low", "minimal", "medium"), "standard": ("medium", "low", "high"),
+           "flagship": ("high", "medium", "xhigh")}
+ESFORCO_PROIBIDO = {"max", "ultra", "ultrathink", "xhigh_max"}
+RAPIDO = re.compile(r"fast|highspeed|ultraspeed|ultra-speed", re.I)
+ESPECIAL = re.compile(r"uncensored|abliterat|heretic|role-?play", re.I)
+REGRAS_TIER = [
+    ("light", re.compile(r"haiku|luna|flash|nano|lite|(?<![a-z])mini(?![a-z])|(?<![a-z])air(?![a-z])", re.I)),
+    ("standard", re.compile(r"sonnet|(?<![a-z])plus(?![a-z])|balanced", re.I)),
+    ("flagship", re.compile(r"opus|fable|(?<![a-z])sol(?![a-z])|argon|carbon|astra|(?<![a-z])pro(?![a-z])|(?<![a-z])max(?![a-z])|ultra|deep-model", re.I)),
+]
+NIVEIS_TIER = {
+    "light": "Modelo pequeno, rápido e barato, para tarefas simples (como Haiku, Flash, Luna, mini).",
+    "standard": "Modelo intermediário de uso diário, bom custo-benefício (como Sonnet).",
+    "flagship": "Modelo topo de linha, raciocínio máximo e mais caro (como Opus, Pro, Max, Sol).",
+}
+
+
+def t3_home():
+    return os.environ.get("T3CODE_HOME") or os.path.expanduser("~/.t3")
+
+
+def _ler(p):
+    try:
+        with open(p, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def tier_por_nome(texto):
+    for tier, padrao in REGRAS_TIER:
+        if padrao.search(texto):
+            return tier
+    return None
+
+
+def _esforcos(modelo):
+    for desc in ((modelo.get("capabilities") or {}).get("optionDescriptors") or []):
+        if desc.get("id") == "effort":
+            return [o.get("id") for o in desc.get("options") or [] if o.get("id")]
+    return []
+
+
+def catalogo_t3():
+    """Candidatos (provedor, modelo) prontos neste T3."""
+    base = t3_home()
+    cfg = ((_ler(os.path.join(base, "userdata", "settings.json")) or {})
+           .get("providerInstances") or {})
+    if not cfg:
+        raise ErroTool(f"T3 não encontrado nesta máquina ({base}); o roteamento usa o catálogo dele")
+    cands = []
+    for arq in sorted(glob.glob(os.path.join(base, "caches", "*.json"))):
+        pid = os.path.basename(arq)[:-5]
+        inst, d = cfg.get(pid), _ler(arq)
+        # Só instâncias reais e prontas: cache de driver sem instância (ex.: o
+        # "codex" embutido) não aceita delegação.
+        if not isinstance(inst, dict) or not isinstance(d, dict):
+            continue
+        if d.get("status") != "ready" or inst.get("enabled") is False:
+            continue
+        nome = inst.get("displayName") or pid
+        modelos = [m for m in d.get("models") or [] if isinstance(m, dict) and m.get("slug")]
+        env = {e.get("name") for e in inst.get("environment") or [] if isinstance(e, dict)}
+        proprio = inst.get("driver") == "claudeAgent" and "ANTHROPIC_BASE_URL" in env
+        if proprio:
+            # Endpoint próprio (Hy4, Abliteration…): os slugs do Claude apontam
+            # todos para UM modelo do endpoint. Um candidato só, pelo nome.
+            padrao = next((m for m in modelos if m.get("isDefault")), modelos[0] if modelos else None)
+            modelos = [dict(padrao, name=nome)] if padrao else []
+        for m in modelos:
+            slug, rotulo = m["slug"], str(m.get("name") or m["slug"])
+            texto = f"{nome} {slug} {rotulo}"
+            if ESPECIAL.search(texto):
+                continue  # sem censura etc.: uso especial, não delegação geral
+            cands.append({
+                "providerInstanceId": pid, "provedor": nome, "model": slug, "nome": rotulo,
+                "esforcos": _esforcos(m), "rapido": bool(RAPIDO.search(slug + " " + rotulo)),
+                # Endpoint próprio: o slug ("claude-opus…") não diz nada do modelo real.
+                "tier": tier_por_nome(rotulo if proprio else slug + " " + rotulo),
+            })
+    if not cands:
+        raise ErroTool("nenhum provedor pronto no catálogo do T3 desta máquina")
+    return cands
+
+
+def _arquivo_dados(nome):
+    return os.environ.get("GEMINI_DECISION_DATA_DIR") or DATA_DIR, nome
+
+
+def _json_estado(nome, padrao):
+    pasta, arq = _arquivo_dados(nome)
+    d = _ler(os.path.join(pasta, arq))
+    return d if isinstance(d, type(padrao)) else padrao
+
+
+def _gravar_estado(nome, dados):
+    pasta, arq = _arquivo_dados(nome)
+    try:
+        os.makedirs(pasta, exist_ok=True)
+        tmp = os.path.join(pasta, f".{arq}.tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(dados, fh, ensure_ascii=False, indent=1)
+        os.replace(tmp, os.path.join(pasta, arq))
+    except OSError:
+        pass
+
+
+def classificar_desconhecidos(cands):
+    """Tier dos modelos que nenhuma regra reconhece, pelo próprio Gemini
+    Decision, em UMA chamada; o resultado fica em cache por nome."""
+    cache = _json_estado("gd-model-tiers.json", {})
+    faltam = {}
+    for c in cands:
+        if c["tier"]:
+            continue
+        k = f"{c['provedor']}|{c['model']}".lower()
+        if k in cache:
+            c["tier"] = cache[k]
+        else:
+            faltam.setdefault(k, []).append(c)
+    if faltam:
+        chaves = list(faltam)[:900]
+        perguntas = {
+            f"m{i:03d}": {
+                "type": "choice",
+                "instructions": ("Em que categoria de custo e capacidade está este modelo de IA "
+                                 f"para programação? Provedor: {faltam[k][0]['provedor']}. "
+                                 f"Modelo: {faltam[k][0]['model']} ({faltam[k][0]['nome']})."),
+                "criteria": NIVEIS_TIER,
+            }
+            for i, k in enumerate(chaves)
+        }
+        try:
+            d = chamar("Catálogo de modelos de IA de um ambiente de desenvolvimento.", perguntas, "route-tiers")
+            for i, k in enumerate(chaves):
+                a = d["answers"].get(f"m{i:03d}") or {}
+                if a.get("choice") in TIERS:
+                    cache[k] = a["choice"]
+                    for c in faltam[k]:
+                        c["tier"] = a["choice"]
+            _gravar_estado("gd-model-tiers.json", cache)
+        except ErroTool:
+            pass  # sem tier: só entram como último recurso
+    return cands
+
+
+def _esforco(c, tier):
+    ok = [e for e in c["esforcos"] if e not in ESFORCO_PROIBIDO]
+    for e in ESFORCO[tier]:
+        if e in ok:
+            return e
+    return ok[0] if ok else None
+
+
+def tool_route(args):
+    tarefa = (args.get("task") or "").strip()
+    if not tarefa:
+        raise ErroTool("task vazio: descreva a unidade de trabalho a delegar")
+    checar_segredo(tarefa)
+    try:
+        unidades = max(1, min(int(args.get("units") or 1), 12))
+    except (TypeError, ValueError):
+        unidades = 1
+    excluir = {str(x) for x in args.get("exclude") or []}
+    complexidade = args.get("complexity")
+    if complexidade not in COMPLEXIDADES:
+        complexidade = None
+
+    cands = [c for c in catalogo_t3() if c["providerInstanceId"] not in excluir]
+    perguntas = {"papel": {"type": "choice",
+                           "instructions": "Qual especialidade esta tarefa exige principalmente?",
+                           "criteria": PAPEIS}}
+    if not complexidade:
+        perguntas["complexidade"] = {
+            "type": "choice",
+            "instructions": "Classifique a complexidade desta unidade de trabalho; na dúvida, cotidiana.",
+            "criteria": COMPLEXIDADES}
+    d = chamar(tarefa, perguntas, "route")
+    a = d["answers"]
+    papel = (a.get("papel") or {}).get("choice") or "geral"
+    p_compl = None
+    if not complexidade:
+        complexidade = (a.get("complexidade") or {}).get("choice") or "cotidiana"
+        p_compl = round(float((a.get("complexidade") or {}).get("confidence") or 0), 2)
+    classificar_desconhecidos(cands)
+
+    tier = TIER_DA_COMPLEXIDADE[complexidade]
+    pool, usado_tier = [], tier
+    for t in (tier,) + RECUO[tier]:
+        pool = [c for c in cands if c["tier"] == t]
+        if pool:
+            usado_tier = t
+            break
+    if not pool:
+        pool = cands  # nada classificado: qualquer um pronto
+    normais = [c for c in pool if not c["rapido"]]
+    pool = normais or pool  # variantes Fast/Highspeed só se não houver outra
+
+    uso = _json_estado("t3-route-usage.json", {})
+    uso_p, uso_m = uso.setdefault("provedores", {}), uso.setdefault("modelos", {})
+    nesta = {}
+
+    def ordem(c):
+        k = c["providerInstanceId"]
+        return (
+            0 if (papel == "frontend" and PREF_FRONTEND.search(c["model"])) else 1,
+            nesta.get(k, 0),                       # provedores diferentes nesta missão
+            uso_p.get(k, 0),                       # rodízio: o menos usado primeiro
+            uso_m.get(f"{k}|{c['model']}", 0),
+            k, c["model"],
+        )
+
+    destinos = []
+    for _ in range(unidades):
+        c = min(pool, key=ordem)
+        k = c["providerInstanceId"]
+        nesta[k] = nesta.get(k, 0) + 1
+        uso_p[k] = uso_p.get(k, 0) + 1
+        uso_m[f"{k}|{c['model']}"] = uso_m.get(f"{k}|{c['model']}", 0) + 1
+        destinos.append({"providerInstanceId": k, "provedor": c["provedor"], "model": c["model"],
+                         "effort": _esforco(c, usado_tier), "tier": c["tier"] or "desconhecido"})
+    _gravar_estado("t3-route-usage.json", uso)
+    escolhidos = {(x["providerInstanceId"], x["model"]) for x in destinos}
+    alternativas = [
+        {"providerInstanceId": c["providerInstanceId"], "model": c["model"],
+         "effort": _esforco(c, usado_tier)}
+        for c in sorted(pool, key=ordem)
+        if (c["providerInstanceId"], c["model"]) not in escolhidos
+    ][:4]
+    por_tier = {t: len({c["providerInstanceId"] for c in cands if c["tier"] == t}) for t in TIERS}
+    amb = None
+    try:
+        with open(os.path.join(t3_home(), "userdata", "environment-id"), encoding="utf-8") as fh:
+            amb = fh.read().strip() or None
+    except OSError:
+        pass
+    return {
+        "complexidade": complexidade, "p_complexidade": p_compl, "papel": papel,
+        "tier": usado_tier, "ambiente": amb, "destinos": destinos, "alternativas": alternativas,
+        "catalogo": {"modelos_prontos": len(cands), "provedores_por_tier": por_tier},
+        "nota": ("Use exatamente providerInstanceId, model e effort de cada destino no target da "
+                 "delegação (não deixe o modelo herdado). Uma unidade por destino. Se um destino "
+                 "falhar, use a próxima alternativa. Catálogo do T3 desta máquina."),
+    }
+
+
 TOOLS = [
+    {
+        "name": "route",
+        "description": (
+            "Escolhe provedor, modelo e esforço do catálogo REAL do T3 desta máquina para "
+            "delegar uma tarefa. Classifica a complexidade (Gemini Decision) e usa o tier "
+            "certo: leves (GLM Flash, Haiku, Luna, Gemini Flash…) para o simples, "
+            "intermediários (Sonnet…) para o cotidiano, topo só para o complexo — em rodízio "
+            "entre provedores, para usar todas as LLMs. Chame ANTES de cada delegação e passe "
+            "providerInstanceId, model e effort exatos no target."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "A unidade de trabalho a delegar, sem segredos."},
+                "units": {"type": "integer",
+                          "description": "Unidades independentes (1 a 12); cada uma vai para um provedor diferente."},
+                "complexity": {"type": "string", "enum": list(COMPLEXIDADES),
+                               "description": "Força a complexidade; senão o Gemini Decision classifica."},
+                "exclude": {"type": "array", "items": {"type": "string"},
+                            "description": "providerInstanceIds a evitar (ex.: um que acabou de falhar)."},
+            },
+            "required": ["task"],
+        },
+    },
     {
         "name": "ui_check",
         "description": (
@@ -767,7 +1071,8 @@ TOOLS = [
         },
     },
 ]
-EXECUTORES = {"decide": tool_decide, "ui_check": tool_ui_check, "rank": tool_rank}
+EXECUTORES = {"decide": tool_decide, "ui_check": tool_ui_check, "rank": tool_rank,
+              "route": tool_route}
 
 
 def executar(nome, args):
@@ -901,6 +1206,20 @@ def cli(argv):
             r = tool_ui_check(args)
             imprimir_ui(r)
             return 1 if any(c.get("falhas") or "erro" in c for c in r["capturas"]) else 0
+        if cmd == "route":
+            if not resto:
+                print('uso: route "tarefa" [--units N] [--complexity simples|cotidiana|complexa]', file=sys.stderr)
+                return 2
+            args = {"task": resto[0]}
+            i = 1
+            while i + 1 < len(resto):
+                if resto[i] == "--units":
+                    args["units"] = resto[i + 1]
+                elif resto[i] == "--complexity":
+                    args["complexity"] = resto[i + 1]
+                i += 2
+            print(como_texto(tool_route(args)))
+            return 0
         if cmd == "ask":
             if not resto:
                 print('uso: ask "pergunta de sim/não" [arquivos...]', file=sys.stderr)
