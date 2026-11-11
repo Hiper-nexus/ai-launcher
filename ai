@@ -7233,9 +7233,12 @@ keys_pull() {
     local slots=("$@") remoto s v n=0
     [[ ${#slots[@]} -eq 0 ]] && slots=("${KEYS_PADRAO[@]}")
     # AI_KEYS_SSH_KEY: chave dedicada (no t1, autorizada com command= que só
-    # devolve o providers.conf). accept-new: primeira conexão a um host da casa.
-    local opts=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
+    # devolve o providers.conf). Host key SEMPRE verificada: sem aceitar na
+    # primeira conexão, senão um intermediário entregaria keys/endpoints falsos.
+    # AI_KEYS_KNOWN_HOSTS: known_hosts com a host key fixada de antemão.
+    local opts=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes)
     [[ -n "${AI_KEYS_SSH_KEY:-}" ]] && opts+=(-i "$AI_KEYS_SSH_KEY" -o IdentitiesOnly=yes)
+    [[ -n "${AI_KEYS_KNOWN_HOSTS:-}" ]] && opts+=(-o UserKnownHostsFile="$AI_KEYS_KNOWN_HOSTS")
     if ! remoto=$(ssh "${opts[@]}" "$host" \
             'cat ~/.local/share/ai-launcher/providers.conf' 2>/dev/null); then
         echo -e "${RED}Erro: não consegui ler o providers.conf de ${host} por SSH (chave SSH sem senha?).${RESET}" >&2
@@ -7245,6 +7248,12 @@ keys_pull() {
     for s in "${slots[@]}"; do
         _validate_provider_name "$s" || { echo "  · ${s}: nome inválido"; continue; }
         v=$(grep -m1 "^${s}=" <<<"$remoto" | cut -d= -f2-) || v=""
+        # Endpoint decide para onde a key vai: só https em domínio esperado.
+        if [[ -n "$v" && "$s" == *-base-url ]] &&
+            ! [[ "$v" =~ ^https://[A-Za-z0-9.-]+\.(aliyuncs\.com|alibabacloud\.com)(/|$) ]]; then
+            echo -e "  ${YELLOW}·${RESET} ${s}: endpoint fora dos domínios esperados, ignorado"
+            continue
+        fi
         if [[ -n "$v" ]]; then
             provider_save_key "$s" "$v" && echo -e "  ${GREEN}✔${RESET} ${s}" && n=$((n + 1))
         else
