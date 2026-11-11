@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.71.0"
+AI_LAUNCHER_VERSION="1.72.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -6363,7 +6363,10 @@ except ValueError as e:
 pid = os.environ["QWEN_SYNC_PROVIDER"]
 model = os.environ["QWEN_SYNC_MODEL"]
 # type "alibaba" já traz o qwen3.8-max embutido; os demais são do Token Plan.
-wanted = [model] + [m for m in ("qwen3.8-flash", "qwen3.7-plus", "auto") if m != model]
+# DeepSeek pelo mesmo Token Plan (testados em 2026-11-11 com PONG real; o id
+# genérico "deepseek-v4-flash" dá 403 neste plano, os versionados abaixo não).
+DEEPSEEK = ("deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017")
+wanted = [model] + [m for m in ("qwen3.8-flash", "qwen3.7-plus") + DEEPSEEK + ("auto",) if m != model]
 providers = data.get("providers")
 if not isinstance(providers, dict):
     providers = {}
@@ -6423,6 +6426,10 @@ qwen_require_v1() {
 # modelo do launcher no topo. O T3 relê o settings.json sozinho.
 qwen_setup_t3() {
     qwen_require_v1 || return 1
+    # Lista de modelos do Token Plan (Qwen + DeepSeek) atualizada em toda máquina.
+    if [[ -n "$(qwen_api_key)" ]]; then
+        qwen_sync_settings && echo -e "${GREEN}✔ Modelos do Token Plan atualizados em ~/.qwen/settings.json${RESET}"
+    fi
     local t3_home="${T3CODE_HOME:-${HOME}/.t3}"
     local settings="${t3_home}/userdata/settings.json"
     if [[ ! -f "$settings" ]]; then
@@ -6552,6 +6559,7 @@ qwen_dispatch() {
     case "$sub" in
         key|token)      shift || true; qwen_save_key "${1:-}"; return $? ;;
         t3)             qwen_setup_t3; return $? ;;
+        sync)           qwen_require_v1 && qwen_sync_settings && echo -e "${GREEN}✔ ~/.qwen/settings.json atualizado${RESET}"; return $? ;;
         claude|c)       shift || true; qwen_launch_claude "$@"; return $? ;;
         claude-url|url) shift || true; qwen_save_anthropic_url "${1:-}"; return $? ;;
         menu|panel)     qwen_menu_panel; return $? ;;
@@ -7119,6 +7127,162 @@ gd_dispatch() {
         call)              gd_server_run call "$@" ;;
         help|-h|--help)    gd_help ;;
         *) gd_help; return 1 ;;
+    esac
+}
+
+# ── T3 Code: saúde dos providers (ai t3 / ai t3 fix) ─────
+# O T3 baixa agentes do ACP Registry sozinho e às vezes eles quebram: versão
+# que nunca foi "preparada" (Devin), pacote npm sem o módulo nativo do Node
+# da máquina (MiniMax 0.2.7). Quando o CLI do agente está instalado aqui e
+# responde ACP, a entrada do Registry passa a rodar o CLI local — mesmo id,
+# nome e ícone, então threads e preferências continuam valendo.
+# agentId do Registry → binário local e argumentos ACP.
+T3_ACP_LOCAL=(
+    "devin|devin|acp"
+    "minimax-code|mcode|acp"
+    "kimi|kimi|acp"
+    "codebuddy-code|codebuddy|--acp"
+    "mimo-code|mimo|acp"
+)
+
+t3_settings_path() { printf '%s' "${T3CODE_HOME:-${HOME}/.t3}/userdata/settings.json"; }
+
+# JSON {agentId: [caminho absoluto, [args]]} só com os CLIs presentes aqui.
+t3_local_bins_json() {
+    local item id bin args path out="" sep=""
+    for item in "${T3_ACP_LOCAL[@]}"; do
+        IFS='|' read -r id bin args <<<"$item"
+        path=$(type -P "$bin" 2>/dev/null) || path=""
+        if [[ -z "$path" ]] && ai_is_windows; then
+            path=$(win_bin_path "$bin" 2>/dev/null) || path=""
+        fi
+        [[ -z "$path" ]] && continue
+        path=$(gd_native_path "$path")
+        out+="${sep}$(python3 -I -c 'import json,sys; print(json.dumps(sys.argv[1]) + ": " + json.dumps([sys.argv[2], sys.argv[3].split(",")]))' "$id" "$path" "$args")"
+        sep=", "
+    done
+    printf '{%s}' "$out"
+}
+
+t3_helper() {
+    T3_LOCAL_BINS="$(t3_local_bins_json)" python3 -I - "$@" <<'PY'
+import json, os, subprocess, sys, tempfile, threading, time
+
+modo, settings = sys.argv[1], sys.argv[2]
+base = os.path.dirname(os.path.dirname(settings))
+locais = json.loads(os.environ.get("T3_LOCAL_BINS") or "{}")
+DICAS = {
+    "cursor": "faça login de novo nas configurações do provider no T3 (ou `cursor-agent login`)",
+    "muse": "rode `muse login` e atualize o status no T3",
+    "claudeAgent": "rode `claude` e faça login (ou /login)",
+    "codex": "rode `codex login`",
+}
+
+def ler(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+def acp_responde(cmd, args, prazo=60):
+    """initialize + session/new, como o teste de status do T3."""
+    try:
+        p = subprocess.Popen([cmd] + args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True, cwd=tempfile.gettempdir())
+    except OSError:
+        return False
+    linhas = []
+    threading.Thread(target=lambda: [linhas.append(l) for l in p.stdout], daemon=True).start()
+    def pedir(i, metodo, params):
+        try:
+            p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "method": metodo, "params": params}) + "\n")
+            p.stdin.flush()
+        except OSError:
+            return None
+        fim = time.time() + prazo
+        while time.time() < fim and p.poll() is None:
+            for l in list(linhas):
+                try:
+                    d = json.loads(l)
+                except ValueError:
+                    continue
+                if d.get("id") == i:
+                    return d
+            time.sleep(0.2)
+        return None
+    try:
+        r1 = pedir(1, "initialize", {"protocolVersion": 1, "clientCapabilities": {}})
+        r2 = r1 and "result" in r1 and pedir(2, "session/new", {"cwd": tempfile.gettempdir(), "mcpServers": []})
+        return bool(r2 and "result" in r2)
+    finally:
+        p.kill()
+
+d = ler(settings)
+if not isinstance(d, dict):
+    sys.exit(f"T3 Code não encontrado ou settings.json ilegível: {settings}")
+inst = d.get("providerInstances") or {}
+mudou, pendentes = False, []
+for pid, p in sorted(inst.items()):
+    if not isinstance(p, dict):
+        continue
+    c = ler(os.path.join(base, "caches", f"{pid}.json")) or {}
+    st, msg = c.get("status") or "?", (c.get("message") or "").strip()
+    nome = p.get("displayName") or pid
+    cfg = p.get("config") or {}
+    if p.get("enabled") is False or st in ("ready", "disabled"):
+        if modo == "status":
+            print(f"  {'✔' if st == 'ready' else '·'} {nome:<28} {st}")
+        continue
+    agente = cfg.get("agentId") if cfg.get("source") != "local" else None
+    if modo == "fix" and p.get("driver") == "acpRegistry" and agente in locais:
+        cmd, args = locais[agente]
+        if acp_responde(cmd, args):
+            icone = cfg.get("registryIconUrl")
+            p["config"] = {"source": "local", "commandPath": cmd, "commandArgs": args}
+            if icone:
+                p["config"]["registryIconUrl"] = icone
+            mudou = True
+            print(f"  ✔ {nome:<28} agora roda o CLI local ({cmd} {' '.join(args)})")
+            continue
+        pendentes.append((nome, st, "o CLI local também não respondeu ACP; reinstale/atualize o CLI"))
+        continue
+    dica = DICAS.get(p.get("driver")) or DICAS.get(pid) or (
+        f"instale o CLI de '{agente}' nesta máquina e rode `ai t3 fix`" if agente
+        else "veja a mensagem no T3")
+    pendentes.append((nome, st, f"{msg[:90]} → {dica}" if msg else dica))
+for nome, st, dica in pendentes:
+    print(f"  ✗ {nome:<28} {st}: {dica}")
+if mudou:
+    bak = settings + ".bak-t3fix"
+    if not os.path.exists(bak):
+        with open(settings, encoding="utf-8") as a, open(bak, "w", encoding="utf-8") as b:
+            b.write(a.read())
+    modo_arq = os.stat(settings).st_mode & 0o7777
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(settings), prefix=".settings-")
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.chmod(tmp, modo_arq)
+    os.replace(tmp, settings)
+    print("  O T3 relê o settings.json sozinho; o status atualiza em alguns segundos.")
+if not pendentes and modo == "fix":
+    print("  Nenhum provider ativo com problema.")
+sys.exit(1 if pendentes else 0)
+PY
+}
+
+t3_dispatch() {
+    require_python || return 1
+    local settings; settings=$(t3_settings_path)
+    if [[ ! -f "$settings" ]]; then
+        echo -e "${RED}Erro: T3 Code não encontrado (${settings}).${RESET}" >&2
+        return 1
+    fi
+    case "${1:-status}" in
+        status|"") echo -e "${BOLD}Providers do T3 nesta máquina${RESET}"; t3_helper status "$settings" ;;
+        fix)       echo -e "${BOLD}Consertando providers do T3${RESET}"; t3_helper fix "$settings" ;;
+        *) echo "Use: ai t3 [status] | ai t3 fix"; return 1 ;;
     esac
 }
 
@@ -7836,6 +8000,9 @@ Exemplos:
   ai qw claude                    Claude Code usando o Qwen
   ai qw key                       Salva a key da Alibaba/DashScope
   ai qw t3                        Liga o Qwen Code 1.0 no T3 Code desta máquina
+  ai qw sync                      Atualiza modelos do Token Plan (Qwen + DeepSeek) no Qwen 1.0
+  ai t3                           Saúde dos providers do T3 nesta máquina
+  ai t3 fix                       Conserta agentes do Registry quebrados usando o CLI local
   ai gd                           Gemini Decision: status (key, MCP nas CLIs, uso)
   ai gd key                       Salva a key do Google AI Studio
   ai gd setup                     Liga o MCP gemini_decision em todas as CLIs (T3)
@@ -9290,6 +9457,10 @@ elif [[ ${1:-} == "ab" || ${1:-} == "abliteration" ]]; then
 elif [[ ${1:-} == "qw" || ${1:-} == "qwen" ]]; then
     shift
     qwen_dispatch "$@"
+    exit $?
+elif [[ ${1:-} == "t3" ]]; then
+    shift
+    t3_dispatch "$@"
     exit $?
 elif [[ ${1:-} == "gd" || ${1:-} == "decision" || ${1:-} == "gemini-decision" ]]; then
     shift

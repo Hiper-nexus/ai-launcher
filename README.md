@@ -422,6 +422,8 @@ ai qw claude     # Opção 2: Claude Code usando o Qwen como backend
 
   O 1.0 não lê mais `OPENAI_*`: só enxerga providers do `~/.qwen/settings.json`. Por isso o `ai qw` (e o `ai qw key`) grava ali o provider `alibaba-token-plan` (endpoint de `qwen_base_url()`, modelos `qwen4-max-preview`, `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus`, `auto`), preservando o resto do arquivo. Com isso o `qwen` puro — no terminal ou no T3 — também já sai autenticado. A key vai **literal** no arquivo (chmod 600; no Windows, ACL só do dono), porque o 1.0.0-preview não resolve `${VAR}` no `apiKey`. Config: `AI_QWEN_BASE_URL`, `AI_QWEN_MODEL` (default `qwen4-max-preview`). Com o 0.x no PATH o launcher recusa e mostra o comando de instalação.
 
+  **DeepSeek no Qwen Code 1.0:** o provider do Token Plan inclui `deepseek-v4-pro`, `deepseek-v4-pro-0813`, `deepseek-v4.1-flash` e `deepseek-v4.1-flash-1017`, todos testados com resposta real em 2026-11-11 (o id genérico `deepseek-v4-flash` dá 403 no plano). Use `qwen -m alibaba-token-plan/deepseek-v4.1-flash` ou o `/model`. Para atualizar a lista numa máquina: `ai qw sync`.
+
   **No T3 Code:** `ai qw t3` liga o 1.0 no T3 da máquina. Ele desativa o agente "Qwen Code" do ACP Registry (que baixa sozinho o npm 0.x para `~/.t3/tools/qwen-code`), deixa um provider local "Qwen Code 1.0" rodando `qwen --acp` pelo caminho absoluto e põe o `qwen4-max-preview` no topo. O T3 relê o `settings.json` sozinho. Máquina nova, do zero:
 
   ```bash
@@ -842,6 +844,31 @@ claude mcp add jev -s user -- python3 /caminho/para/ai-launcher/mcp/jev-server.p
 command = "python3"
 args = ["/caminho/para/ai-launcher/mcp/jev-server.py"]
 ```
+
+## T3 Code: providers funcionando (`ai t3`)
+
+```bash
+ai t3        # saúde de cada provider do T3 nesta máquina
+ai t3 fix    # conserta agentes do ACP Registry quebrados usando o CLI local
+```
+
+O T3 baixa agentes do ACP Registry por conta própria, e às vezes eles quebram:
+
+- uma versão nova que nunca foi "preparada" (aconteceu com o Devin);
+- um pacote npm sem o módulo nativo do Node da máquina (o MiniMax 0.2.7 sem
+  `better-sqlite3`).
+
+O `ai t3 fix` resolve isso quando o CLI do agente está instalado na máquina
+(Devin, MiniMax, Kimi, CodeBuddy, MiMo). Ele primeiro testa se o CLI
+responde ACP (`initialize` + `session/new`, o mesmo teste do T3). Se
+responder, aponta a entrada do Registry para o CLI local e mantém o mesmo id,
+nome e ícone, então threads e preferências continuam valendo. O que depende de
+você, como um login expirado, ele lista com a dica do que fazer. Na primeira
+mudança, guarda `settings.json.bak-t3fix`.
+
+Nas máquinas que têm a key do Gemini Decision, o `install.sh` roda
+`ai gd setup`, `ai qw sync` e `ai t3 fix` a cada atualização. Então basta
+`git pull && ./install.sh`.
 
 ## Gemini Decision (`ai gd`) — decisões calibradas para os agentes do T3
 

@@ -130,6 +130,13 @@ if grep -q '^gemini-decision=' "${HOME}/.local/share/ai-launcher/providers.conf"
     echo ""
     echo -e "${CYAN}Gemini Decision: atualizando o MCP nas CLIs desta máquina...${RESET}"
     "${INSTALL_DIR}/ai" gd setup || echo -e "${YELLOW}Aviso: ai gd setup terminou com erro (acima).${RESET}"
+    # Mesma máquina "da casa": modelos do Token Plan (Qwen + DeepSeek) no
+    # Qwen 1.0 e agentes do Registry quebrados no T3 trocados pelo CLI local.
+    "${INSTALL_DIR}/ai" qw sync >/dev/null 2>&1 || true
+    if [[ -f "${T3CODE_HOME:-${HOME}/.t3}/userdata/settings.json" ]]; then
+        echo -e "${CYAN}T3 Code: conferindo providers...${RESET}"
+        "${INSTALL_DIR}/ai" t3 fix || echo -e "${YELLOW}Pendências acima precisam de você (login etc.).${RESET}"
+    fi
 fi
 
 echo ""
