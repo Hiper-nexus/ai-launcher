@@ -7232,7 +7232,11 @@ keys_pull() {
     fi
     local slots=("$@") remoto s v n=0
     [[ ${#slots[@]} -eq 0 ]] && slots=("${KEYS_PADRAO[@]}")
-    if ! remoto=$(ssh -o BatchMode=yes -o ConnectTimeout=15 "$host" \
+    # AI_KEYS_SSH_KEY: chave dedicada (no t1, autorizada com command= que só
+    # devolve o providers.conf). accept-new: primeira conexão a um host da casa.
+    local opts=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
+    [[ -n "${AI_KEYS_SSH_KEY:-}" ]] && opts+=(-i "$AI_KEYS_SSH_KEY" -o IdentitiesOnly=yes)
+    if ! remoto=$(ssh "${opts[@]}" "$host" \
             'cat ~/.local/share/ai-launcher/providers.conf' 2>/dev/null); then
         echo -e "${RED}Erro: não consegui ler o providers.conf de ${host} por SSH (chave SSH sem senha?).${RESET}" >&2
         return 1
@@ -7352,6 +7356,10 @@ for pid, p in sorted(inst.items()):
     st, msg = c.get("status") or "?", (c.get("message") or "").strip()
     nome = p.get("displayName") or pid
     cfg = p.get("config") or {}
+    if not c:  # provider novo: o T3 ainda não checou; não é pendência
+        if modo == "status":
+            print(f"  … {nome:<28} verificando")
+        continue
     sem_login = ((c.get("auth") or {}).get("status") == "unauthenticated") or any(
         t in msg.lower() for t in ("sign in", "log in", "login"))
     if p.get("enabled") is False or st == "disabled" or (st == "ready" and not sem_login):
