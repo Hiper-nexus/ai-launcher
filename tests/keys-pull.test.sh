@@ -30,4 +30,13 @@ perm=$(stat -f '%Lp' "$conf" 2>/dev/null || stat -c '%a' "$conf"); [[ "$perm" ==
 if HOME="$H" PATH="$BIN:$PATH" "$ROOT/ai" keys pull outro-host >/dev/null 2>&1; then fail "host inacessível deveria falhar"; fi
 grep -q "StrictHostKeyChecking=yes" "${TMP_DIR}/ssh-args" || fail "ssh sem checagem estrita de host: $(cat "${TMP_DIR}/ssh-args")"
 echo "  ok: slots padrão copiados sem eco, locais preservados, extras ignorados, 600; host ruim falha"
+# import por stdin (canal do age): mesmos filtros, nada impresso
+H2="${TMP_DIR}/home2"; mkdir -p "$H2"
+saida=$(printf 'gemini-decision=AQ.import-789\nqwen-base-url=https://x.aliyuncs.com/v1\nlixo=1\n' |
+    HOME="$H2" "$ROOT/ai" keys import 2>&1) || fail "keys import falhou: $saida"
+grep -qx 'gemini-decision=AQ.import-789' "$H2/.local/share/ai-launcher/providers.conf" || fail "import não gravou"
+grep -qx 'qwen-base-url=https://x.aliyuncs.com/v1' "$H2/.local/share/ai-launcher/providers.conf" || fail "import barrou endpoint válido"
+grep -q '^lixo=' "$H2/.local/share/ai-launcher/providers.conf" && fail "import trouxe slot não pedido"
+echo "$saida" | grep -q "import-789" && fail "import imprimiu valor"
+echo "  ok: ai keys import por stdin com os mesmos filtros"
 echo "PASS: ai keys pull"

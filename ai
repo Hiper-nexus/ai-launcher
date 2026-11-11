@@ -7230,7 +7230,7 @@ keys_pull() {
         echo "Use: ai keys pull <host-ssh> [slot ...]   (padrão: ${KEYS_PADRAO[*]})" >&2
         return 1
     fi
-    local slots=("$@") remoto s v n=0
+    local slots=("$@") remoto
     [[ ${#slots[@]} -eq 0 ]] && slots=("${KEYS_PADRAO[@]}")
     # AI_KEYS_SSH_KEY: chave dedicada (no t1, autorizada com command= que só
     # devolve o providers.conf). Host key SEMPRE verificada: sem aceitar na
@@ -7244,6 +7244,18 @@ keys_pull() {
         echo -e "${RED}Erro: não consegui ler o providers.conf de ${host} por SSH (chave SSH sem senha?).${RESET}" >&2
         return 1
     fi
+    keys_aplicar "$remoto" "$host" "${slots[@]}"
+    local rc=$?
+    remoto=""
+    return $rc
+}
+
+# Aplica linhas slot=valor (de outra máquina) ao providers.conf, só os slots
+# pedidos, sem imprimir valores. Usado pelo pull (SSH) e pelo import (stdin,
+# ex.: `age -d -i ~/.ssh/chave arquivo.age | ai keys import`).
+keys_aplicar() {
+    local remoto="$1" origem="$2"; shift 2
+    local slots=("$@") s v n=0
     mkdir -p "$(dirname "$PROVIDERS_FILE")" || return 1
     for s in "${slots[@]}"; do
         _validate_provider_name "$s" || { echo "  · ${s}: nome inválido"; continue; }
@@ -7257,12 +7269,26 @@ keys_pull() {
         if [[ -n "$v" ]]; then
             provider_save_key "$s" "$v" && echo -e "  ${GREEN}✔${RESET} ${s}" && n=$((n + 1))
         else
-            echo "  · ${s}: não existe em ${host}"
+            echo "  · ${s}: não existe em ${origem}"
         fi
     done
-    remoto=""; v=""
+    v=""
     echo -e "${DIM}${n} slot(s) copiado(s) para ${PROVIDERS_FILE} (chmod 600).${RESET}"
     [[ $n -gt 0 ]]
+}
+
+keys_import() {
+    local slots=("$@") conteudo
+    [[ ${#slots[@]} -eq 0 ]] && slots=("${KEYS_PADRAO[@]}")
+    if [[ -t 0 ]]; then
+        echo "Use: <linhas slot=valor> | ai keys import [slot ...]   (ex.: age -d -i ~/.ssh/chave keys.age | ai keys import)" >&2
+        return 1
+    fi
+    conteudo=$(cat) || return 1
+    keys_aplicar "$conteudo" "stdin" "${slots[@]}"
+    local rc=$?
+    conteudo=""
+    return $rc
 }
 
 t3_settings_path() { printf '%s' "${T3CODE_HOME:-${HOME}/.t3}/userdata/settings.json"; }
@@ -9607,7 +9633,8 @@ elif [[ ${1:-} == "keys" ]]; then
     shift
     case "${1:-}" in
         pull) shift; keys_pull "$@"; exit $? ;;
-        *) echo "Use: ai keys pull <host-ssh> [slot ...]"; exit 1 ;;
+        import) shift; keys_import "$@"; exit $? ;;
+        *) echo "Use: ai keys pull <host-ssh> [slot ...] | <slot=valor...> | ai keys import [slot ...]"; exit 1 ;;
     esac
 elif [[ ${1:-} == "t3" ]]; then
     shift
