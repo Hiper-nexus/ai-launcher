@@ -6310,14 +6310,29 @@ qwen_save_key() {
     local key="${1:-}"
     if [[ -z "$key" && -t 0 ]]; then
         read -rsp "$(echo -e "  ${BOLD}API key da Alibaba/DashScope (sk-...):${RESET} ")" key; echo ""
+    elif [[ -z "$key" ]]; then
+        IFS= read -r key || true  # por pipe: a key não passa por argv (ps)
     fi
+    key="${key//[[:space:]]/}"
     [[ -z "$key" ]] && { echo -e "${RED}Erro: key vazia.${RESET}" >&2; return 1; }
+    mkdir -p "$(dirname "$PROVIDERS_FILE")" || return 1
     provider_save_key dashscope "$key" || return 1
     echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
     # O qwen fora do launcher (terminal, T3) lê a key do settings.json do 1.0.
     if qwen_is_v1; then
         qwen_sync_settings && echo -e "${GREEN}✔ Provider ${QWEN_PROVIDER_ID} atualizado em ~/.qwen/settings.json${RESET}"
     fi
+}
+
+# Endpoint do plano (não é segredo). O Token Plan tem host próprio; sem ele a
+# key cai no endpoint genérico e devolve 401.
+qwen_save_base_url() {
+    local url="${1:-}"
+    url="${url//[[:space:]]/}"; url="${url%/}"
+    [[ "$url" =~ ^https:// ]] || { echo -e "${RED}Erro: URL precisa começar com https://${RESET}" >&2; return 1; }
+    mkdir -p "$(dirname "$PROVIDERS_FILE")" || return 1
+    provider_save_key qwen-base-url "$url" || return 1
+    echo -e "${GREEN}✔ Endpoint salvo${RESET} ${DIM}(${url})${RESET}"
 }
 
 # O 1.0 trocou o modelo de config: o 0.x lia OPENAI_*, o 1.0 só enxerga
@@ -6559,6 +6574,7 @@ qwen_dispatch() {
     case "$sub" in
         key|token)      shift || true; qwen_save_key "${1:-}"; return $? ;;
         t3)             qwen_setup_t3; return $? ;;
+        base-url|url)   shift || true; qwen_save_base_url "${1:-}"; return $? ;;
         sync)           qwen_require_v1 && qwen_sync_settings && echo -e "${GREEN}✔ ~/.qwen/settings.json atualizado${RESET}"; return $? ;;
         claude|c)       shift || true; qwen_launch_claude "$@"; return $? ;;
         claude-url|url) shift || true; qwen_save_anthropic_url "${1:-}"; return $? ;;
@@ -7247,7 +7263,9 @@ for pid, p in sorted(inst.items()):
             continue
         pendentes.append((nome, st, "o CLI local também não respondeu ACP; reinstale/atualize o CLI"))
         continue
-    dica = DICAS.get(p.get("driver")) or DICAS.get(pid) or (
+    login = any(t in msg.lower() for t in ("sign in", "login", "log in", "expired", "unauthenticated"))
+    dica = ("faça login pelo T3 (configurações do provider) ou pelo CLI do agente" if login else None) or \
+        DICAS.get(p.get("driver")) or DICAS.get(pid) or (
         f"instale o CLI de '{agente}' nesta máquina e rode `ai t3 fix`" if agente
         else "veja a mensagem no T3")
     pendentes.append((nome, st, f"{msg[:90]} → {dica}" if msg else dica))
