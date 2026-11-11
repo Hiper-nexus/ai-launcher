@@ -188,7 +188,7 @@ secure_dir "${TMP_DIR}/nao-existe-dir" || fail "secure_dir falhou em caminho aus
 : "${YELLOW:=}" "${RESET:=}"
 
 CLIS_COM_HINT=(claude codex gemini deepcode qodercli kimi grok opencode omp
-               agy devin cursor-agent prime-agent muse ollama)
+               agy devin cursor-agent prime-agent muse ollama qwen)
 
 for cli in "${CLIS_COM_HINT[@]}"; do
     hint=$(cli_install_hint "$cli") ||

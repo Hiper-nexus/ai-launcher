@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.69.0"
+AI_LAUNCHER_VERSION="1.70.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -157,7 +157,6 @@ QWEN_PROVIDER_ID="alibaba-token-plan"
 # qwen4-max-preview, e faz fuzzy match no --model: o nome novo cairia calado
 # em outro modelo. Fica fixo até o catálogo do OMP trazer o qwen4.
 OMP_QWEN_MODEL="${AI_OMP_QWEN_MODEL:-qwen3.8-max}"
-QWEN_INSTALL_CMD="curl -fsSL 'https://qwen-code.oss-accelerate.aliyuncs.com/install.sh' | bash"
 
 # Variáveis de ambiente para cada CLI
 
@@ -390,6 +389,15 @@ cli_install_hint() {
             fi
             ;;
         # Instalador próprio nas duas plataformas, script diferente.
+        qwen)
+            # Qwen Code 1.0 (binário nativo). O npm @qwen-code/qwen-code é o 0.x.
+            if ai_is_windows; then
+                echo "  Instale: irm https://qwen-code.oss-accelerate.aliyuncs.com/install.ps1 | iex"
+                echo "  (no PowerShell; depois reabra o terminal para o PATH valer)"
+            else
+                echo "  Instale: curl -fsSL https://qwen-code.oss-accelerate.aliyuncs.com/install.sh | bash"
+            fi
+            ;;
         agy)
             if ai_is_windows; then
                 echo "  Instale: irm https://antigravity.google/cli/install.ps1 | iex"
@@ -6338,12 +6346,12 @@ qwen_sync_settings() {
     QWEN_SYNC_BASE="$(qwen_base_url)" \
     QWEN_SYNC_MODEL="$QWEN_MODEL" \
     QWEN_SYNC_PROVIDER="$QWEN_PROVIDER_ID" \
-    python3 -I - "${dir}/settings.json" <<'PY'
+    python3 -I - "${dir}/settings.json" <<'PY' || return 1
 import json, os, sys, tempfile
 
 path = sys.argv[1]
 try:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
         raise ValueError("settings.json não é um objeto")
@@ -6377,7 +6385,7 @@ data["model"] = current
 
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".settings-")
 try:
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
     os.chmod(tmp, 0o600)
@@ -6386,6 +6394,126 @@ except BaseException:
     os.unlink(tmp)
     raise
 PY
+    # No Windows o chmod acima não protege nada; quem fecha é a ACL.
+    secure_file "${dir}/settings.json"
+}
+
+# O launcher usa o 1.0: com o 0.x no PATH (lia OPENAI_*) ele rodaria sem
+# modelo nenhum, e o T3 cairia no mesmo binário.
+qwen_require_v1() {
+    if ! check_installed qwen; then
+        echo -e "${RED}Erro: Qwen Code não está instalado.${RESET}" >&2
+        cli_install_hint qwen >&2
+        return 1
+    fi
+    if ! qwen_is_v1; then
+        echo -e "${RED}Erro: o qwen no PATH é o Qwen Code 0.x ($(command -v qwen)).${RESET}" >&2
+        echo "  O launcher usa o 1.0." >&2
+        cli_install_hint qwen >&2
+        echo "  E remova o 0.x: npm uninstall -g @qwen-code/qwen-code" >&2
+        return 1
+    fi
+}
+
+# Liga o Qwen Code 1.0 no T3 Code desta máquina. O T3 roda o Qwen de dois
+# jeitos: o agente "qwen-code" do ACP Registry, que baixa sozinho o pacote npm
+# (o 0.x) para ~/.t3/tools/qwen-code, e um provider "local" que executa um
+# binário. Este comando desativa o do registry (não apaga: dá para religar na
+# tela de providers) e deixa um provider local no qwen 1.0 com --acp e o
+# modelo do launcher no topo. O T3 relê o settings.json sozinho.
+qwen_setup_t3() {
+    qwen_require_v1 || return 1
+    local t3_home="${T3CODE_HOME:-${HOME}/.t3}"
+    local settings="${t3_home}/userdata/settings.json"
+    if [[ ! -f "$settings" ]]; then
+        echo -e "${RED}Erro: T3 Code não encontrado (${settings}).${RESET}" >&2
+        echo "  Abra o T3 Code uma vez nesta máquina e rode de novo." >&2
+        return 1
+    fi
+    # Caminho absoluto: o PATH do T3 vem de outro lugar (cache do shell no
+    # macOS, ambiente do Windows) e pode não ter o ~/.local/bin.
+    local bin
+    if ai_is_windows; then
+        bin=$(win_bin_path qwen) || bin=$(command -v qwen)
+        bin=$(cygpath -w "$bin" 2>/dev/null || printf '%s' "$bin")
+    else
+        bin=$(command -v qwen)
+    fi
+    python3 -I - "$settings" "$bin" "${QWEN_PROVIDER_ID}/${QWEN_MODEL}" <<'PY' || return 1
+import json, os, sys, tempfile
+
+path, command, model = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("não é um objeto")
+except ValueError as e:
+    sys.exit(f"settings.json do T3 inválido, não mexi nele: {e}")
+
+instances = data.get("providerInstances")
+if not isinstance(instances, dict):
+    instances = {}
+
+def runs_qwen(cfg):
+    name = os.path.basename(str(cfg.get("commandPath") or "").replace("\\", "/"))
+    return name.lower() in ("qwen", "qwen.exe", "qwen.cmd")
+
+disabled, local_id = [], None
+for iid, inst in instances.items():
+    if not isinstance(inst, dict) or inst.get("driver") != "acpRegistry":
+        continue
+    cfg = inst.get("config") if isinstance(inst.get("config"), dict) else {}
+    if cfg.get("source") == "local":
+        if local_id is None and runs_qwen(cfg):
+            local_id = iid
+    elif cfg.get("agentId") == "qwen-code" and inst.get("enabled", True):
+        inst["enabled"] = False
+        disabled.append(iid)
+
+created = local_id is None
+if created:
+    local_id = "qwen_local" if "qwen_local" not in instances else "qwen_code_v1"
+    instances[local_id] = {"driver": "acpRegistry", "config": {"source": "local"}}
+inst = instances[local_id]
+cfg = inst.setdefault("config", {})
+cfg["commandPath"] = command
+args = cfg.get("commandArgs") if isinstance(cfg.get("commandArgs"), list) else []
+cfg["commandArgs"] = args if "--acp" in args else ["--acp"] + args
+inst["displayName"] = "Qwen Code 1.0"
+inst["enabled"] = True
+data["providerInstances"] = instances
+
+prefs = data.get("providerModelPreferences")
+if not isinstance(prefs, dict):
+    prefs = {}
+pref = prefs.get(local_id) if isinstance(prefs.get(local_id), dict) else {"hiddenModels": []}
+order = pref.get("modelOrder") if isinstance(pref.get("modelOrder"), list) else []
+pref["modelOrder"] = [model] + [m for m in order if m != model]
+prefs[local_id] = pref
+data["providerModelPreferences"] = prefs
+
+mode = os.stat(path).st_mode & 0o777
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".settings-")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+except BaseException:
+    os.unlink(tmp)
+    raise
+
+print(f"  {'criado' if created else 'atualizado'}: {local_id} → {command} --acp")
+for iid in disabled:
+    print(f"  desativado: {iid} (registry, baixava o npm 0.x)")
+PY
+    echo -e "${GREEN}✔ T3 Code: Qwen Code 1.0 (${QWEN_MODEL})${RESET} ${DIM}— o T3 aplica sozinho; se não aparecer, reabra o app${RESET}"
+    local cache="${t3_home}/tools/qwen-code"
+    if [[ -d "$cache" ]]; then
+        echo -e "  ${DIM}Cache do 0.x que o registry baixou: ${cache} ($(du -sh "$cache" 2>/dev/null | cut -f1)) — pode apagar.${RESET}"
+    fi
 }
 
 qwen_status_icon() {
@@ -6402,17 +6530,7 @@ qwen_status_icon() {
 
 # Lança o Qwen Code 1.0 no provider do Token Plan (Model Studio).
 qwen_launch() {
-    if ! check_installed qwen; then
-        echo -e "${RED}Erro: Qwen Code não está instalado.${RESET}" >&2
-        echo "  Instale: ${QWEN_INSTALL_CMD}" >&2
-        return 1
-    fi
-    if ! qwen_is_v1; then
-        echo -e "${RED}Erro: o qwen no PATH é o Qwen Code 0.x ($(command -v qwen)).${RESET}" >&2
-        echo "  O launcher usa o 1.0. Instale: ${QWEN_INSTALL_CMD}" >&2
-        echo "  E remova o 0.x: npm uninstall -g @qwen-code/qwen-code" >&2
-        return 1
-    fi
+    qwen_require_v1 || return 1
     local key; key=$(qwen_api_key)
     if [[ -z "$key" ]]; then
         echo -e "${RED}Erro: nenhuma API key da Alibaba/DashScope.${RESET}" >&2
@@ -6433,6 +6551,7 @@ qwen_dispatch() {
     local sub="${1:-}"
     case "$sub" in
         key|token)      shift || true; qwen_save_key "${1:-}"; return $? ;;
+        t3)             qwen_setup_t3; return $? ;;
         claude|c)       shift || true; qwen_launch_claude "$@"; return $? ;;
         claude-url|url) shift || true; qwen_save_anthropic_url "${1:-}"; return $? ;;
         menu|panel)     qwen_menu_panel; return $? ;;
@@ -7153,6 +7272,7 @@ Exemplos:
   ai qw                           Qwen Code 1.0 (qwen4-max-preview, Token Plan)
   ai qw claude                    Claude Code usando o Qwen
   ai qw key                       Salva a key da Alibaba/DashScope
+  ai qw t3                        Liga o Qwen Code 1.0 no T3 Code desta máquina
   ai a                            Antigravity
   ai p ls                         Lista providers configurados
   ai f                            Toggle de flags antes de lançar

@@ -414,7 +414,20 @@ ai qw claude     # Opção 2: Claude Code usando o Qwen como backend
   npm uninstall -g @qwen-code/qwen-code   # remove o 0.x, que ficaria antes no PATH
   ```
 
-  O 1.0 não lê mais `OPENAI_*`: só enxerga providers do `~/.qwen/settings.json`. Por isso o `ai qw` (e o `ai qw key`) grava ali o provider `alibaba-token-plan` (endpoint de `qwen_base_url()`, modelos `qwen4-max-preview`, `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus`, `auto`), preservando o resto do arquivo. Com isso o `qwen` puro — no terminal ou no T3 — também já sai autenticado. A key vai **literal** no arquivo (chmod 600), porque o 1.0.0-preview não resolve `${VAR}` no `apiKey`. Config: `AI_QWEN_BASE_URL`, `AI_QWEN_MODEL` (default `qwen4-max-preview`). Com o 0.x no PATH o launcher recusa e mostra o comando de instalação.
+  No Windows, no **PowerShell** (x64 e ARM64; depois reabra o terminal):
+
+  ```powershell
+  irm https://qwen-code.oss-accelerate.aliyuncs.com/install.ps1 | iex
+  ```
+
+  O 1.0 não lê mais `OPENAI_*`: só enxerga providers do `~/.qwen/settings.json`. Por isso o `ai qw` (e o `ai qw key`) grava ali o provider `alibaba-token-plan` (endpoint de `qwen_base_url()`, modelos `qwen4-max-preview`, `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus`, `auto`), preservando o resto do arquivo. Com isso o `qwen` puro — no terminal ou no T3 — também já sai autenticado. A key vai **literal** no arquivo (chmod 600; no Windows, ACL só do dono), porque o 1.0.0-preview não resolve `${VAR}` no `apiKey`. Config: `AI_QWEN_BASE_URL`, `AI_QWEN_MODEL` (default `qwen4-max-preview`). Com o 0.x no PATH o launcher recusa e mostra o comando de instalação.
+
+  **No T3 Code:** `ai qw t3` liga o 1.0 no T3 da máquina. Ele desativa o agente "Qwen Code" do ACP Registry (que baixa sozinho o npm 0.x para `~/.t3/tools/qwen-code`), deixa um provider local "Qwen Code 1.0" rodando `qwen --acp` pelo caminho absoluto e põe o `qwen4-max-preview` no topo. O T3 relê o `settings.json` sozinho. Máquina nova, do zero:
+
+  ```bash
+  ai qw key    # cola a key do Token Plan
+  ai qw t3     # liga no T3
+  ```
 - **Opção 2 (`ai qw claude`)** — usa o endpoint **Anthropic-compatible** (`/apps/anthropic`), o mesmo mecanismo do GLM. O Coding Plan tem URL fixa; o pay-as-you-go (Model Studio) inclui seu **WorkspaceId** na URL e serve o Max — configure com `ai qw claude-url <url>`.
 
 A key vai só pro `providers.conf` local (chmod 600, slot `dashscope`), nunca pro repo.
@@ -922,6 +935,7 @@ irm https://antigravity.google/cli/install.ps1 | iex            # Antigravity
 irm https://static.devin.ai/cli/setup.ps1 | iex                 # Devin CLI
 irm 'https://cursor.com/install?win32=true' | iex               # Cursor Agent
 irm https://dev.meta.ai/install.ps1 | iex                       # Muse Code (nativo)
+irm https://qwen-code.oss-accelerate.aliyuncs.com/install.ps1 | iex  # Qwen Code 1.0
 winget install Ollama.Ollama                                    # Ollama
 ```
 
