@@ -56,6 +56,24 @@ fi
 
 chmod +x "${INSTALL_DIR}/ai"
 
+# Servidor MCP do Gemini Decision: caminho estável que `ai gd setup` grava no
+# config das CLIs (git pull no repo não quebra nada). Falha aqui não é fatal:
+# o `ai gd setup` baixa de novo se faltar.
+MCP_DIR="${HOME}/.local/share/ai-launcher/mcp"
+mkdir -p "$MCP_DIR"
+for _mcp in gemini-decision-server.py; do
+    _local="$(dirname "${BASH_SOURCE[0]}")/mcp/${_mcp}"
+    if [[ -f "$_local" && -z "${AI_LAUNCHER_FORCE_DOWNLOAD:-}" ]]; then
+        cp "$_local" "${MCP_DIR}/${_mcp}"
+    elif command -v curl &>/dev/null &&
+        curl -fsSL "${REPO_RAW}/mcp/${_mcp}" -o "${MCP_DIR}/${_mcp}.tmp"; then
+        mv "${MCP_DIR}/${_mcp}.tmp" "${MCP_DIR}/${_mcp}"
+    else
+        rm -f "${MCP_DIR}/${_mcp}.tmp"
+        echo -e "${YELLOW}Aviso: mcp/${_mcp} não instalado (ai gd setup baixa depois).${RESET}"
+    fi
+done
+
 # Limpar backup se tudo deu certo
 rm -f "${INSTALL_DIR}/ai.bak"
 

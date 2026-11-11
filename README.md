@@ -843,6 +843,76 @@ command = "python3"
 args = ["/caminho/para/ai-launcher/mcp/jev-server.py"]
 ```
 
+## Gemini Decision (`ai gd`) — decisões calibradas para os agentes do T3
+
+O Gemini Decision 1 (`gemini-decision-1`, Google, lançado em 2026-11-11) não é
+um agente de código e não gera texto. Ele responde perguntas **fechadas** com
+probabilidade calibrada em cerca de 200 ms: sim/não (`noul`), uma opção de uma
+lista (`choice`) ou uma nota numa rubrica (`score`). A entrada pode ser texto,
+imagem, PDF, áudio ou vídeo, com até 1000 perguntas por chamada. O preço é
+US$ 0,10 por 1M tokens de entrada, e a saída não é cobrada.
+
+Ele chega aos agentes como o servidor MCP `gemini_decision`
+(`mcp/gemini-decision-server.py`, só stdlib), com três tools:
+
+| Tool | Para quê |
+|------|----------|
+| `ui_check` | Confere screenshots contra critérios de aceite. Já vem com checagens de texto cortado, imagem quebrada, erro visível, overflow e tela vazia. Com `reference` (mock aprovado), também mede a fidelidade ao design. |
+| `rank` | Ordena candidatos pelo quanto atendem a um requisito: componentes do BoardUI, do shadcnuikit ou do projeto antes de criar do zero, arquivos a ler, abordagens. |
+| `decide` | Perguntas livres sobre um log, um diff, o PDF de uma spec ou o vídeo de um fluxo. |
+
+```bash
+ai gd key      # 1x por máquina: key de https://aistudio.google.com/api-keys
+ai gd setup    # registra nas CLIs desta máquina (é o que o T3 roda)
+ai gd test     # chamada real: latência e tokens
+ai gd          # status: key, CLIs com o MCP, instruções, uso de hoje
+ai gd remove   # desfaz o setup (a key fica)
+ai gd ui home-1440.png home-375.png -c "O CTA principal aparece sem rolar" --ref mock.png
+ai gd ask "O vídeo mostra o checkout concluindo sem erro?" fluxo.webm
+```
+
+`ai gd setup` registra o servidor em todas as CLIs instaladas que o T3 roda:
+
+- Claude Code, inclusive os perfis `~/.claude_*` e o `homePath` dos providers
+  `claudeAgent` do T3. O registro passa por `claude mcp add-json`.
+- Codex, inclusive `~/.codex-*` e o `homePath` dos providers `codex` do T3.
+- Gemini CLI, Antigravity, Qwen Code, Kimi, Cursor, MiniMax Code, Devin,
+  CodeBuddy, Muse e opencode.
+- Os arquivos que providers do T3 recebem por `--mcp-config` (o Qwen ACP do
+  t1, por exemplo).
+
+Ele também põe, nas regras globais que já existirem (`CLAUDE.md`, `AGENTS.md`,
+`GEMINI.md`…), um bloco que manda os agentes usarem as tools **em toda
+missão**: `ui_check` antes de entregar UI, `rank` antes de criar componente,
+`decide` em erro ou log, e a exigência de `ui_check` ao delegar UI.
+
+O setup pode rodar de novo à vontade, porque não duplica nada. Ele não cria
+config para CLI que não está instalada. Na primeira edição de cada arquivo,
+guarda o original em `<arquivo>.bak-gd`. O `config.toml` do Codex é validado
+antes de ser gravado. `ai gd remove` desfaz tudo e mantém a key.
+
+Alguns agentes ACP não têm config global de MCP: o GLM ACP agent, o MiMo e o
+harness do DeepSeek. Eles só recebem os MCPs que o próprio T3 envia na sessão.
+Para esses, cadastre o servidor uma vez nas conexões MCP da interface do T3,
+com o comando `python3` e o argumento
+`~/.local/share/ai-launcher/mcp/gemini-decision-server.py`.
+
+Garantias (travadas em `tests/gemini-decision.test.sh`):
+
+- **A key fica só no `providers.conf`**, no slot `gemini-decision` com chmod
+  600. O servidor lê de lá, e nenhum config de CLI recebe a key.
+- **Texto com cara de credencial é recusado antes da rede.** Isso cobre
+  `AIza…`, `sk-…`, `ghp_…`, JWT, chave privada e similares.
+- **Só mídia sai como arquivo:** imagem, PDF, áudio ou vídeo. Um `.env` ou um
+  arquivo de código passado em `files` é recusado.
+- **O registro de uso guarda só números:** data, tool, tokens, ms e número de
+  perguntas. Fica em `~/.local/share/ai-launcher/gemini-decision-usage.jsonl`,
+  sem conteúdo.
+
+> Na camada gratuita da API, o Google pode usar o conteúdo enviado para
+> melhorar produtos. Mande screenshots com dados de teste. Para dados reais de
+> cliente, use uma key com faturamento ativo.
+
 ## Agente de browser com Jev (`ai jb`)
 
 O `ai ask` usa o Jev para **escolher** uma CLI. Este usa o Jev para **decidir

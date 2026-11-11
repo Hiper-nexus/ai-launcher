@@ -37,3 +37,4 @@ Thumbs.db
 # ── Previews / demos locais (não são o launcher) ──────────
 preview-*.png
 pelicano-*.html
+__pycache__/

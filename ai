@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.70.0"
+AI_LAUNCHER_VERSION="1.71.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -6559,6 +6559,554 @@ qwen_dispatch() {
     esac
 }
 
+# ── Gemini Decision (Google) ─────────────────────────────
+# Não é CLI de agente: é um modelo de DECISÃO (gemini-decision-1) que responde
+# sim/não, escolha ou nota com probabilidade calibrada em ~200 ms, sobre texto,
+# imagem, PDF, áudio e vídeo. Entra no T3 como servidor MCP
+# (mcp/gemini-decision-server.py) registrado em cada CLI que o T3 roda. A key
+# fica só no providers.conf: o servidor lê de lá, os configs não a carregam.
+GD_SLOT="gemini-decision"
+GD_MCP_NAME="gemini_decision"
+GD_MCP_DIR="${HOME}/.local/share/ai-launcher/mcp"
+GD_SERVER="${GD_MCP_DIR}/gemini-decision-server.py"
+GD_RAW_URL="https://raw.githubusercontent.com/Hiper-nexus/ai-launcher/main/mcp/gemini-decision-server.py"
+GD_USAGE_FILE="${HOME}/.local/share/ai-launcher/gemini-decision-usage.jsonl"
+
+gd_api_key() {
+    local k="${GEMINI_DECISION_API_KEY:-}"
+    [[ -z "$k" ]] && k=$(provider_load_key "$GD_SLOT" 2>/dev/null || true)
+    printf '%s' "$k"
+}
+
+gd_save_key() {
+    local key="${1:-}"
+    if [[ -z "$key" && -t 0 ]]; then
+        echo -e "  ${DIM}Crie em: https://aistudio.google.com/api-keys${RESET}"
+        read -rsp "$(echo -e "  ${BOLD}API key do Google AI Studio:${RESET} ")" key || true; echo ""
+    elif [[ -z "$key" ]]; then
+        # Por pipe (pbpaste | ai gd key; ... | ssh host ai gd key): a key não
+        # passa por argv, que aparece no ps.
+        IFS= read -r key || true
+    fi
+    key="${key//[[:space:]]/}"
+    if [[ ( "$key" != AIza* && "$key" != AQ.* ) || ${#key} -lt 30 ]]; then
+        echo -e "${YELLOW}Aviso: não parece uma key do AI Studio (AIza… ou AQ.…). Gravando assim mesmo.${RESET}" >&2
+    fi
+    [[ -z "$key" ]] && { echo -e "${RED}Erro: key vazia.${RESET}" >&2; return 1; }
+    mkdir -p "$(dirname "$PROVIDERS_FILE")" || return 1
+    provider_save_key "$GD_SLOT" "$key" || return 1
+    echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600; o servidor MCP lê daqui)${RESET}"
+}
+
+# O servidor ao lado deste script (repo) vence; senão a cópia instalada pelo
+# install.sh; senão baixa do GitHub. A cópia em GD_SERVER é o caminho estável
+# que vai nos configs das CLIs — `git pull` no repo não quebra nada. Se a
+# cópia instalada for de outra versão (ai atualizado sem install.sh), é trocada.
+GD_SERVER_VERSION="1.1.0"
+gd_install_server() {
+    local here src tmp
+    here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || here=""
+    src="${AI_GD_SERVER_SRC:-${here}/mcp/gemini-decision-server.py}"
+    mkdir -p "$GD_MCP_DIR" || return 1
+    if [[ -f "$src" ]]; then
+        cmp -s "$src" "$GD_SERVER" 2>/dev/null || cp "$src" "$GD_SERVER" || return 1
+    elif [[ ! -f "$GD_SERVER" ]] || ! grep -q "^SERVER_VERSION = \"${GD_SERVER_VERSION}\"" "$GD_SERVER"; then
+        echo -e "${DIM}Baixando o servidor MCP ${GD_SERVER_VERSION} do GitHub...${RESET}"
+        tmp=$(mktemp) || return 1
+        if curl -fsSL "$GD_RAW_URL" -o "$tmp" && head -1 "$tmp" | grep -q python; then
+            mv "$tmp" "$GD_SERVER" || return 1
+        else
+            rm -f "$tmp"
+            echo -e "${RED}Erro: não consegui baixar ${GD_RAW_URL}${RESET}" >&2
+            [[ -f "$GD_SERVER" ]] || return 1
+            echo -e "${YELLOW}Seguindo com a cópia já instalada.${RESET}" >&2
+        fi
+    fi
+    chmod 644 "$GD_SERVER" 2>/dev/null || true
+}
+
+# Caminho que o processo da CLI vai executar: absoluto (a CLI sobe o MCP sem
+# o PATH do shell) e, no Windows, no formato C:\... que o Node entende.
+gd_native_path() {
+    local p="$1"
+    if ai_is_windows && command -v cygpath >/dev/null 2>&1; then
+        p=$(cygpath -w "$p")
+    fi
+    printf '%s' "$p"
+}
+
+# Python que registra o servidor em cada CLI presente e mantém o bloco de
+# instruções dos agentes. Modos: register | remove | check | instr | instr-remove.
+# Cada arquivo é independente: erro num não impede os outros, e qualquer erro
+# vira código de saída 1. Primeira edição de cada arquivo guarda <arquivo>.bak-gd.
+gd_helper() {
+    python3 -I - "$@" <<'PY'
+import glob, json, os, re, shutil, subprocess, sys, tempfile
+try:
+    import tomllib
+except ImportError:  # Python < 3.11: grava sem validar
+    tomllib = None
+
+modo, home, py, srv, nome = sys.argv[1:6]
+J = lambda *p: os.path.join(home, *p)
+ERROS = []
+
+def ler_json(p):
+    with open(p, encoding="utf-8-sig") as f:
+        return json.load(f)
+
+def gravar(p, texto):
+    real = os.path.realpath(p)  # arquivo apontado por symlink continua symlink
+    if not os.path.exists(real + ".bak-gd"):
+        shutil.copy2(real, real + ".bak-gd")
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(real), prefix=".gd-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(texto)
+        os.chmod(tmp, os.stat(real).st_mode & 0o7777)
+        os.replace(tmp, real)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+def gravar_json(p, d):
+    gravar(p, json.dumps(d, indent=2, ensure_ascii=False) + "\n")
+
+def curto(p):
+    return "~" + p[len(home):] if p.startswith(home) else p
+
+def status(rotulo, arq, msg):
+    if msg.startswith("ERRO"):
+        ERROS.append(rotulo)
+    print(f"  {rotulo:<26} {msg:<12} {curto(arq)}")
+
+def protegido(rotulo, arq, f, *a):
+    try:
+        f(rotulo, arq, *a)
+    except Exception as e:  # noqa: BLE001 — um arquivo ruim não para os outros
+        status(rotulo, arq, f"ERRO: {type(e).__name__}: {e}"[:140])
+
+def mesmo(e):
+    return isinstance(e, dict) and e.get("command") == py and e.get("args") == [srv]
+
+# ── Alvos ──
+def t3_providers():
+    t3 = os.environ.get("T3CODE_HOME") or J(".t3")
+    try:
+        inst = ler_json(os.path.join(t3, "userdata", "settings.json")).get("providerInstances") or {}
+        return {k: v for k, v in inst.items() if isinstance(v, dict)}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+def t3_home(p):
+    h = (p.get("config") or {}).get("homePath")
+    return os.path.expanduser(h) if isinstance(h, str) and h.strip() else None
+
+def unicos(itens, chave):
+    vistos, out = set(), []
+    for i in itens:
+        k = os.path.realpath(chave(i))
+        if k not in vistos:
+            vistos.add(k)
+            out.append(i)
+    return out
+
+def perfis_claude():
+    """~/.claude.json, os perfis ~/.claude*/ e os homePath de providers
+    claudeAgent do T3 (cada um é um CLAUDE_CONFIG_DIR)."""
+    out = []
+    if os.path.isfile(J(".claude.json")):
+        out.append((None, J(".claude.json"), "claude"))
+    dirs = [d for d in sorted(glob.glob(J(".claude?*"))) if os.path.basename(d) != ".claude"]
+    dirs += [t3_home(p) for p in t3_providers().values()
+             if p.get("driver") == "claudeAgent" and t3_home(p)]
+    for d in dirs:
+        c = os.path.join(d, ".claude.json")
+        if os.path.isdir(d) and os.path.isfile(c):
+            out.append((d, c, "claude (" + os.path.basename(d.rstrip("/")).lstrip(".") + ")"))
+    return unicos(out, lambda x: x[1])
+
+def homes_codex():
+    """~/.codex, ~/.codex-* e os homePath de providers codex do T3."""
+    dirs = [J(".codex")] + sorted(glob.glob(J(".codex-*")))
+    dirs += [t3_home(p) for p in t3_providers().values()
+             if p.get("driver") == "codex" and t3_home(p)]
+    return unicos([d for d in dirs if os.path.isfile(os.path.join(d, "config.toml"))], lambda d: d)
+
+def t3_mcp_configs():
+    """Arquivos passados a providers do T3 com --mcp-config (ex.: o Qwen ACP do
+    t1). Eles não leem o config global da CLI, então ficariam sem o MCP."""
+    out = []
+    for pid, p in t3_providers().items():
+        args = [str(a) for a in (((p or {}).get("config") or {}).get("commandArgs") or [])]
+        for i, a in enumerate(args):
+            arq = args[i + 1] if a == "--mcp-config" and i + 1 < len(args) else (
+                a.split("=", 1)[1] if a.startswith("--mcp-config=") else None)
+            if arq and os.path.isfile(os.path.expanduser(arq)):
+                out.append((f"t3 {pid}", os.path.expanduser(arq), "mcpServers", "std"))
+        if p.get("driver") == "opencode":  # opencode com config próprio via env
+            for e in p.get("environment") or []:
+                v = e.get("value") if isinstance(e, dict) and e.get("name") == "OPENCODE_CONFIG" else None
+                if isinstance(v, str) and v.strip() and os.path.isfile(os.path.expanduser(v)):
+                    out.append((f"t3 {pid}", os.path.expanduser(v), "mcp", "opencode"))
+    return out
+
+def alvos_json():
+    """(rótulo, arquivo, chave, estilo da entrada). Só os que existem são tocados."""
+    return unicos([
+        ("gemini", J(".gemini", "settings.json"), "mcpServers", "std"),
+        ("antigravity", J(".gemini", "antigravity", "mcp_config.json"), "mcpServers", "std"),
+        ("qwen", J(".qwen", "settings.json"), "mcpServers", "std"),
+        ("kimi", J(".kimi", "mcp.json"), "mcpServers", "std"),
+        ("cursor", J(".cursor", "mcp.json"), "mcpServers", "std"),
+        ("minimax", J(".minimax", "mcp.json"), "mcpServers", "std"),
+        ("devin", J(".config", "devin", "mcp_config.json"), "mcpServers", "std"),
+        ("codebuddy", J(".codebuddy", ".mcp.json"), "mcpServers", "stdio"),
+        ("muse", J(".config", "muse", "settings.json"), "mcpServers", "muse"),
+        ("opencode", J(".config", "opencode", "opencode.json"), "mcp", "opencode"),
+    ] + t3_mcp_configs(), lambda x: x[1])
+
+def entrada(estilo, atual):
+    """Entrada no formato de cada CLI; preserva chaves extras do usuário."""
+    base = atual if isinstance(atual, dict) else {}
+    if estilo == "opencode":
+        return {"type": "local", "command": [py, srv], "enabled": True}
+    if estilo == "muse":
+        return dict(base, mode=base.get("mode", "optional"), transport="stdio", command=py, args=[srv])
+    if estilo == "stdio":
+        return dict(base, type="stdio", command=py, args=[srv])
+    return dict(base, command=py, args=[srv])
+
+# ── Claude: pela CLI, que grava com trava ──
+def claude_cli():
+    if os.environ.get("AI_GD_NO_CLAUDE_CLI") or os.name == "nt":
+        return None
+    return shutil.which("claude")
+
+def claude(rotulo, cfg, cfg_dir, remover):
+    d = ler_json(cfg)
+    if not isinstance(d, dict):
+        return status(rotulo, cfg, "pulado: formato inesperado")
+    srvs = d.get("mcpServers") if isinstance(d.get("mcpServers"), dict) else {}
+    atual = srvs.get(nome)
+    if remover and atual is None:
+        return status(rotulo, cfg, "não estava")
+    if not remover and mesmo(atual):
+        return status(rotulo, cfg, "já estava")
+    entrada = {"type": "stdio", "command": py, "args": [srv], "env": {}}
+    exe = claude_cli()
+    if exe:
+        # O ~/.claude.json é reescrito o tempo todo pelas sessões abertas; a
+        # CLI grava com a trava dela, uma edição direta se perderia.
+        env = dict(os.environ)
+        env.pop("CLAUDE_CONFIG_DIR", None)
+        if cfg_dir:
+            env["CLAUDE_CONFIG_DIR"] = cfg_dir
+        if atual is not None:
+            r = subprocess.run([exe, "mcp", "remove", "-s", "user", nome], env=env,
+                               capture_output=True, text=True, timeout=60)
+            if remover and r.returncode != 0:
+                return status(rotulo, cfg, "ERRO: " + (r.stderr or r.stdout).strip()[:120])
+        if not remover:
+            r = subprocess.run([exe, "mcp", "add-json", "-s", "user", nome, json.dumps(entrada)],
+                               env=env, capture_output=True, text=True, timeout=60)
+            if r.returncode != 0:
+                return status(rotulo, cfg, "ERRO: " + (r.stderr or r.stdout).strip()[:120])
+    else:
+        if remover:
+            srvs.pop(nome, None)
+        else:
+            srvs[nome] = entrada
+        d["mcpServers"] = srvs
+        gravar_json(cfg, d)
+    status(rotulo, cfg, "removido" if remover else "registrado")
+
+# ── JSON das demais CLIs ──
+def json_cli(rotulo, arq, chave, estilo, remover):
+    try:
+        d = ler_json(arq)
+    except ValueError:
+        return status(rotulo, arq, "pulado: JSON com comentários ou inválido")
+    if not isinstance(d, dict):
+        return status(rotulo, arq, "pulado: formato inesperado")
+    srvs = d.get(chave)
+    if srvs is None:
+        srvs = {}
+    if not isinstance(srvs, dict):
+        return status(rotulo, arq, f"pulado: '{chave}' não é objeto")
+    atual = srvs.get(nome)
+    if remover:
+        if atual is None:
+            return status(rotulo, arq, "não estava")
+        del srvs[nome]
+    else:
+        novo = entrada(estilo, atual)
+        if novo == atual:
+            return status(rotulo, arq, "já estava")
+        srvs[nome] = novo
+    d[chave] = srvs
+    gravar_json(arq, d)
+    status(rotulo, arq, "removido" if remover else "registrado")
+
+# ── Codex (TOML) ──
+N = re.escape(nome)
+CAB_RE = re.compile(r"""^\s*\[\s*mcp_servers\s*\.\s*(?:"%s"|'%s'|%s)\s*(\.[^\]]*)?\]\s*(?:#.*)?$""" % (N, N, N))
+TABELA_RE = re.compile(r"""^\s*\[\[?\s*[A-Za-z0-9_\-"'. ]+\]\]?\s*(?:#.*)?$""")
+CHAVE_NOSSA = re.compile(r"^\s*(command|args)\s*=")
+
+def toml_partes(t):
+    """Separa o resto do arquivo, as chaves extras da nossa tabela (preservadas:
+    enabled, startup_timeout_sec...) e as subtabelas dela."""
+    fora, extras, subs = [], [], []
+    estado, pulando = None, 0
+    for linha in t.splitlines(keepends=True):
+        m = CAB_RE.match(linha)
+        if m:
+            estado = "sub" if m.group(1) else "main"
+            if estado == "sub":
+                subs.append(linha)
+            continue
+        if estado and not pulando and TABELA_RE.match(linha):
+            estado = None
+        if estado == "main":
+            if pulando or CHAVE_NOSSA.match(linha):
+                # command/args são reescritos; array de várias linhas é pulado inteiro
+                pulando = max(0, pulando + linha.count("[") - linha.count("]"))
+                continue
+            extras.append(linha)
+        elif estado == "sub":
+            subs.append(linha)
+        else:
+            fora.append(linha)
+    while extras and not extras[-1].strip():
+        extras.pop()
+    return "".join(fora), "".join(extras), "".join(subs)
+
+def codex(rotulo, arq, remover):
+    t = open(arq, encoding="utf-8").read()
+    fora, extras, subs = toml_partes(t)
+    tinha = fora != t
+    if remover:
+        if not tinha:
+            return status(rotulo, arq, "não estava")
+        novo = fora.rstrip("\n") + "\n"
+    else:
+        bloco = (f"[mcp_servers.{nome}]\ncommand = {json.dumps(py)}\nargs = [{json.dumps(srv)}]\n"
+                 + extras + subs)
+        novo = fora.rstrip("\n") + "\n\n" + bloco
+        if novo == t:
+            return status(rotulo, arq, "já estava")
+    if tomllib:
+        try:
+            tomllib.loads(t)
+            original_ok = True
+        except tomllib.TOMLDecodeError:
+            original_ok = False
+        if original_ok:
+            try:
+                tomllib.loads(novo)
+            except tomllib.TOMLDecodeError as e:
+                return status(rotulo, arq, f"ERRO: o TOML ficaria inválido ({e}); nada gravado"[:140])
+    gravar(arq, novo)
+    status(rotulo, arq, "removido" if remover else "registrado")
+
+def mcp(remover):
+    for cfg_dir, cfg, rotulo in perfis_claude():
+        protegido(rotulo, cfg, claude, cfg_dir, remover)
+    for rotulo, arq, chave, estilo in alvos_json():
+        if os.path.isfile(arq):
+            protegido(rotulo, arq, json_cli, chave, estilo, remover)
+    for d in homes_codex():
+        protegido(os.path.basename(d).lstrip("."), os.path.join(d, "config.toml"), codex, remover)
+
+def checar():
+    alvos = [(r, c, "mcpServers") for _, c, r in perfis_claude()] + [a[:3] for a in alvos_json()]
+    for rotulo, arq, chave in alvos:
+        if os.path.isfile(arq):
+            try:
+                ok = ((ler_json(arq) or {}).get(chave) or {}).get(nome) is not None
+            except Exception:
+                ok = False
+            print(f"{rotulo}\t{'sim' if ok else 'nao'}")
+    for d in homes_codex():
+        arq = os.path.join(d, "config.toml")
+        try:
+            t = open(arq, encoding="utf-8").read()
+            ok = toml_partes(t)[0] != t
+        except Exception:
+            ok = False
+        print(f"{os.path.basename(d).lstrip('.')}\t{'sim' if ok else 'nao'}")
+    n = sum(1 for a in alvos_instr() if INICIO in open(a, encoding="utf-8", errors="replace").read())
+    print(f"instr\t{n}/{len(alvos_instr())}")
+
+# ── Bloco de instruções dos agentes ──
+INICIO = "<!-- gemini-decision:inicio"
+FIM = "<!-- gemini-decision:fim -->"
+BLOCO = INICIO + """ (gerenciado por `ai gd setup`; não edite aqui) -->
+## Gemini Decision: use em toda missão (MCP `gemini_decision`)
+Modelo de decisão do Google (gemini-decision-1): responde sim/não, escolha ou nota com probabilidade calibrada em ~1 s, sobre texto, imagem, PDF, áudio e vídeo, por frações de centavo. Use por padrão, sem esperar o usuário pedir:
+1. **Toda mudança de interface:** antes de dizer que terminou, capture screenshots nas larguras relevantes (375 e 1440 no mínimo; 768 e 1024 se houver layout intermediário) e rode `ui_check` com os critérios de aceite do pedido e as regras do DESIGN.md. Passe `reference` quando houver mock ou print aprovado. Corrija cada falha, capture de novo e repita; confira os incertos você mesmo. Relate o resultado final do `ui_check` na entrega.
+2. **Antes de criar componente ou página:** rode `rank` com o requisito e os candidatos reais (BoardUI, shadcnuikit, componentes e templates do projeto) e leia o código dos melhores. Também serve para escolher quais arquivos ler numa base grande.
+3. **Erro, log ou teste falhando:** rode `decide` com o log e perguntas fechadas (camada provável, regressão ou ambiente, gravidade) para priorizar a primeira hipótese.
+4. **Ao delegar trabalho de UI**, inclua no pedido: "valide com `gemini_decision.ui_check` e relate as falhas restantes".
+Confiança abaixo de 0,7 é dúvida, não decisão. É sinal rápido, não prova: não substitui testes, revisão nem o Jev na delegação. Nunca envie segredos nem dados reais de clientes (na camada gratuita o Google pode usar o conteúdo): use dados de teste nas telas. Se a tool faltar ou falhar, siga sem ela e avise.
+""" + FIM
+BLOCO_RE = re.compile(r"\n{0,2}" + re.escape(INICIO) + r".*?" + re.escape(FIM) + r"\n?", re.S)
+
+def alvos_instr():
+    alvos = [J(".claude", "CLAUDE.md")]
+    alvos += [os.path.join(d, "CLAUDE.md") for d, _, _ in perfis_claude() if d]
+    alvos += [os.path.join(d, "AGENTS.md") for d in homes_codex()]
+    alvos += [J(".codex", "AGENTS.md"), J(".gemini", "GEMINI.md"), J(".qwen", "QWEN.md"),
+              J(".config", "opencode", "AGENTS.md"), J(".kimi", "AGENTS.md")]
+    return unicos([a for a in alvos if os.path.isfile(a)], lambda a: a)
+
+def instr_um(rotulo, arq, remover):
+    t = open(arq, encoding="utf-8").read()
+    if t.count(INICIO) != t.count(FIM) or t.count(INICIO) > 1:
+        return status(rotulo, arq, "ERRO: marcadores do bloco desalinhados; corrija à mão")
+    if remover:
+        if INICIO not in t:
+            return status(rotulo, arq, "não estava")
+        novo = BLOCO_RE.sub("\n", t, count=1)
+    elif INICIO in t:
+        novo = BLOCO_RE.sub(lambda m: "\n\n" + BLOCO + "\n", t, count=1)
+    else:
+        novo = t.rstrip("\n") + "\n\n" + BLOCO + "\n"
+    if novo == t:
+        return status(rotulo, arq, "já estava")
+    gravar(arq, novo)
+    status(rotulo, arq, "removido" if remover else "atualizado")
+
+def instrucoes(remover):
+    for arq in alvos_instr():
+        protegido("instruções", arq, instr_um, remover)
+
+{"register": lambda: mcp(False), "remove": lambda: mcp(True), "check": checar,
+ "instr": lambda: instrucoes(False), "instr-remove": lambda: instrucoes(True)}[modo]()
+sys.exit(1 if ERROS else 0)
+PY
+}
+
+gd_setup() {
+    require_python || return 1
+    gd_install_server || return 1
+    local py srv rc=0
+    py=$(gd_native_path "$(ai_python)") || return 1
+    srv=$(gd_native_path "$GD_SERVER")
+    echo -e "${BOLD}Gemini Decision → MCP '${GD_MCP_NAME}'${RESET} ${DIM}(${srv})${RESET}"
+    gd_helper register "$HOME" "$py" "$srv" "$GD_MCP_NAME" || rc=1
+    gd_helper instr "$HOME" "$py" "$srv" "$GD_MCP_NAME" || rc=1
+    echo ""
+    if [[ -z "$(gd_api_key)" ]]; then
+        echo -e "${YELLOW}Falta a key:${RESET} crie em https://aistudio.google.com/api-keys e rode ${BOLD}ai gd key${RESET}"
+    fi
+    [[ $rc -ne 0 ]] && echo -e "${RED}Algum arquivo deu erro (acima); os demais foram atualizados.${RESET}"
+    echo -e "${DIM}Sessões já abertas (T3 e CLIs) só carregam o MCP depois de reabertas.${RESET}"
+    return $rc
+}
+
+gd_remove() {
+    require_python || return 1
+    local rc=0
+    echo -e "${BOLD}Removendo o MCP '${GD_MCP_NAME}' e o bloco de instruções${RESET}"
+    gd_helper remove "$HOME" x x "$GD_MCP_NAME" || rc=1
+    gd_helper instr-remove "$HOME" x x "$GD_MCP_NAME" || rc=1
+    echo -e "${DIM}A key continua no providers.conf; os originais ficam em *.bak-gd.${RESET}"
+    return $rc
+}
+
+# Servidor para os comandos de terminal: o do repo, se este `ai` roda de lá.
+gd_server_run() {
+    require_python || return 1
+    local here; here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || here=""
+    local srv="${here}/mcp/gemini-decision-server.py"
+    if [[ ! -f "$srv" ]]; then
+        gd_install_server >/dev/null || return 1
+        srv="$GD_SERVER"
+    fi
+    python3 "$srv" "$@"
+}
+
+gd_status() {
+    local k; k=$(gd_api_key)
+    echo -e "${BOLD}Gemini Decision${RESET} ${DIM}(gemini-decision-1, US\$ 0,10 por 1M tokens de entrada; saída grátis)${RESET}"
+    if [[ -n "$k" ]]; then
+        echo -e "  key:        ${GREEN}✔${RESET} ${DIM}(${PROVIDERS_FILE})${RESET}"
+    else
+        echo -e "  key:        ${YELLOW}✗ falta${RESET} — https://aistudio.google.com/api-keys, depois ${BOLD}ai gd key${RESET}"
+    fi
+    if [[ -f "$GD_SERVER" ]]; then
+        echo -e "  servidor:   ${GREEN}✔${RESET} ${DIM}${GD_SERVER}${RESET}"
+    else
+        echo -e "  servidor:   ${YELLOW}✗ não instalado${RESET} — ${BOLD}ai gd setup${RESET}"
+    fi
+    ai_has_python || return 0
+    local linhas sim nao instr
+    linhas=$(gd_helper check "$HOME" x x "$GD_MCP_NAME" 2>/dev/null || true)
+    sim=$(awk -F'\t' '$1!="instr" && $2=="sim"{printf "%s%s", s, $1; s=", "}' <<<"$linhas")
+    nao=$(awk -F'\t' '$1!="instr" && $2=="nao"{printf "%s%s", s, $1; s=", "}' <<<"$linhas")
+    instr=$(awk -F'\t' '$1=="instr"{print $2}' <<<"$linhas")
+    echo -e "  MCP em:     ${sim:-nenhuma CLI}"
+    [[ -n "$nao" ]] && echo -e "  ${YELLOW}faltando:${RESET}   ${nao} ${DIM}(ai gd setup)${RESET}"
+    echo -e "  instruções: ${instr:-0/0} arquivo(s) de regras globais com o bloco"
+    if [[ -f "$GD_USAGE_FILE" ]]; then
+        python3 -I - "$GD_USAGE_FILE" <<'PY'
+import json, sys, time
+hoje = time.strftime("%Y-%m-%d"); n = tok = 0
+for l in open(sys.argv[1], encoding="utf-8"):
+    try:
+        d = json.loads(l)
+    except ValueError:
+        continue
+    if str(d.get("ts", "")).startswith(hoje):
+        n += 1; tok += int(d.get("tokens") or 0)
+milhares = f"{tok:,}".replace(",", ".")
+print(f"  uso hoje:   {n} chamada(s), {milhares} tokens (~US$ {tok * 0.10 / 1e6:.4f})")
+PY
+    fi
+}
+
+gd_help() {
+    cat <<'TXT'
+Gemini Decision (Google): decisões sim/não, escolha ou nota com probabilidade
+calibrada em ~1 s, sobre texto, imagem, PDF, áudio e vídeo.
+
+  ai gd                         Status: key, CLIs com o MCP, instruções, uso
+  ai gd key [<key>]             Grava a key do AI Studio (providers.conf, 600);
+                                aceita por pipe: pbpaste | ai gd key
+  ai gd setup                   Liga o MCP gemini_decision nas CLIs desta máquina
+                                (Claude e perfis, Codex, Gemini, Antigravity,
+                                Qwen, Kimi, Cursor, opencode, MCP de providers
+                                do T3) e põe o bloco nas regras globais
+  ai gd remove                  Desfaz o setup (a key fica)
+  ai gd test                    Chamada real curta (latência e tokens)
+  ai gd ui <img...> -c "..."    Confere screenshots contra critérios
+         [--ref mock.png] [--context "home 1440px"] [--no-defaults]
+  ai gd ask "<pergunta>" <arq>  Pergunta sim/não sobre imagem/PDF/vídeo
+TXT
+}
+
+gd_dispatch() {
+    local sub="${1:-status}"
+    [[ $# -gt 0 ]] && shift
+    case "$sub" in
+        status|"")         gd_status ;;
+        key|token)         gd_save_key "${1:-}" ;;
+        setup|t3|mcp)      gd_setup ;;
+        remove|uninstall)  gd_remove ;;
+        test|ping)         gd_server_run ping ;;
+        ui|check)          gd_server_run ui "$@" ;;
+        ask)               gd_server_run ask "$@" ;;
+        call)              gd_server_run call "$@" ;;
+        help|-h|--help)    gd_help ;;
+        *) gd_help; return 1 ;;
+    esac
+}
+
 # ── Qwen DENTRO do Claude Code (endpoint Anthropic-compatible) ──
 # Coding Plan: endpoint fixo (modelo qwen3-coder/plus). Pay-as-you-go
 # (Model Studio): endpoint inclui seu WorkspaceId e serve o Max — por isso
@@ -7273,6 +7821,11 @@ Exemplos:
   ai qw claude                    Claude Code usando o Qwen
   ai qw key                       Salva a key da Alibaba/DashScope
   ai qw t3                        Liga o Qwen Code 1.0 no T3 Code desta máquina
+  ai gd                           Gemini Decision: status (key, MCP nas CLIs, uso)
+  ai gd key                       Salva a key do Google AI Studio
+  ai gd setup                     Liga o MCP gemini_decision em todas as CLIs (T3)
+  ai gd ui <png...> -c "critério"  Confere screenshots contra critérios
+  ai gd ask "<pergunta>" <arq>    Pergunta sim/não sobre imagem/PDF/vídeo
   ai a                            Antigravity
   ai p ls                         Lista providers configurados
   ai f                            Toggle de flags antes de lançar
@@ -8722,6 +9275,10 @@ elif [[ ${1:-} == "ab" || ${1:-} == "abliteration" ]]; then
 elif [[ ${1:-} == "qw" || ${1:-} == "qwen" ]]; then
     shift
     qwen_dispatch "$@"
+    exit $?
+elif [[ ${1:-} == "gd" || ${1:-} == "decision" || ${1:-} == "gemini-decision" ]]; then
+    shift
+    gd_dispatch "$@"
     exit $?
 elif [[ ${1:-} == "provider" || ${1:-} == "p" ]]; then
     shift
