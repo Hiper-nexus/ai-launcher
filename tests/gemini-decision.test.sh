@@ -556,6 +556,50 @@ assert c.get("glm agent|glm-5-turbo") == "standard" and c.get("tencent hy4|claud
 ' "$GDD/gd-model-tiers.json" || fail "tier dos desconhecidos não foi classificado/cacheado"
 stop_mock
 ok "complexa → Opus e Sol com esforço high (nunca max); desconhecidos classificados pelo Gemini Decision e cacheados"
+echo
+echo "── 16b. frontend: só os melhores de ponta, famílias diferentes, sempre com revisor"
+T3G="${TMP_DIR}/t3front"; mkdir -p "$T3G/userdata" "$T3G/caches"
+cat > "$T3G/userdata/settings.json" <<'JSON'
+{"providerInstances": {
+  "claude": {"driver": "claudeAgent", "enabled": true},
+  "claude2": {"driver": "claudeAgent", "enabled": true},
+  "gpt": {"driver": "codex", "enabled": true},
+  "gem": {"driver": "antigravity", "enabled": true},
+  "venice": {"driver": "codex", "enabled": true, "environment": [{"name": "VENICE_API_KEY", "value": ""}]},
+  "glm": {"driver": "acpRegistry", "enabled": true},
+  "hy4": {"driver": "claudeAgent", "enabled": true, "displayName": "Tencent Hy4",
+          "environment": [{"name": "ANTHROPIC_BASE_URL", "value": ""}]}
+}}
+JSON
+modelos ready claude-opus-5-5 claude-fable-5-2 claude-haiku-5-5 > "$T3G/caches/claude.json"
+modelos ready claude-opus-5-5 claude-sonnet-5-5 > "$T3G/caches/claude2.json"
+modelos ready gpt-6-astra gpt-6-luna > "$T3G/caches/gpt.json"
+modelos ready gemini-4-carbon gemini-3.8-flash > "$T3G/caches/gem.json"
+modelos ready glm-5.3 glm-5.3-flash > "$T3G/caches/glm.json"
+modelos ready claude-opus-5-5 > "$T3G/caches/hy4.json"
+modelos ready gpt-6-astra > "$T3G/caches/venice.json"
+MOCK_CHOICE="frontend,simples,standard" start_mock
+r=$(env -i PATH="/usr/bin:/bin" HOME="$H" T3CODE_HOME="$T3G" GEMINI_DECISION_DATA_DIR="${TMP_DIR}/gddata2" \
+    GEMINI_DECISION_BASE_URL="$BASE" GEMINI_DECISION_LOG=off "$PY_BIN" "$SERVER" call route \
+    '{"task":"trocar a cor do botão primário","units":2}') || fail "route frontend falhou: $r"
+stop_mock
+echo "$r" | "$PY_BIN" -c '
+import json, sys
+r = json.load(sys.stdin)
+topo = {"claude-fable-5-2", "claude-opus-5-5", "gemini-4-carbon", "gpt-6-astra"}
+d = r["destinos"]
+assert r["papel"] == "frontend" and r["tier"] == "flagship", r
+assert all(x["model"] in topo for x in d), d
+assert len({x["providerInstanceId"] for x in d}) == 2 and len({x["model"] for x in d}) == 2, d
+assert "hy4" not in json.dumps(r), "Hy4 (endpoint próprio com slug de Opus) entrou como Opus"
+assert "venice" not in json.dumps(r), "Venice (key própria) entrou como GPT-6 Astra oficial"
+rv = r["revisor"]
+assert rv and rv["model"] in topo, rv
+assert rv["model"] not in {x["model"] for x in d}, ("revisor da mesma família", rv, d)
+assert rv["providerInstanceId"] not in {x["providerInstanceId"] for x in d}, ("revisor do mesmo provedor", rv)
+' || fail "route frontend errado: $r"
+ok "UI simples ainda vai para Fable/Opus/Carbon/Astra, duas famílias, revisor de outra família e provedor; Hy4 fora"
+
 saida=$(env -i PATH="/usr/bin:/bin" HOME="$H" T3CODE_HOME="${TMP_DIR}/nao-existe" GEMINI_DECISION_LOG=off \
     "$PY_BIN" "$SERVER" call route '{"task":"x"}' 2>&1) && fail "route sem T3 deveria falhar"
 echo "$saida" | grep -q "T3 não encontrado" || fail "erro sem T3 ilegível: $saida"

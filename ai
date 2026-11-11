@@ -6602,7 +6602,7 @@ gd_save_key() {
 # install.sh; senão baixa do GitHub. A cópia em GD_SERVER é o caminho estável
 # que vai nos configs das CLIs — `git pull` no repo não quebra nada. Se a
 # cópia instalada for de outra versão (ai atualizado sem install.sh), é trocada.
-GD_SERVER_VERSION="1.3.0"
+GD_SERVER_VERSION="1.4.0"
 gd_install_server() {
     local here src tmp
     here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || here=""
@@ -6952,7 +6952,7 @@ Modelo de decisão do Google (gemini-decision-1): responde sim/não, escolha ou 
 2. **Antes de criar componente ou página:** rode `rank` com o requisito e os candidatos reais (BoardUI, shadcnuikit, componentes e templates do projeto) e leia o código dos melhores. Também serve para escolher quais arquivos ler numa base grande.
 3. **Erro, log ou teste falhando:** rode `decide` com o log e perguntas fechadas (camada provável, regressão ou ambiente, gravidade) para priorizar a primeira hipótese.
 4. **Antes de cada delegação:** chame `route` com a unidade de trabalho (e `units` se forem várias independentes) e passe EXATAMENTE `providerInstanceId`, `model` e `effort` de cada destino no `target`; nunca deixe o modelo herdado ou o padrão do provedor. Ele lê o catálogo real do T3 e escolhe o tier pela complexidade (leves como GLM Flash, Haiku, Luna e Gemini Flash para o simples; Sonnet e intermediários para o cotidiano; topo só para o complexo), em rodízio entre provedores. Se um destino falhar, use a alternativa seguinte ou chame de novo com `exclude`.
-5. **Ao delegar trabalho de UI**, inclua no pedido: "valide com `gemini_decision.ui_check` e relate as falhas restantes".
+5. **Frontend é sempre com os melhores de ponta e sempre com julgamento:** para UI o `route` só devolve Fable 5.2, Opus 5.5, Gemini 4 Carbon ou GPT-6 Astra (escolha do usuário; substitui listas antigas de frontend) e traz um `revisor` de outra família. No pedido delegado, inclua: "valide com `gemini_decision.ui_check` (375 e 1440) e relate as falhas restantes"; depois delegue a revisão crítica ao `revisor` e corrija o que ele e o `ui_check` apontarem antes de concluir.
 Confiança abaixo de 0,7 é dúvida, não decisão. É sinal rápido, não prova: não substitui testes nem revisão; o `jev_route_task` continua valendo como segunda opinião. Nunca envie segredos nem dados reais de clientes (na camada gratuita o Google pode usar o conteúdo): use dados de teste nas telas. Se a tool faltar ou falhar, siga sem ela e avise.
 """ + FIM
 BLOCO_RE = re.compile(r"\n{0,2}" + re.escape(INICIO) + r".*?" + re.escape(FIM) + r"\n?", re.S)

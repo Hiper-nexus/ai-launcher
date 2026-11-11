@@ -55,7 +55,7 @@ import urllib.request
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "gemini_decision"
-SERVER_VERSION = "1.3.0"
+SERVER_VERSION = "1.4.0"
 
 BASE = os.environ.get(
     "GEMINI_DECISION_BASE_URL", "https://generativelanguage.googleapis.com"
@@ -704,8 +704,12 @@ PAPEIS = {
     "investigacao": "Pesquisar, diagnosticar ou mapear sem implementar.",
     "geral": "Coordenação ou tarefa que não se encaixa nas demais.",
 }
-# Preferência do usuário para frontend (CLAUDE.md global).
-PREF_FRONTEND = re.compile(r"kimi|opus-5-5|gpt-6-astra|argon|sonnet-5-5", re.I)
+# Frontend: só os melhores de ponta, escolhidos pelo usuário em 2026-11-11
+# (substitui a lista antiga Kimi/Argon/Sonnet). Vale para qualquer
+# complexidade, e a entrega sempre ganha um revisor de outra família.
+FRONTEND_TOP = re.compile(
+    r"^(?:[\w.-]+/)?(claude-fable-5-2|claude-opus-5-5|gemini-4-carbon|gpt-6-astra)"
+    r"(?:-(?:low|medium|high|xhigh))?$", re.I)
 ESFORCO = {"light": ("low", "minimal", "medium"), "standard": ("medium", "low", "high"),
            "flagship": ("high", "medium", "xhigh")}
 ESFORCO_PROIBIDO = {"max", "ultra", "ultrathink", "xhigh_max"}
@@ -780,8 +784,13 @@ def catalogo_t3():
             texto = f"{nome} {slug} {rotulo}"
             if ESPECIAL.search(texto):
                 continue  # sem censura etc.: uso especial, não delegação geral
+            # Provedor com key/endpoint próprio (Venice, Hy4…) pode servir outro
+            # modelo com o mesmo nome: para o topo de frontend, só os oficiais.
+            externo = proprio or any(n.endswith(("_BASE_URL", "_API_KEY", "_AUTH_TOKEN")) for n in env)
+            topo = None if externo else FRONTEND_TOP.match(slug)
             cands.append({
                 "providerInstanceId": pid, "provedor": nome, "model": slug, "nome": rotulo,
+                "familia_front": topo.group(1).lower() if topo else None,
                 "esforcos": _esforcos(m), "rapido": bool(RAPIDO.search(slug + " " + rotulo)),
                 # Endpoint próprio: o slug ("claude-opus…") não diz nada do modelo real.
                 "tier": tier_por_nome(rotulo if proprio else slug + " " + rotulo),
@@ -894,11 +903,15 @@ def tool_route(args):
 
     tier = TIER_DA_COMPLEXIDADE[complexidade]
     pool, usado_tier = [], tier
-    for t in (tier,) + RECUO[tier]:
-        pool = [c for c in cands if c["tier"] == t]
-        if pool:
-            usado_tier = t
-            break
+    frente = [c for c in cands if c["familia_front"]] if papel == "frontend" else []
+    if frente:
+        pool, usado_tier = frente, "flagship"  # frontend: sempre os melhores de ponta
+    else:
+        for t in (tier,) + RECUO[tier]:
+            pool = [c for c in cands if c["tier"] == t]
+            if pool:
+                usado_tier = t
+                break
     if not pool:
         pool = cands  # nada classificado: qualquer um pronto
     normais = [c for c in pool if not c["rapido"]]
@@ -908,11 +921,13 @@ def tool_route(args):
     uso_p, uso_m = uso.setdefault("provedores", {}), uso.setdefault("modelos", {})
     nesta = {}
 
+    familias = {}
+
     def ordem(c):
         k = c["providerInstanceId"]
         return (
-            0 if (papel == "frontend" and PREF_FRONTEND.search(c["model"])) else 1,
             nesta.get(k, 0),                       # provedores diferentes nesta missão
+            familias.get(c["familia_front"], 0),   # frontend: famílias diferentes também
             uso_p.get(k, 0),                       # rodízio: o menos usado primeiro
             uso_m.get(f"{k}|{c['model']}", 0),
             k, c["model"],
@@ -923,6 +938,7 @@ def tool_route(args):
         c = min(pool, key=ordem)
         k = c["providerInstanceId"]
         nesta[k] = nesta.get(k, 0) + 1
+        familias[c["familia_front"]] = familias.get(c["familia_front"], 0) + 1
         uso_p[k] = uso_p.get(k, 0) + 1
         uso_m[f"{k}|{c['model']}"] = uso_m.get(f"{k}|{c['model']}", 0) + 1
         destinos.append({"providerInstanceId": k, "provedor": c["provedor"], "model": c["model"],
@@ -935,6 +951,23 @@ def tool_route(args):
         for c in sorted(pool, key=ordem)
         if (c["providerInstanceId"], c["model"]) not in escolhidos
     ][:4]
+    revisor = None
+    if frente:
+        # Julgamento sempre: outro modelo de ponta, de OUTRA família e outro
+        # provedor, revisa a entrega (junto com o ui_check).
+        usadas = {c_["familia_front"] for c_ in frente
+                  if (c_["providerInstanceId"], c_["model"]) in escolhidos}
+        provs = {x["providerInstanceId"] for x in destinos}
+        opcoes = sorted((c_ for c_ in frente if c_["familia_front"] not in usadas
+                         and c_["providerInstanceId"] not in provs), key=ordem) or \
+                 sorted((c_ for c_ in frente if c_["familia_front"] not in usadas), key=ordem)
+        if opcoes:
+            r_ = opcoes[0]
+            revisor = {"providerInstanceId": r_["providerInstanceId"], "provedor": r_["provedor"],
+                       "model": r_["model"], "effort": _esforco(r_, "flagship"),
+                       "como": "Depois da entrega: rode ui_check nas larguras 375 e 1440 e delegue a "
+                               "este modelo a revisão crítica do diff e das capturas; corrija o que ele "
+                               "e o ui_check apontarem antes de concluir."}
     por_tier = {t: len({c["providerInstanceId"] for c in cands if c["tier"] == t}) for t in TIERS}
     amb = None
     try:
@@ -944,7 +977,8 @@ def tool_route(args):
         pass
     return {
         "complexidade": complexidade, "p_complexidade": p_compl, "papel": papel,
-        "tier": usado_tier, "ambiente": amb, "destinos": destinos, "alternativas": alternativas,
+        "tier": usado_tier, "ambiente": amb, "destinos": destinos, "revisor": revisor,
+        "alternativas": alternativas,
         "catalogo": {"modelos_prontos": len(cands), "provedores_por_tier": por_tier},
         "nota": ("Use exatamente providerInstanceId, model e effort de cada destino no target da "
                  "delegação (não deixe o modelo herdado). Uma unidade por destino. Se um destino "
