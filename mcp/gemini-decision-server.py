@@ -40,6 +40,7 @@ Variáveis de ambiente:
 
 import base64
 import concurrent.futures
+import tempfile
 import json
 import os
 import re
@@ -50,7 +51,7 @@ import urllib.request
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "gemini_decision"
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.2.0"
 
 BASE = os.environ.get(
     "GEMINI_DECISION_BASE_URL", "https://generativelanguage.googleapis.com"
@@ -196,6 +197,35 @@ def checar_segredo(*textos):
                 )
 
 
+def pastas_permitidas():
+    """De onde arquivos locais podem sair. GEMINI_DECISION_ALLOWED_DIRS
+    (separado por os.pathsep) SUBSTITUI a lista padrão: a pasta do projeto
+    (cwd do servidor, que a CLI sobe no projeto), as pastas temporárias e
+    Desktop/Downloads, onde screenshots costumam cair. O home inteiro nunca."""
+    extra = os.environ.get("GEMINI_DECISION_ALLOWED_DIRS")
+    if extra is not None:
+        dirs = [d for d in extra.split(os.pathsep) if d.strip()]
+    else:
+        home = os.path.expanduser("~")
+        dirs = [tempfile.gettempdir(), "/tmp", "/private/tmp", "/var/folders",
+                "/private/var/folders", os.path.join(home, "Desktop"),
+                os.path.join(home, "Downloads")]
+        cwd = os.getcwd()
+        if os.path.realpath(cwd) not in (os.path.realpath(home), os.path.realpath(os.sep)):
+            dirs.append(cwd)
+    return [os.path.realpath(os.path.expanduser(d)) for d in dirs]
+
+
+def dentro_permitido(caminho):
+    for d in pastas_permitidas():
+        try:
+            if os.path.commonpath([caminho, d]) == d:
+                return True
+        except ValueError:  # unidades diferentes no Windows
+            continue
+    return False
+
+
 def assinatura_ok(h, mime):
     """Confere os primeiros bytes contra o formato declarado pela extensão."""
     caixa = h[4:8]  # ISO BMFF (mp4, mov, 3gp, m4a, heic)
@@ -269,6 +299,13 @@ def bloco_arquivo(ref, resolucao, orcamento):
         caminho = os.path.realpath(os.path.expanduser(ref))
         if not os.path.isfile(caminho):
             raise ErroTool(f"arquivo não encontrado: {ref}")
+        if not dentro_permitido(caminho):
+            # realpath antes: symlink no projeto apontando para fora não passa.
+            raise ErroTool(
+                f"{ref} está fora das pastas permitidas (projeto, temporárias, "
+                "Desktop, Downloads). Copie o arquivo para o projeto ou defina "
+                "GEMINI_DECISION_ALLOWED_DIRS no env do servidor."
+            )
         tamanho = os.path.getsize(caminho)
         if tipo == "document" and tamanho > MAX_PDF:
             raise ErroTool(f"PDF grande demais (máx. {MAX_PDF // 2**20} MB)")

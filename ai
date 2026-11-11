@@ -6602,7 +6602,7 @@ gd_save_key() {
 # install.sh; senão baixa do GitHub. A cópia em GD_SERVER é o caminho estável
 # que vai nos configs das CLIs — `git pull` no repo não quebra nada. Se a
 # cópia instalada for de outra versão (ai atualizado sem install.sh), é trocada.
-GD_SERVER_VERSION="1.1.0"
+GD_SERVER_VERSION="1.2.0"
 gd_install_server() {
     local here src tmp
     here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || here=""

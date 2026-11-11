@@ -903,8 +903,11 @@ Garantias (travadas em `tests/gemini-decision.test.sh`):
   600. O servidor lê de lá, e nenhum config de CLI recebe a key.
 - **Texto com cara de credencial é recusado antes da rede.** Isso cobre
   `AIza…`, `sk-…`, `ghp_…`, JWT, chave privada e similares.
-- **Só mídia sai como arquivo:** imagem, PDF, áudio ou vídeo. Um `.env` ou um
-  arquivo de código passado em `files` é recusado.
+- **Só mídia sai como arquivo, e só de pastas permitidas.** O arquivo precisa
+  ser imagem, PDF, áudio ou vídeo, e o servidor confere o conteúdo, não só a
+  extensão. Ele também precisa estar no projeto, numa pasta temporária, no
+  Desktop ou em Downloads; symlinks são resolvidos antes dessa checagem.
+  `GEMINI_DECISION_ALLOWED_DIRS` substitui essa lista.
 - **O registro de uso guarda só números:** data, tool, tokens, ms e número de
   perguntas. Fica em `~/.local/share/ai-launcher/gemini-decision-usage.jsonl`,
   sem conteúdo.

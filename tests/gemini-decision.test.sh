@@ -280,6 +280,19 @@ echo "$saida" | resposta 7 texto | grep -q "não é um image/png de verdade" || 
 ok "só imagem/PDF/áudio/vídeo saem como arquivo, conferindo o conteúdo (não só a extensão)"
 
 echo
+echo "── 6b. arquivo fora das pastas permitidas não sai (nem por symlink)"
+mkdir -p "${TMP_DIR}/permitido" "${TMP_DIR}/fora"
+cp "${TMP_DIR}/tela.png" "${TMP_DIR}/fora/foto.png"
+ln -s "${TMP_DIR}/fora/foto.png" "${TMP_DIR}/permitido/atalho.png"
+for alvo in "${TMP_DIR}/fora/foto.png" "${TMP_DIR}/permitido/atalho.png"; do
+    saida=$(printf '%s\n' "$(call 13 decide "{\"files\":[\"$alvo\"],\"questions\":[{\"type\":\"noul\",\"instructions\":\"ok?\"}]}")" |
+        env -i PATH="/usr/bin:/bin" HOME="$H" GEMINI_DECISION_ALLOWED_DIRS="${TMP_DIR}/permitido" \
+            GEMINI_DECISION_BASE_URL="http://127.0.0.1:9" GEMINI_DECISION_LOG=off "$PY_BIN" "$SERVER" 2>&1)
+    echo "$saida" | resposta 13 texto | grep -q "fora das pastas permitidas" || fail "$alvo saiu: $saida"
+done
+ok "fora da lista → recusado; symlink resolvido antes da checagem"
+
+echo
 echo "── 7. sem key"
 SEM="${TMP_DIR}/sem-key"; mkdir -p "$SEM"
 saida=$(mcp "$SEM" "$(call 8 decide '{"input":"x","questions":[{"type":"noul","instructions":"ok?"}]}')")
