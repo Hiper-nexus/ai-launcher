@@ -7161,6 +7161,39 @@ T3_ACP_LOCAL=(
     "mimo-code|mimo|acp"
 )
 
+# ── Keys entre máquinas (ai keys pull <host>) ────────────
+# Copia slots do providers.conf de outra máquina da casa, por SSH, arquivo a
+# arquivo: o valor nunca vai para tela, argv ou prompt de modelo. Sem slots,
+# traz o que o T3 precisa: Gemini Decision e Token Plan (Qwen/DeepSeek).
+KEYS_PADRAO=(gemini-decision dashscope qwen-base-url)
+keys_pull() {
+    local host="${1:-}"; shift || true
+    if [[ -z "$host" ]]; then
+        echo "Use: ai keys pull <host-ssh> [slot ...]   (padrão: ${KEYS_PADRAO[*]})" >&2
+        return 1
+    fi
+    local slots=("$@") remoto s v n=0
+    [[ ${#slots[@]} -eq 0 ]] && slots=("${KEYS_PADRAO[@]}")
+    if ! remoto=$(ssh -o BatchMode=yes -o ConnectTimeout=15 "$host" \
+            'cat ~/.local/share/ai-launcher/providers.conf' 2>/dev/null); then
+        echo -e "${RED}Erro: não consegui ler o providers.conf de ${host} por SSH (chave SSH sem senha?).${RESET}" >&2
+        return 1
+    fi
+    mkdir -p "$(dirname "$PROVIDERS_FILE")" || return 1
+    for s in "${slots[@]}"; do
+        _validate_provider_name "$s" || { echo "  · ${s}: nome inválido"; continue; }
+        v=$(grep -m1 "^${s}=" <<<"$remoto" | cut -d= -f2-) || v=""
+        if [[ -n "$v" ]]; then
+            provider_save_key "$s" "$v" && echo -e "  ${GREEN}✔${RESET} ${s}" && n=$((n + 1))
+        else
+            echo "  · ${s}: não existe em ${host}"
+        fi
+    done
+    remoto=""; v=""
+    echo -e "${DIM}${n} slot(s) copiado(s) para ${PROVIDERS_FILE} (chmod 600).${RESET}"
+    [[ $n -gt 0 ]]
+}
+
 t3_settings_path() { printf '%s' "${T3CODE_HOME:-${HOME}/.t3}/userdata/settings.json"; }
 
 # JSON {agentId: [caminho absoluto, [args]]} só com os CLIs presentes aqui.
@@ -7239,6 +7272,21 @@ if not isinstance(d, dict):
     sys.exit(f"T3 Code não encontrado ou settings.json ilegível: {settings}")
 inst = d.get("providerInstances") or {}
 mudou, pendentes = False, []
+
+def doador(agente):
+    """Comando de outro provider LOCAL e pronto do mesmo agente (ex.: no t1 o
+    Kimi roda por `node …/kimi-code/dist/main.mjs acp`, não há `kimi` no PATH)."""
+    familia = agente.split("-")[0].lower()
+    for pid2, p2 in sorted(inst.items()):
+        c2 = (p2 or {}).get("config") or {}
+        if c2.get("source") != "local" or p2.get("enabled") is False or not c2.get("commandPath"):
+            continue
+        if ((ler(os.path.join(base, "caches", f"{pid2}.json")) or {}).get("status")) != "ready":
+            continue
+        linha = " ".join([str(c2["commandPath"])] + [str(a) for a in c2.get("commandArgs") or []]).lower()
+        if familia in linha:
+            return c2["commandPath"], [str(a) for a in c2.get("commandArgs") or []]
+    return None
 for pid, p in sorted(inst.items()):
     if not isinstance(p, dict):
         continue
@@ -7246,13 +7294,16 @@ for pid, p in sorted(inst.items()):
     st, msg = c.get("status") or "?", (c.get("message") or "").strip()
     nome = p.get("displayName") or pid
     cfg = p.get("config") or {}
-    if p.get("enabled") is False or st in ("ready", "disabled"):
+    sem_login = ((c.get("auth") or {}).get("status") == "unauthenticated") or any(
+        t in msg.lower() for t in ("sign in", "log in", "login"))
+    if p.get("enabled") is False or st == "disabled" or (st == "ready" and not sem_login):
         if modo == "status":
             print(f"  {'✔' if st == 'ready' else '·'} {nome:<28} {st}")
         continue
     agente = cfg.get("agentId") if cfg.get("source") != "local" else None
-    if modo == "fix" and p.get("driver") == "acpRegistry" and agente in locais:
-        cmd, args = locais[agente]
+    alvo = (locais.get(agente) or doador(agente)) if agente else None
+    if modo == "fix" and p.get("driver") == "acpRegistry" and alvo:
+        cmd, args = alvo
         if acp_responde(cmd, args):
             icone = cfg.get("registryIconUrl")
             p["config"] = {"source": "local", "commandPath": cmd, "commandArgs": args}
@@ -8021,6 +8072,7 @@ Exemplos:
   ai qw sync                      Atualiza modelos do Token Plan (Qwen + DeepSeek) no Qwen 1.0
   ai t3                           Saúde dos providers do T3 nesta máquina
   ai t3 fix                       Conserta agentes do Registry quebrados usando o CLI local
+  ai keys pull <host>             Copia as keys da casa de outra máquina por SSH (sem exibir)
   ai gd                           Gemini Decision: status (key, MCP nas CLIs, uso)
   ai gd key                       Salva a key do Google AI Studio
   ai gd setup                     Liga o MCP gemini_decision em todas as CLIs (T3)
@@ -9476,6 +9528,12 @@ elif [[ ${1:-} == "qw" || ${1:-} == "qwen" ]]; then
     shift
     qwen_dispatch "$@"
     exit $?
+elif [[ ${1:-} == "keys" ]]; then
+    shift
+    case "${1:-}" in
+        pull) shift; keys_pull "$@"; exit $? ;;
+        *) echo "Use: ai keys pull <host-ssh> [slot ...]"; exit 1 ;;
+    esac
 elif [[ ${1:-} == "t3" ]]; then
     shift
     t3_dispatch "$@"

@@ -93,4 +93,28 @@ roda >/dev/null 2>&1 || true
 [[ "$(cksum < "$T3/userdata/settings.json")" == "$antes" ]] || fail "segunda execução mudou o settings.json"
 ok "idempotente"
 
+# Kimi do Registry pedindo login, sem `kimi` no PATH, mas com outro provider
+# local pronto do Kimi (o caso do t1): reaproveita o comando dele.
+T3K="${TMP_DIR}/t3k"; mkdir -p "$T3K/userdata" "$T3K/caches"
+cat > "$T3K/userdata/settings.json" <<JSON
+{"providerInstances": {
+  "acpRegistry_kimi_cli": {"driver": "acpRegistry", "displayName": "Kimi CLI", "enabled": true,
+    "config": {"agentId": "kimi", "distribution": "auto"}},
+  "kimi_code_internacional": {"driver": "acpRegistry", "enabled": true,
+    "config": {"source": "local", "commandPath": "${BIN}/node-fake", "commandArgs": ["/opt/kimi-code/dist/main.mjs", "acp"]}}
+}}
+JSON
+printf '{"status": "warning", "message": "Sign in in provider settings using Login with Kimi account."}' > "$T3K/caches/acpRegistry_kimi_cli.json"
+printf '{"status": "ready"}' > "$T3K/caches/kimi_code_internacional.json"
+cp "$BIN/devin" "$BIN/node-fake"
+PY_DIR=$(dirname "$(command -v python3)"); BASH_DIR=$(dirname "$(command -v bash)")
+HOME="${TMP_DIR}/home" T3CODE_HOME="$T3K" PATH="${BIN}:${BASH_DIR}:${PY_DIR}:/usr/bin:/bin" "$ROOT/ai" t3 fix >/dev/null 2>&1 ||
+    fail "t3 fix com doador saiu com erro"
+python3 -I - "$T3K/userdata/settings.json" "$BIN/node-fake" <<'PY' || fail "não reaproveitou o Kimi local"
+import json, sys
+c = json.load(open(sys.argv[1]))["providerInstances"]["acpRegistry_kimi_cli"]["config"]
+assert c == {"source": "local", "commandPath": sys.argv[2], "commandArgs": ["/opt/kimi-code/dist/main.mjs", "acp"]}, c
+PY
+echo "  ok: Registry pedindo login sem CLI no PATH → reaproveita o provider local pronto do mesmo agente"
+
 echo "PASS: ai t3 fix"
