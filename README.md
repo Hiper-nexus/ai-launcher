@@ -110,7 +110,7 @@ ai --help       # Ajuda
 | HF Endpoint (dedicado) | `ai hf` | seu modelo uncensored, servido por vLLM na Hugging Face |
 | Featherless | `ai fl` | catálogo uncensored via API (21 mil+ modelos, plano pago) |
 | Abliteration.ai | `ai ab` | GLM-5.3 hospedado, abliterated (sem censura) — chat, one-shot ou Claude Code (`ai ab claude`) |
-| Qwen (Alibaba) | `ai qw` | Qwen-Max via Model Studio — CLI própria (`--yolo`) **ou** dentro do Claude Code |
+| Qwen (Alibaba) | `ai qw` | Qwen Code 1.0 + `qwen4-max-preview` (Token Plan) — CLI própria **ou** dentro do Claude Code |
 | Prime Agent | `ai prime`, `ai pa` | sessão persistente (sem one-shot); subcomandos e `--resume` passam direto |
 | Devin CLI | `ai dv`, `ai devin` | `--permission-mode dangerous --respect-workspace-trust false` |
 
@@ -398,16 +398,23 @@ Conferido com o Claude Code de verdade: `Read`, `Write`, `Bash`, subagente, leit
 
 Ajustes: `AI_HY4_MODEL` (ex.: `hy4-preview[1m]`, que a key do plano também acessa) e `AI_HY4_BASE_URL` (a doc da Tencent indica `https://tokenhub-intl.tencentcloudmaas.com` para key comum da TokenHub, sem `sk-tp-`). A key fica no `providers.conf` (chmod 600, slot `hy4`), fora do repositório.
 
-## Qwen (Alibaba Model Studio — duas opções)
+## Qwen (Alibaba Model Studio / Token Plan — duas opções)
 
-O Qwen-Max direto pela API da Alibaba (não é o Qoder). Requer uma key do [Model Studio](https://modelstudio.console.alibabacloud.com) — salve com `ai qw key`. Duas formas de usar o mesmo modelo:
+O Qwen direto pela API da Alibaba, com o modelo `qwen4-max-preview` por padrão. Requer uma key do [Model Studio](https://modelstudio.console.alibabacloud.com) (Token Plan: `sk-sp-…`) — salve com `ai qw key`. Duas formas de usar o mesmo modelo:
 
 ```bash
-ai qw            # Opção 1: Qwen Code CLI (a CLI própria do Qwen, fork do Gemini CLI)
-ai qw claude     # Opção 2: Claude Code usando o Qwen-Max como backend
+ai qw            # Opção 1: Qwen Code 1.0 (a CLI própria do Qwen, binário nativo)
+ai qw claude     # Opção 2: Claude Code usando o Qwen como backend
 ```
 
-- **Opção 1 (`ai qw`)** — usa o endpoint OpenAI-compatible (`compatible-mode/v1`). Config: `AI_QWEN_BASE_URL` (default Singapura intl), `AI_QWEN_MODEL` (default `qwen3-max-latest`; fixe `qwen3.8-max` pra travar a versão).
+- **Opção 1 (`ai qw`)** — usa o [Qwen Code 1.0](https://qwen.ai/qwencode) (core do Qoder, open source). Instale com o script oficial, **não** pelo npm:
+
+  ```bash
+  curl -fsSL 'https://qwen-code.oss-accelerate.aliyuncs.com/install.sh' | bash
+  npm uninstall -g @qwen-code/qwen-code   # remove o 0.x, que ficaria antes no PATH
+  ```
+
+  O 1.0 não lê mais `OPENAI_*`: só enxerga providers do `~/.qwen/settings.json`. Por isso o `ai qw` (e o `ai qw key`) grava ali o provider `alibaba-token-plan` (endpoint de `qwen_base_url()`, modelos `qwen4-max-preview`, `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus`, `auto`), preservando o resto do arquivo. Com isso o `qwen` puro — no terminal ou no T3 — também já sai autenticado. A key vai **literal** no arquivo (chmod 600), porque o 1.0.0-preview não resolve `${VAR}` no `apiKey`. Config: `AI_QWEN_BASE_URL`, `AI_QWEN_MODEL` (default `qwen4-max-preview`). Com o 0.x no PATH o launcher recusa e mostra o comando de instalação.
 - **Opção 2 (`ai qw claude`)** — usa o endpoint **Anthropic-compatible** (`/apps/anthropic`), o mesmo mecanismo do GLM. O Coding Plan tem URL fixa; o pay-as-you-go (Model Studio) inclui seu **WorkspaceId** na URL e serve o Max — configure com `ai qw claude-url <url>`.
 
 A key vai só pro `providers.conf` local (chmod 600, slot `dashscope`), nunca pro repo.

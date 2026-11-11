@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.68.1"
+AI_LAUNCHER_VERSION="1.69.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -38,9 +38,9 @@ DEEPCODE_FLAGS=()
 QODER_FLAGS=(--dangerously-skip-permissions)
 CURSOR_FLAGS=(--yolo --sandbox disabled --approve-mcps --trust)
 OMP_FLAGS=(--yolo)
-# Qwen Code (fork do Gemini CLI): --yolo auto-aprova tudo. Vale junto do
-# prompt posicional no one-shot (sem o conflito do kimi com -p).
-QWEN_FLAGS=(--yolo)
+# Qwen Code 1.0: bypass de permissões. O --yolo do 0.x ainda é aceito como
+# alias, mas o flag documentado do 1.0 é este. Vale junto do prompt posicional.
+QWEN_FLAGS=(--dangerously-skip-permissions)
 # Muse Spark é yolo por definição: não entra no Toggle Flags, então continua
 # sem aprovação mesmo se o usuário desligar o yolo global do Claude Code.
 MUSE_FLAGS=(--dangerously-skip-permissions)
@@ -142,17 +142,22 @@ MUSE_HOST="${AI_MUSE_HOST:-https://api.meta.ai}"
 MUSE_MODEL="${AI_MUSE_MODEL:-muse-spark-1.3}"
 MUSE_MAX_TOKENS="${AI_MUSE_MAX_TOKENS:-8192}"
 
-# ── Qwen Code CLI (Alibaba Model Studio, direto — não é o Qoder) ──
-# CLI oficial do Qwen (fork do Gemini CLI). Fala com a API DashScope
+# ── Qwen Code 1.0 (Alibaba Model Studio / Token Plan) ──
+# CLI oficial do Qwen, 1.0 = core do Qoder em binário nativo (qwen.ai/qwencode).
+# Instala com o script oficial, não mais pelo npm. Fala com a API DashScope
 # (compatible-mode OpenAI) usando a key do seu plano Alibaba/Model Studio.
-# Endpoint: Singapura (intl) por padrão; Pequim ou US via AI_QWEN_BASE_URL.
-# Modelo: qwen3-max-latest (alias que segue o Max mais novo). Fixe a versão
-# exata com AI_QWEN_MODEL=qwen3.8-max quando quiser travar.
+# Modelo: qwen4-max-preview (Token Plan, nov/2026). Troque com AI_QWEN_MODEL.
 # Endpoint OpenAI: env → providers.conf (slot 'qwen-base-url', p/ o Token Plan
 # do usuário, que tem endpoint próprio) → default genérico. Resolvido em runtime
 # por qwen_base_url() — não hardcoda o endpoint do plano no repo público.
 QWEN_BASE_URL="${AI_QWEN_BASE_URL:-}"
-QWEN_MODEL="${AI_QWEN_MODEL:-qwen3.8-max}"
+QWEN_MODEL="${AI_QWEN_MODEL:-qwen4-max-preview}"
+QWEN_PROVIDER_ID="alibaba-token-plan"
+# O OMP (oh-my-pi 18.12) tem catálogo próprio do alibaba-token-plan, sem o
+# qwen4-max-preview, e faz fuzzy match no --model: o nome novo cairia calado
+# em outro modelo. Fica fixo até o catálogo do OMP trazer o qwen4.
+OMP_QWEN_MODEL="${AI_OMP_QWEN_MODEL:-qwen3.8-max}"
+QWEN_INSTALL_CMD="curl -fsSL 'https://qwen-code.oss-accelerate.aliyuncs.com/install.sh' | bash"
 
 # Variáveis de ambiente para cada CLI
 
@@ -6301,11 +6306,93 @@ qwen_save_key() {
     [[ -z "$key" ]] && { echo -e "${RED}Erro: key vazia.${RESET}" >&2; return 1; }
     provider_save_key dashscope "$key" || return 1
     echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600)${RESET}"
+    # O qwen fora do launcher (terminal, T3) lê a key do settings.json do 1.0.
+    if qwen_is_v1; then
+        qwen_sync_settings && echo -e "${GREEN}✔ Provider ${QWEN_PROVIDER_ID} atualizado em ~/.qwen/settings.json${RESET}"
+    fi
+}
+
+# O 1.0 trocou o modelo de config: o 0.x lia OPENAI_*, o 1.0 só enxerga
+# providers do settings.json. Com o 0.x no PATH o launcher não tem como
+# configurar modelo nenhum, então checa a versão antes.
+qwen_is_v1() {
+    local v
+    v=$(qwen --version 2>/dev/null | head -n 1) || return 1
+    [[ "$v" =~ ^([1-9][0-9]*)\. ]]
+}
+
+# Grava/atualiza o provider do Token Plan em ~/.qwen/settings.json (escopo
+# de usuário), preservando o resto do arquivo. Assim o `qwen` funciona igual
+# fora do launcher (terminal, T3). A key vai LITERAL: no 1.0.0-preview a
+# referência "${VAR}" no apiKey não é resolvida (o provider some com
+# "apiKey is required and must resolve from the environment"), por isso o
+# arquivo fica com chmod 600, como o providers.conf. O model.name só é
+# trocado quando está vazio ou no formato do 0.x (sem "provider/"), para
+# não desfazer o que o usuário escolher no /model.
+qwen_sync_settings() {
+    local key; key=$(qwen_api_key)
+    [[ -z "$key" ]] && return 1
+    local dir="${HOME}/.qwen"
+    mkdir -p "$dir" || return 1
+    QWEN_SYNC_KEY="$key" \
+    QWEN_SYNC_BASE="$(qwen_base_url)" \
+    QWEN_SYNC_MODEL="$QWEN_MODEL" \
+    QWEN_SYNC_PROVIDER="$QWEN_PROVIDER_ID" \
+    python3 -I - "${dir}/settings.json" <<'PY'
+import json, os, sys, tempfile
+
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("settings.json não é um objeto")
+except FileNotFoundError:
+    data = {}
+except ValueError as e:
+    sys.exit(f"~/.qwen/settings.json inválido, não mexi nele: {e}")
+
+pid = os.environ["QWEN_SYNC_PROVIDER"]
+model = os.environ["QWEN_SYNC_MODEL"]
+# type "alibaba" já traz o qwen3.8-max embutido; os demais são do Token Plan.
+wanted = [model] + [m for m in ("qwen3.8-flash", "qwen3.7-plus", "auto") if m != model]
+providers = data.get("providers")
+if not isinstance(providers, dict):
+    providers = {}
+providers[pid] = {
+    "type": "alibaba",
+    "protocol": "openai",
+    "displayName": "Alibaba Token Plan (ai launcher)",
+    "baseUrl": os.environ["QWEN_SYNC_BASE"],
+    "apiKey": os.environ["QWEN_SYNC_KEY"],
+    "models": [{"model": m} for m in wanted],
+}
+data["providers"] = providers
+current = data.get("model")
+if not isinstance(current, dict):
+    current = {}
+if "/" not in str(current.get("name") or ""):
+    current["name"] = f"{pid}/{model}"
+data["model"] = current
+
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".settings-")
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+except BaseException:
+    os.unlink(tmp)
+    raise
+PY
 }
 
 qwen_status_icon() {
     if ! check_installed qwen; then
         echo -e "${RED}✗ não instalado${RESET}"
+    elif ! qwen_is_v1; then
+        echo -e "${YELLOW}✗ Qwen 0.x (instale o 1.0)${RESET}"
     elif [[ -n "$(qwen_api_key)" ]]; then
         echo -e "${GREEN}✔${RESET}"
     else
@@ -6313,12 +6400,17 @@ qwen_status_icon() {
     fi
 }
 
-# Lança o Qwen Code apontando pro Model Studio da Alibaba (compatible-mode).
-# O Qwen Code lê OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL do ambiente.
+# Lança o Qwen Code 1.0 no provider do Token Plan (Model Studio).
 qwen_launch() {
     if ! check_installed qwen; then
-        echo -e "${RED}Erro: Qwen Code não está instalado.${RESET}"
-        echo "  Instale: npm install -g @qwen-code/qwen-code"
+        echo -e "${RED}Erro: Qwen Code não está instalado.${RESET}" >&2
+        echo "  Instale: ${QWEN_INSTALL_CMD}" >&2
+        return 1
+    fi
+    if ! qwen_is_v1; then
+        echo -e "${RED}Erro: o qwen no PATH é o Qwen Code 0.x ($(command -v qwen)).${RESET}" >&2
+        echo "  O launcher usa o 1.0. Instale: ${QWEN_INSTALL_CMD}" >&2
+        echo "  E remova o 0.x: npm uninstall -g @qwen-code/qwen-code" >&2
         return 1
     fi
     local key; key=$(qwen_api_key)
@@ -6328,13 +6420,13 @@ qwen_launch() {
         echo "  Depois:   ai qw key" >&2
         return 1
     fi
+    qwen_sync_settings || return 1
     local base; base=$(qwen_base_url)
     save_history "Qwen Code [${QWEN_MODEL}]"
     echo -e "${GREEN}Qwen Code:${RESET} ${QWEN_MODEL} ${DIM}(${base##*//})${RESET}"
     echo ""
-    export OPENAI_API_KEY="$key" OPENAI_BASE_URL="$base" OPENAI_MODEL="$QWEN_MODEL"
     enter_repo_if_needed
-    exec qwen "${QWEN_FLAGS[@]}" "$@"
+    exec qwen "${QWEN_FLAGS[@]}" -m "${QWEN_PROVIDER_ID}/${QWEN_MODEL}" "$@"
 }
 
 qwen_dispatch() {
@@ -6417,13 +6509,13 @@ qwen_launch_claude() {
 qwen_menu_panel() {
     echo -e "${BOLD}${CYAN}"
     echo "  ┌──────────────────────────────────────────────────┐"
-    echo "  │   🐉 Qwen-Max (Alibaba Model Studio)             │"
+    echo "  │   🐉 Qwen Code 1.0 (Alibaba Token Plan)          │"
     echo "  └──────────────────────────────────────────────────┘"
     echo -e "${RESET}"
     echo -e "  ${BOLD}Modelo:${RESET} ${QWEN_MODEL}   ${BOLD}Key:${RESET} $(qwen_status_icon)"
     echo ""
-    echo -e "  ${BOLD}1)${RESET} Qwen Code CLI          ${DIM}(a CLI própria do Qwen)${RESET}"
-    echo -e "  ${BOLD}2)${RESET} Claude Code + Qwen-Max ${DIM}(Qwen no Claude, via Anthropic)${RESET}"
+    echo -e "  ${BOLD}1)${RESET} Qwen Code 1.0          ${DIM}(a CLI própria do Qwen)${RESET}"
+    echo -e "  ${BOLD}2)${RESET} Claude Code + Qwen     ${DIM}(Qwen no Claude, via Anthropic)${RESET}"
     echo -e "  ${BOLD}3)${RESET} Salvar key             ${BOLD}4)${RESET} Salvar URL Anthropic   ${BOLD}5)${RESET} Voltar"
     local opt
     read -rp "  Escolha [1-5] (default 1): " opt
@@ -6872,12 +6964,14 @@ Abliteration.ai (GLM-5.3 hospedado, abliterated — sem censura):
   No modo claude: slot haiku usa AI_AB_HAIKU_MODEL (default abliterated-model)
   e a compactação automática segue AI_AB_AUTOCOMPACT_WINDOW (default 240000).
 
-Qwen (Alibaba Model Studio — Qwen-Max, DUAS opções, não é o Qoder):
-  qw / qwen              Opção 1: Qwen Code CLI (CLI própria da Qwen)
-  qw claude              Opção 2: Claude Code usando o Qwen-Max (Anthropic-compat)
-  qw key [key]           Salva a key da Alibaba/DashScope (slot 'dashscope')
+Qwen (Alibaba Model Studio / Token Plan — DUAS opções):
+  qw / qwen              Opção 1: Qwen Code 1.0 (CLI própria da Qwen, binário nativo)
+  qw claude              Opção 2: Claude Code usando o Qwen (Anthropic-compat)
+  qw key [key]           Salva a key da Alibaba/DashScope (slot 'dashscope') e
+                         atualiza o provider alibaba-token-plan em ~/.qwen/settings.json
   qw claude-url <url>    Salva o endpoint Anthropic (pay-as-you-go tem WorkspaceId)
-  Modelo: AI_QWEN_MODEL (default qwen3-max-latest; fixe qwen3.8-max se quiser).
+  Modelo: AI_QWEN_MODEL (default qwen4-max-preview; qwen3.8-max, qwen3.8-flash…).
+  Instalar o 1.0: curl -fsSL 'https://qwen-code.oss-accelerate.aliyuncs.com/install.sh' | bash
   Endpoint OpenAI: AI_QWEN_BASE_URL. Endpoint Anthropic (Claude): AI_QWEN_ANTHROPIC_URL
   ou 'qw claude-url'. Coding Plan tem URL fixa; Model Studio inclui o WorkspaceId.
 
@@ -7056,8 +7150,8 @@ Exemplos:
   ai ab "audita esse dump"        Abliteration one-shot
   ai ab claude                    Claude Code em cima do GLM-5.3 sem censura
   ai ab key                       Salva a key ak_... (1x por máquina)
-  ai qw                           Qwen Code CLI (Qwen-Max via Alibaba)
-  ai qw claude                    Claude Code usando o Qwen-Max
+  ai qw                           Qwen Code 1.0 (qwen4-max-preview, Token Plan)
+  ai qw claude                    Claude Code usando o Qwen
   ai qw key                       Salva a key da Alibaba/DashScope
   ai a                            Antigravity
   ai p ls                         Lista providers configurados
@@ -8453,7 +8547,7 @@ elif [[ ${1:-} == "omp" || ${1:-} == "o" || ${1:-} == "oh-my-pi" ]]; then
             deepseek|ds)        _omp_provider="deepseek";           _omp_model="${PROVIDER_MODELS[deepseek]}" ;;
             sakana|fugu)        _omp_provider="sakana";             _omp_model="${PROVIDER_MODELS[sakana]}" ;;
             muse-spark|ms|meta) _omp_provider="meta";               _omp_model="${MUSE_MODEL}" ;;
-            qwen|qw|dashscope)  _omp_provider="alibaba-token-plan"; _omp_model="${QWEN_MODEL}" ;;
+            qwen|qw|dashscope)  _omp_provider="alibaba-token-plan"; _omp_model="${OMP_QWEN_MODEL}" ;;
             lmstudio)           _omp_provider="lm-studio" ;;
             *)                  _omp_provider="$_active_provider" ;;
         esac
