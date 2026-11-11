@@ -113,6 +113,22 @@ run_t3 || fail "ai qw t3 falhou sem provider local"
 [[ "$(json_get providerInstances.qwen_local.displayName)" == "Qwen Code 1.0" ]] ||
     fail "provider criado sem nome"
 
+# DeepSeek: com a pasta que o `ai qw sync` gera, vira um provider próprio que
+# roda o mesmo qwen com QWEN_CONFIG_DIR apontando para ela — e não é confundido
+# com o provider principal numa segunda execução.
+mkdir -p "${TEST_HOME}/.qwen-deepseek-v4-pro"
+echo '{"model": {"name": "alibaba-token-plan/deepseek-v4-pro"}}' > "${TEST_HOME}/.qwen-deepseek-v4-pro/settings.json"
+run_t3 || fail "ai qw t3 falhou com a pasta do DeepSeek"
+run_t3 || fail "segunda execução com DeepSeek falhou"
+[[ "$(json_get providerInstances.qwen_deepseek_v4_pro.environment.0.value)" == "${TEST_HOME}/.qwen-deepseek-v4-pro" ]] ||
+    fail "provider do DeepSeek sem QWEN_CONFIG_DIR certo"
+[[ "$(json_get providerInstances.qwen_deepseek_v4_pro.config.commandArgs)" == '["--acp"]' ]] || fail "DeepSeek sem --acp"
+[[ "$(json_get providerModelPreferences.qwen_deepseek_v4_pro.modelOrder.0)" == "alibaba-token-plan/deepseek-v4-pro" ]] ||
+    fail "DeepSeek sem o modelo no topo"
+[[ "$(json_get providerInstances.qwen_local.displayName)" == "Qwen Code 1.0" ]] || fail "o principal virou outro"
+python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1]))["providerInstances"]; assert "qwen_code_v1" not in d and "qwen_deepseek_v4_1_flash" not in d, list(d)' "$SETTINGS" ||
+    fail "criou provider a mais (variante confundida com o principal, ou DeepSeek sem pasta)"
+
 # Qwen 0.x no PATH: recusa e não mexe no arquivo.
 before=$(cat "$SETTINGS")
 echo "0.27.2" > "$FAKE_VERSION_FILE"

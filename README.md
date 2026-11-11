@@ -424,6 +424,8 @@ ai qw claude     # Opção 2: Claude Code usando o Qwen como backend
 
   **DeepSeek no Qwen Code 1.0:** o provider do Token Plan inclui `deepseek-v4-pro`, `deepseek-v4-pro-0813`, `deepseek-v4.1-flash` e `deepseek-v4.1-flash-1017`, todos testados com resposta real em 2026-11-11 (o id genérico `deepseek-v4-flash` dá 403 no plano). Use `qwen -m alibaba-token-plan/deepseek-v4.1-flash` ou o `/model`. Para atualizar a lista numa máquina: `ai qw sync`.
 
+  **DeepSeek no T3:** em modo ACP, o Qwen 1.0 só anuncia e só aceita o `model.name` do `settings.json`; o `-m` é ignorado. Por isso o `ai qw sync` gera `~/.qwen-deepseek-v4-pro/` e `~/.qwen-deepseek-v4.1-flash/`, cópias da config com o DeepSeek como padrão, e o `ai qw t3` cria um provider para cada uma ("DeepSeek V4 Pro (Qwen Code)" e "DeepSeek V4.1 Flash (Qwen Code)"). Esses providers rodam o mesmo `qwen --acp` com `QWEN_CONFIG_DIR` apontando para a pasta. Testado no T3 com resposta real.
+
   **No T3 Code:** `ai qw t3` liga o 1.0 no T3 da máquina. Ele desativa o agente "Qwen Code" do ACP Registry (que baixa sozinho o npm 0.x para `~/.t3/tools/qwen-code`), deixa um provider local "Qwen Code 1.0" rodando `qwen --acp` pelo caminho absoluto e põe o `qwen4-max-preview` no topo. O T3 relê o `settings.json` sozinho. Máquina nova, do zero:
 
   ```bash

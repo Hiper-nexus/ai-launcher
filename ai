@@ -6401,19 +6401,39 @@ if "/" not in str(current.get("name") or ""):
     current["name"] = f"{pid}/{model}"
 data["model"] = current
 
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".settings-")
-try:
-    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
-except BaseException:
-    os.unlink(tmp)
-    raise
+def gravar(destino, conteudo):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(destino), prefix=".settings-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(conteudo, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, destino)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+gravar(path, data)
+
+# No ACP o Qwen 1.0 só anuncia (e só aceita) o model.name do settings.json —
+# o -m é ignorado. Cada DeepSeek ganha uma pasta própria (QWEN_CONFIG_DIR)
+# com a MESMA config e ele como padrão; o `ai qw t3` cria um provider no T3
+# para cada uma. Regeradas a cada sync: key, modelos e MCP seguem a principal.
+home = os.path.dirname(os.path.dirname(os.path.abspath(path)))
+for m in ("deepseek-v4-pro", "deepseek-v4.1-flash"):
+    pasta = os.path.join(home, f".qwen-{m}")
+    os.makedirs(pasta, mode=0o700, exist_ok=True)
+    variante = json.loads(json.dumps(data))
+    variante.setdefault("model", {})["name"] = f"{pid}/{m}"
+    gravar(os.path.join(pasta, "settings.json"), variante)
 PY
     # No Windows o chmod acima não protege nada; quem fecha é a ACL.
     secure_file "${dir}/settings.json"
+    local v
+    for v in "${HOME}"/.qwen-deepseek-*/settings.json; do
+        [[ -f "$v" ]] && secure_file "$v"
+    done
+    return 0
 }
 
 # O launcher usa o 1.0: com o 0.x no PATH (lia OPENAI_*) ele rodaria sem
@@ -6461,10 +6481,27 @@ qwen_setup_t3() {
     else
         bin=$(command -v qwen)
     fi
-    python3 -I - "$settings" "$bin" "${QWEN_PROVIDER_ID}/${QWEN_MODEL}" <<'PY' || return 1
+    # Providers dos DeepSeek: só para as pastas que o `ai qw sync` já gerou.
+    local variantes="{" sep="" m d
+    for m in deepseek-v4-pro deepseek-v4.1-flash; do
+        d="${HOME}/.qwen-${m}"
+        [[ -f "${d}/settings.json" ]] || continue
+        ai_is_windows && d=$(cygpath -w "$d" 2>/dev/null || printf '%s' "$d")
+        variantes+="${sep}\"${m}\": \"${d//\\/\\\\}\""
+        sep=", "
+    done
+    variantes+="}"
+    QWEN_T3_VARIANTES="$variantes" \
+    python3 -I - "$settings" "$bin" "${QWEN_PROVIDER_ID}/${QWEN_MODEL}" "$QWEN_PROVIDER_ID" <<'PY' || return 1
 import json, os, sys, tempfile
 
-path, command, model = sys.argv[1], sys.argv[2], sys.argv[3]
+path, command, model, pid_qwen = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+variantes = json.loads(os.environ.get("QWEN_T3_VARIANTES") or "{}")
+ROTULOS = {"deepseek-v4-pro": "DeepSeek V4 Pro (Qwen Code)",
+           "deepseek-v4.1-flash": "DeepSeek V4.1 Flash (Qwen Code)"}
+def id_variante(m):
+    return "qwen_" + m.replace("-", "_").replace(".", "_")
+ids_variantes = {id_variante(m) for m in ROTULOS}
 try:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
@@ -6483,7 +6520,7 @@ def runs_qwen(cfg):
 
 disabled, local_id = [], None
 for iid, inst in instances.items():
-    if not isinstance(inst, dict) or inst.get("driver") != "acpRegistry":
+    if not isinstance(inst, dict) or inst.get("driver") != "acpRegistry" or iid in ids_variantes:
         continue
     cfg = inst.get("config") if isinstance(inst.get("config"), dict) else {}
     if cfg.get("source") == "local":
@@ -6513,6 +6550,25 @@ pref = prefs.get(local_id) if isinstance(prefs.get(local_id), dict) else {"hidde
 order = pref.get("modelOrder") if isinstance(pref.get("modelOrder"), list) else []
 pref["modelOrder"] = [model] + [m for m in order if m != model]
 prefs[local_id] = pref
+
+feitos = []
+for m, pasta in variantes.items():
+    if m not in ROTULOS:
+        continue
+    iid = id_variante(m)
+    v = instances.get(iid) if isinstance(instances.get(iid), dict) else {}
+    v.update({
+        "driver": "acpRegistry",
+        "displayName": ROTULOS[m],
+        "enabled": v.get("enabled", True) is not False,
+        "config": {"source": "local", "commandPath": command, "commandArgs": ["--acp"]},
+        "environment": [{"name": "QWEN_CONFIG_DIR", "value": pasta, "sensitive": False}],
+    })
+    instances[iid] = v
+    pv = prefs.get(iid) if isinstance(prefs.get(iid), dict) else {"hiddenModels": []}
+    pv["modelOrder"] = [f"{pid_qwen}/{m}"]
+    prefs[iid] = pv
+    feitos.append(iid)
 data["providerModelPreferences"] = prefs
 
 mode = os.stat(path).st_mode & 0o777
@@ -6530,6 +6586,8 @@ except BaseException:
 print(f"  {'criado' if created else 'atualizado'}: {local_id} → {command} --acp")
 for iid in disabled:
     print(f"  desativado: {iid} (registry, baixava o npm 0.x)")
+for iid in feitos:
+    print(f"  DeepSeek: {iid} → {instances[iid]['displayName']}")
 PY
     echo -e "${GREEN}✔ T3 Code: Qwen Code 1.0 (${QWEN_MODEL})${RESET} ${DIM}— o T3 aplica sozinho; se não aparecer, reabra o app${RESET}"
     local cache="${t3_home}/tools/qwen-code"

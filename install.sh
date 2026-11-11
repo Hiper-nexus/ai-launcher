@@ -134,6 +134,8 @@ if grep -q '^gemini-decision=' "${HOME}/.local/share/ai-launcher/providers.conf"
     # Qwen 1.0 e agentes do Registry quebrados no T3 trocados pelo CLI local.
     "${INSTALL_DIR}/ai" qw sync >/dev/null 2>&1 || true
     if [[ -f "${T3CODE_HOME:-${HOME}/.t3}/userdata/settings.json" ]]; then
+        # Qwen 1.0 + um provider por DeepSeek no T3 (só faz algo com o 1.0 no PATH)
+        "${INSTALL_DIR}/ai" qw t3 2>/dev/null | grep -E "DeepSeek|criado|desativado" || true
         echo -e "${CYAN}T3 Code: conferindo providers...${RESET}"
         "${INSTALL_DIR}/ai" t3 fix || echo -e "${YELLOW}Pendências acima precisam de você (login etc.).${RESET}"
     fi
