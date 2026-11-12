@@ -6454,7 +6454,7 @@ qwen_require_v1() {
 # que mostra ao T3 todos os modelos do Token Plan (Qwen e DeepSeek) e troca
 # de modelo retomando a sessão. Os providers separados dos DeepSeek, das
 # versões anteriores, ficam desativados.
-QWEN_PROXY_VERSION="1.0.1"
+QWEN_PROXY_VERSION="1.0.2"
 qwen_setup_t3() {
     qwen_require_v1 || return 1
     # Lista de modelos do Token Plan (Qwen + DeepSeek) atualizada em toda máquina.

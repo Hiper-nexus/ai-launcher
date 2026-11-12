@@ -194,6 +194,26 @@ for rodada in range(3):
 print("  ok: 6 proxies ao mesmo tempo na mesma pasta, nenhum cai")
 PY
 
+# Mesmo modelo em dois providers (o Windows tinha "bailian" e
+# "alibaba-token-plan" no mesmo endpoint): o T3 listava qwen4-max-preview duas
+# vezes. Cada modelo aparece uma vez, pelo provider do padrão; os exclusivos
+# do outro provider continuam na lista.
+python3 -I - "$ROOT/mcp/qwen-acp-proxy.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("qwen_acp_proxy", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+st = {"model": {"name": "tp/qwen4-max-preview"},
+      "providers": {"bailian": {"models": [{"model": "qwen4-max-preview"}, {"model": "glm-5.3"},
+                                           {"model": "deepseek-v4-pro"}]},
+                    "tp": {"models": [{"model": "qwen4-max-preview"}, {"model": "deepseek-v4-pro"},
+                                      {"model": "auto"}]}}}
+ids, default = mod.configured_models(st)
+assert default == "tp/qwen4-max-preview", default
+assert ids == ["tp/qwen4-max-preview", "tp/deepseek-v4-pro", "tp/auto", "bailian/glm-5.3"], ids
+print("  ok: modelo repetido em dois providers aparece uma vez (pelo provider do padrão)")
+PY
+
 # Um modelo só: nada a multiplexar, o proxy vira o próprio qwen.
 cat > "$HOME/.qwen/settings.json" <<JSON
 {"model": {"name": "$P/qwen4-max-preview"}, "providers": {"$P": {"models": [{"model": "qwen4-max-preview"}]}}}

@@ -34,7 +34,7 @@ import sys
 import tempfile
 import threading
 
-SERVER_VERSION = "1.0.1"
+SERVER_VERSION = "1.0.2"
 
 # Métodos que abrem sessão: a resposta traz models/configOptions.
 OPEN_METHODS = ("session/new", "session/load", "session/resume", "session/fork")
@@ -77,24 +77,25 @@ def load_settings(base):
 
 
 def configured_models(settings):
-    """Modelos dos providers, no formato "provider/modelo", com o padrão primeiro."""
-    ids = []
+    """Modelos dos providers, no formato "provider/modelo", com o padrão primeiro.
+    O mesmo modelo em dois providers (dois nomes para o mesmo endpoint) entra
+    uma vez só, pelo provider do padrão: senão o T3 lista cada um duas vezes."""
     providers = settings.get("providers") if isinstance(settings.get("providers"), dict) else {}
-    for pid, prov in providers.items():
+    model = settings.get("model") if isinstance(settings.get("model"), dict) else {}
+    default = model.get("name") if isinstance(model.get("name"), str) else ""
+    first = default.partition("/")[0]
+    ids, seen = [], {default.partition("/")[2]} if default else set()
+    # sorted é estável: o provider do padrão primeiro, os outros na ordem do arquivo.
+    for pid, prov in sorted(providers.items(), key=lambda kv: kv[0] != first):
         if not isinstance(prov, dict) or prov.get("enabled") is False:
             continue
         for m in prov.get("models") or []:
             mid = m.get("model") if isinstance(m, dict) else m
             if isinstance(m, dict) and m.get("enabled") is False:
                 continue
-            if isinstance(mid, str) and mid.strip():
-                key = f"{pid}/{mid.strip()}"
-                if key not in ids:
-                    ids.append(key)
-    model = settings.get("model") if isinstance(settings.get("model"), dict) else {}
-    default = model.get("name") if isinstance(model.get("name"), str) else ""
-    if default in ids:
-        ids.remove(default)
+            if isinstance(mid, str) and mid.strip() and mid.strip() not in seen:
+                seen.add(mid.strip())
+                ids.append(f"{pid}/{mid.strip()}")
     if default:
         ids.insert(0, default)
     return ids, default
