@@ -136,6 +136,9 @@ fi
 # instruções em todas as CLIs a cada atualização (idempotente). Sem key, nada
 # muda — quem só usa o launcher não ganha MCP que não pediu.
 if grep -q '^gemini-decision=' "${HOME}/.local/share/ai-launcher/providers.conf" 2>/dev/null; then
+    # As CLIs (qwen, devin, kimi...) moram ao lado do ai; sem terminal (ssh)
+    # o ~/.local/bin costuma estar fora do PATH e o `ai qw t3` não acharia o qwen.
+    export PATH="${INSTALL_DIR}:${PATH}"
     echo ""
     echo -e "${CYAN}Gemini Decision: atualizando o MCP nas CLIs desta máquina...${RESET}"
     "${INSTALL_DIR}/ai" gd setup || echo -e "${YELLOW}Aviso: ai gd setup terminou com erro (acima).${RESET}"
