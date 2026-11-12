@@ -531,7 +531,13 @@ python3() {
         echo "Erro: nenhum Python utilizável no PATH (python3/python/py)." >&2
         return 127
     fi
-    command "$py" "$@"
+    # stdout cp1252 no Windows: print com "→"/"✔" dava UnicodeEncodeError (o
+    # `ai qw t3` gravava e quebrava no fim). -I ignora PYTHONUTF8; -X não.
+    if ai_is_windows; then
+        command "$py" -X utf8 "$@"
+    else
+        command "$py" "$@"
+    fi
 }
 
 # ── Providers alternativos ──────────────────────────────
