@@ -94,7 +94,15 @@ if ! echo "$PATH" | tr ':' '\n' | grep -q "^${HOME}/.local/bin$"; then
     if [[ -n "$SHELL_RC" ]]; then
         # Evitar duplicatas
         if ! grep -q 'HOME/.local/bin' "$SHELL_RC" 2>/dev/null; then
-            read -rp "Adicionar ao ${SHELL_RC} automaticamente? [s/N]: " yn
+            # Sem terminal (ssh host ./install.sh, T3, CI) não pergunta: o read
+            # travaria com a entrada aberta ou, fechada, o set -e encerraria o
+            # script antes de reaplicar o Gemini Decision e o Qwen no T3.
+            yn=""
+            if [[ -t 0 ]]; then
+                read -rp "Adicionar ao ${SHELL_RC} automaticamente? [s/N]: " yn || yn=""
+            else
+                echo "  Para pôr no PATH: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ${SHELL_RC}"
+            fi
             if [[ "$yn" == [sS] ]]; then
                 echo '' >> "$SHELL_RC"
                 echo '# AI CLI Launcher' >> "$SHELL_RC"
