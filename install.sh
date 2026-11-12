@@ -56,12 +56,13 @@ fi
 
 chmod +x "${INSTALL_DIR}/ai"
 
-# Servidor MCP do Gemini Decision: caminho estável que `ai gd setup` grava no
-# config das CLIs (git pull no repo não quebra nada). Falha aqui não é fatal:
-# o `ai gd setup` baixa de novo se faltar.
+# Scripts Python num caminho estável (git pull no repo não quebra nada): o
+# servidor MCP do Gemini Decision, que `ai gd setup` grava no config das CLIs,
+# e o proxy ACP que o `ai qw t3` põe no provider do Qwen no T3 (todos os
+# modelos do Token Plan). Falha aqui não é fatal: os comandos baixam se faltar.
 MCP_DIR="${HOME}/.local/share/ai-launcher/mcp"
 mkdir -p "$MCP_DIR"
-for _mcp in gemini-decision-server.py; do
+for _mcp in gemini-decision-server.py qwen-acp-proxy.py; do
     _local="$(dirname "${BASH_SOURCE[0]}")/mcp/${_mcp}"
     if [[ -f "$_local" && -z "${AI_LAUNCHER_FORCE_DOWNLOAD:-}" ]]; then
         cp "$_local" "${MCP_DIR}/${_mcp}"
@@ -70,7 +71,7 @@ for _mcp in gemini-decision-server.py; do
         mv "${MCP_DIR}/${_mcp}.tmp" "${MCP_DIR}/${_mcp}"
     else
         rm -f "${MCP_DIR}/${_mcp}.tmp"
-        echo -e "${YELLOW}Aviso: mcp/${_mcp} não instalado (ai gd setup baixa depois).${RESET}"
+        echo -e "${YELLOW}Aviso: mcp/${_mcp} não instalado (ai gd setup / ai qw t3 baixam depois).${RESET}"
     fi
 done
 
@@ -134,8 +135,8 @@ if grep -q '^gemini-decision=' "${HOME}/.local/share/ai-launcher/providers.conf"
     # Qwen 1.0 e agentes do Registry quebrados no T3 trocados pelo CLI local.
     "${INSTALL_DIR}/ai" qw sync >/dev/null 2>&1 || true
     if [[ -f "${T3CODE_HOME:-${HOME}/.t3}/userdata/settings.json" ]]; then
-        # Qwen 1.0 + um provider por DeepSeek no T3 (só faz algo com o 1.0 no PATH)
-        "${INSTALL_DIR}/ai" qw t3 2>/dev/null | grep -E "DeepSeek|criado|desativado" || true
+        # Qwen 1.0 no T3 com todos os modelos via proxy (só faz algo com o 1.0 no PATH)
+        "${INSTALL_DIR}/ai" qw t3 2>/dev/null | grep -E "criado|atualizado|desativado" || true
         echo -e "${CYAN}T3 Code: conferindo providers...${RESET}"
         "${INSTALL_DIR}/ai" t3 fix || echo -e "${YELLOW}Pendências acima precisam de você (login etc.).${RESET}"
     fi

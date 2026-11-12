@@ -424,9 +424,21 @@ ai qw claude     # Opção 2: Claude Code usando o Qwen como backend
 
   **DeepSeek no Qwen Code 1.0:** o provider do Token Plan inclui `deepseek-v4-pro`, `deepseek-v4-pro-0813`, `deepseek-v4.1-flash` e `deepseek-v4.1-flash-1017`, todos testados com resposta real em 2026-11-11 (o id genérico `deepseek-v4-flash` dá 403 no plano). Use `qwen -m alibaba-token-plan/deepseek-v4.1-flash` ou o `/model`. Para atualizar a lista numa máquina: `ai qw sync`.
 
-  **DeepSeek no T3:** em modo ACP, o Qwen 1.0 só anuncia e só aceita o `model.name` do `settings.json`; o `-m` é ignorado. Por isso o `ai qw sync` gera `~/.qwen-deepseek-v4-pro/` e `~/.qwen-deepseek-v4.1-flash/`, cópias da config com o DeepSeek como padrão, e o `ai qw t3` cria um provider para cada uma ("DeepSeek V4 Pro (Qwen Code)" e "DeepSeek V4.1 Flash (Qwen Code)"). Esses providers rodam o mesmo `qwen --acp` com `QWEN_CONFIG_DIR` apontando para a pasta. Testado no T3 com resposta real.
+  **Todos os modelos no T3:** em modo ACP, o Qwen 1.0 (até o `1.0.0-preview.1`) só anuncia e só aceita o `model.name` do `settings.json`. O `-m` e o `--settings` são ignorados. Por isso o provider do T3 roda o Qwen pelo `mcp/qwen-acp-proxy.py`, instalado em `~/.local/share/ai-launcher/mcp/`. O proxy:
+  - mostra ao T3 todos os modelos dos `providers` do `settings.json`;
+  - roda um `qwen --acp` por modelo. Cada processo usa uma pasta própria em `~/.local/share/ai-launcher/qwen-acp/<modelo>/`, com um `settings.json` (chmod 600) que tem aquele modelo como padrão e é o único da lista. O resto da pasta é link para a `~/.qwen`, então sessões, memória, skills e MCP continuam os mesmos;
+  - na troca de modelo, retoma a sessão no processo do modelo novo, com o histórico, e reaplica o modo (ex.: yolo).
 
-  **No T3 Code:** `ai qw t3` liga o 1.0 no T3 da máquina. Ele desativa o agente "Qwen Code" do ACP Registry (que baixa sozinho o npm 0.x para `~/.t3/tools/qwen-code`), deixa um provider local "Qwen Code 1.0" rodando `qwen --acp` pelo caminho absoluto e põe o `qwen4-max-preview` no topo. O T3 relê o `settings.json` sozinho. Máquina nova, do zero:
+  Em 2026-11-12, os 8 modelos responderam pelo proxy com o modelo certo, trocando no meio da mesma conversa. Os modelos embutidos do provider (ex.: `qwen3.8-max`) ficam fora da lista: ao retomar uma sessão, o Qwen sempre volta para eles, então a troca não funcionaria.
+
+  Os providers separados das versões anteriores ("DeepSeek V4 Pro (Qwen Code)" e "DeepSeek V4.1 Flash (Qwen Code)") são desativados pelo `ai qw t3`. As pastas `~/.qwen-deepseek-*` que eles usavam podem ser apagadas.
+
+  **No T3 Code:** `ai qw t3` liga o 1.0 no T3 da máquina. Ele faz três coisas:
+  - desativa o agente "Qwen Code" do ACP Registry, que baixa sozinho o npm 0.x para `~/.t3/tools/qwen-code`;
+  - deixa um provider local "Qwen Code 1.0" rodando `python3 qwen-acp-proxy.py <qwen> --acp`, com caminhos absolutos. Sem Python, roda o `qwen --acp` direto, só com o modelo padrão;
+  - põe o `qwen4-max-preview` no topo.
+
+  O T3 relê o `settings.json` sozinho. Máquina nova, do zero:
 
   ```bash
   ai qw key    # cola a key do Token Plan

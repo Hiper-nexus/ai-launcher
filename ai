@@ -19,7 +19,7 @@ fi
 
 set -euo pipefail
 
-AI_LAUNCHER_VERSION="1.72.0"
+AI_LAUNCHER_VERSION="1.73.0"
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  CONFIGURE SUAS FLAGS AQUI                          ║
@@ -6414,26 +6414,9 @@ def gravar(destino, conteudo):
         raise
 
 gravar(path, data)
-
-# No ACP o Qwen 1.0 só anuncia (e só aceita) o model.name do settings.json —
-# o -m é ignorado. Cada DeepSeek ganha uma pasta própria (QWEN_CONFIG_DIR)
-# com a MESMA config e ele como padrão; o `ai qw t3` cria um provider no T3
-# para cada uma. Regeradas a cada sync: key, modelos e MCP seguem a principal.
-home = os.path.dirname(os.path.dirname(os.path.abspath(path)))
-for m in ("deepseek-v4-pro", "deepseek-v4.1-flash"):
-    pasta = os.path.join(home, f".qwen-{m}")
-    os.makedirs(pasta, mode=0o700, exist_ok=True)
-    variante = json.loads(json.dumps(data))
-    variante.setdefault("model", {})["name"] = f"{pid}/{m}"
-    gravar(os.path.join(pasta, "settings.json"), variante)
 PY
     # No Windows o chmod acima não protege nada; quem fecha é a ACL.
     secure_file "${dir}/settings.json"
-    local v
-    for v in "${HOME}"/.qwen-deepseek-*/settings.json; do
-        [[ -f "$v" ]] && secure_file "$v"
-    done
-    return 0
 }
 
 # O launcher usa o 1.0: com o 0.x no PATH (lia OPENAI_*) ele rodaria sem
@@ -6459,6 +6442,13 @@ qwen_require_v1() {
 # binário. Este comando desativa o do registry (não apaga: dá para religar na
 # tela de providers) e deixa um provider local no qwen 1.0 com --acp e o
 # modelo do launcher no topo. O T3 relê o settings.json sozinho.
+#
+# No ACP o Qwen 1.0 só anuncia (e só aceita) o model.name do settings.json, e
+# o -m é ignorado. Por isso o provider roda o qwen pelo mcp/qwen-acp-proxy.py,
+# que mostra ao T3 todos os modelos do Token Plan (Qwen e DeepSeek) e troca
+# de modelo retomando a sessão. Os providers separados dos DeepSeek, das
+# versões anteriores, ficam desativados.
+QWEN_PROXY_VERSION="1.0.1"
 qwen_setup_t3() {
     qwen_require_v1 || return 1
     # Lista de modelos do Token Plan (Qwen + DeepSeek) atualizada em toda máquina.
@@ -6481,27 +6471,21 @@ qwen_setup_t3() {
     else
         bin=$(command -v qwen)
     fi
-    # Providers dos DeepSeek: só para as pastas que o `ai qw sync` já gerou.
-    local variantes="{" sep="" m d
-    for m in deepseek-v4-pro deepseek-v4.1-flash; do
-        d="${HOME}/.qwen-${m}"
-        [[ -f "${d}/settings.json" ]] || continue
-        ai_is_windows && d=$(cygpath -w "$d" 2>/dev/null || printf '%s' "$d")
-        variantes+="${sep}\"${m}\": \"${d//\\/\\\\}\""
-        sep=", "
-    done
-    variantes+="}"
-    QWEN_T3_VARIANTES="$variantes" \
-    python3 -I - "$settings" "$bin" "${QWEN_PROVIDER_ID}/${QWEN_MODEL}" "$QWEN_PROVIDER_ID" <<'PY' || return 1
+    # Sem Python ou sem o proxy, o provider roda o qwen direto (um modelo só).
+    local py="" proxy=""
+    if require_python >/dev/null 2>&1 && helper_install qwen-acp-proxy.py "$QWEN_PROXY_VERSION" "${AI_QWEN_PROXY_SRC:-}"; then
+        py=$(gd_native_path "$(gd_python)")
+        proxy=$(gd_native_path "${GD_MCP_DIR}/qwen-acp-proxy.py")
+    else
+        echo -e "${YELLOW}Aviso: sem Python/proxy, o T3 verá só o modelo padrão do Qwen.${RESET}" >&2
+    fi
+    python3 -I - "$settings" "$bin" "${QWEN_PROVIDER_ID}/${QWEN_MODEL}" "$py" "$proxy" <<'PY' || return 1
 import json, os, sys, tempfile
 
-path, command, model, pid_qwen = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-variantes = json.loads(os.environ.get("QWEN_T3_VARIANTES") or "{}")
-ROTULOS = {"deepseek-v4-pro": "DeepSeek V4 Pro (Qwen Code)",
-           "deepseek-v4.1-flash": "DeepSeek V4.1 Flash (Qwen Code)"}
-def id_variante(m):
-    return "qwen_" + m.replace("-", "_").replace(".", "_")
-ids_variantes = {id_variante(m) for m in ROTULOS}
+path, qwen, model, py, proxy = sys.argv[1:6]
+# Providers que as versões anteriores criavam para cada DeepSeek (um qwen com
+# QWEN_CONFIG_DIR próprio). Com o proxy os modelos estão dentro do Qwen.
+VARIANTES = ("qwen_deepseek_v4_pro", "qwen_deepseek_v4_1_flash")
 try:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
@@ -6514,16 +6498,32 @@ instances = data.get("providerInstances")
 if not isinstance(instances, dict):
     instances = {}
 
+def base(p):
+    return os.path.basename(str(p or "").replace("\\", "/")).lower()
+
 def runs_qwen(cfg):
-    name = os.path.basename(str(cfg.get("commandPath") or "").replace("\\", "/"))
-    return name.lower() in ("qwen", "qwen.exe", "qwen.cmd")
+    """Provider local que roda o qwen direto ou pelo proxy."""
+    args = cfg.get("commandArgs") if isinstance(cfg.get("commandArgs"), list) else []
+    return (base(cfg.get("commandPath")) in ("qwen", "qwen.exe", "qwen.cmd")
+            or any(base(a) == "qwen-acp-proxy.py" for a in args))
+
+def extras(cfg):
+    """Args do usuário, sem o que este comando põe (proxy, qwen, --acp)."""
+    args = cfg.get("commandArgs") if isinstance(cfg.get("commandArgs"), list) else []
+    if any(base(a) == "qwen-acp-proxy.py" for a in args):
+        args = args[2:] if len(args) >= 2 else []
+    return [a for a in args if a != "--acp"]
 
 disabled, local_id = [], None
 for iid, inst in instances.items():
-    if not isinstance(inst, dict) or inst.get("driver") != "acpRegistry" or iid in ids_variantes:
+    if not isinstance(inst, dict) or inst.get("driver") != "acpRegistry":
         continue
     cfg = inst.get("config") if isinstance(inst.get("config"), dict) else {}
-    if cfg.get("source") == "local":
+    if iid in VARIANTES:
+        if inst.get("enabled", True):
+            inst["enabled"] = False
+            disabled.append(iid)
+    elif cfg.get("source") == "local":
         if local_id is None and runs_qwen(cfg):
             local_id = iid
     elif cfg.get("agentId") == "qwen-code" and inst.get("enabled", True):
@@ -6536,9 +6536,13 @@ if created:
     instances[local_id] = {"driver": "acpRegistry", "config": {"source": "local"}}
 inst = instances[local_id]
 cfg = inst.setdefault("config", {})
-cfg["commandPath"] = command
-args = cfg.get("commandArgs") if isinstance(cfg.get("commandArgs"), list) else []
-cfg["commandArgs"] = args if "--acp" in args else ["--acp"] + args
+user_args = extras(cfg)
+if py and proxy:
+    cfg["commandPath"] = py
+    cfg["commandArgs"] = [proxy, qwen, "--acp"] + user_args
+else:
+    cfg["commandPath"] = qwen
+    cfg["commandArgs"] = ["--acp"] + user_args
 inst["displayName"] = "Qwen Code 1.0"
 inst["enabled"] = True
 data["providerInstances"] = instances
@@ -6550,25 +6554,6 @@ pref = prefs.get(local_id) if isinstance(prefs.get(local_id), dict) else {"hidde
 order = pref.get("modelOrder") if isinstance(pref.get("modelOrder"), list) else []
 pref["modelOrder"] = [model] + [m for m in order if m != model]
 prefs[local_id] = pref
-
-feitos = []
-for m, pasta in variantes.items():
-    if m not in ROTULOS:
-        continue
-    iid = id_variante(m)
-    v = instances.get(iid) if isinstance(instances.get(iid), dict) else {}
-    v.update({
-        "driver": "acpRegistry",
-        "displayName": ROTULOS[m],
-        "enabled": v.get("enabled", True) is not False,
-        "config": {"source": "local", "commandPath": command, "commandArgs": ["--acp"]},
-        "environment": [{"name": "QWEN_CONFIG_DIR", "value": pasta, "sensitive": False}],
-    })
-    instances[iid] = v
-    pv = prefs.get(iid) if isinstance(prefs.get(iid), dict) else {"hiddenModels": []}
-    pv["modelOrder"] = [f"{pid_qwen}/{m}"]
-    prefs[iid] = pv
-    feitos.append(iid)
 data["providerModelPreferences"] = prefs
 
 mode = os.stat(path).st_mode & 0o777
@@ -6583,13 +6568,17 @@ except BaseException:
     os.unlink(tmp)
     raise
 
-print(f"  {'criado' if created else 'atualizado'}: {local_id} → {command} --acp")
+via = " via qwen-acp-proxy (todos os modelos)" if py and proxy else " (só o modelo padrão)"
+print(f"  {'criado' if created else 'atualizado'}: {local_id} → {qwen} --acp{via}")
 for iid in disabled:
-    print(f"  desativado: {iid} (registry, baixava o npm 0.x)")
-for iid in feitos:
-    print(f"  DeepSeek: {iid} → {instances[iid]['displayName']}")
+    motivo = "agora é modelo dentro do Qwen Code 1.0" if iid in VARIANTES else "registry, baixava o npm 0.x"
+    print(f"  desativado: {iid} ({motivo})")
 PY
     echo -e "${GREEN}✔ T3 Code: Qwen Code 1.0 (${QWEN_MODEL})${RESET} ${DIM}— o T3 aplica sozinho; se não aparecer, reabra o app${RESET}"
+    local d
+    for d in "${HOME}"/.qwen-deepseek-*; do
+        [[ -d "$d" ]] && echo -e "  ${DIM}Pasta antiga de DeepSeek (cópia do settings com a key): ${d} — pode apagar.${RESET}"
+    done
     local cache="${t3_home}/tools/qwen-code"
     if [[ -d "$cache" ]]; then
         echo -e "  ${DIM}Cache do 0.x que o registry baixou: ${cache} ($(du -sh "$cache" 2>/dev/null | cut -f1)) — pode apagar.${RESET}"
@@ -6651,7 +6640,6 @@ GD_SLOT="gemini-decision"
 GD_MCP_NAME="gemini_decision"
 GD_MCP_DIR="${HOME}/.local/share/ai-launcher/mcp"
 GD_SERVER="${GD_MCP_DIR}/gemini-decision-server.py"
-GD_RAW_URL="https://raw.githubusercontent.com/Hiper-nexus/ai-launcher/main/mcp/gemini-decision-server.py"
 GD_USAGE_FILE="${HOME}/.local/share/ai-launcher/gemini-decision-usage.jsonl"
 
 gd_api_key() {
@@ -6680,31 +6668,38 @@ gd_save_key() {
     echo -e "${GREEN}✔ Key salva em ${PROVIDERS_FILE}${RESET} ${DIM}(chmod 600; o servidor MCP lê daqui)${RESET}"
 }
 
-# O servidor ao lado deste script (repo) vence; senão a cópia instalada pelo
-# install.sh; senão baixa do GitHub. A cópia em GD_SERVER é o caminho estável
-# que vai nos configs das CLIs — `git pull` no repo não quebra nada. Se a
-# cópia instalada for de outra versão (ai atualizado sem install.sh), é trocada.
-GD_SERVER_VERSION="1.4.0"
-gd_install_server() {
-    local here src tmp
+# Scripts Python do launcher (servidor MCP, proxy ACP) num caminho estável, o
+# que vai nos configs das CLIs e do T3 — `git pull` no repo não quebra nada.
+# O arquivo ao lado deste script (repo) vence; senão a cópia instalada pelo
+# install.sh; senão baixa do GitHub. Cópia de outra versão (ai atualizado sem
+# install.sh) é trocada. Uso: helper_install <arquivo em mcp/> <versão> [origem]
+helper_install() {
+    local nome="$1" versao="$2" here src tmp destino url
+    destino="${GD_MCP_DIR}/${nome}"
+    url="https://raw.githubusercontent.com/Hiper-nexus/ai-launcher/main/mcp/${nome}"
     here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || here=""
-    src="${AI_GD_SERVER_SRC:-${here}/mcp/gemini-decision-server.py}"
+    src="${3:-${here}/mcp/${nome}}"
     mkdir -p "$GD_MCP_DIR" || return 1
     if [[ -f "$src" ]]; then
-        cmp -s "$src" "$GD_SERVER" 2>/dev/null || cp "$src" "$GD_SERVER" || return 1
-    elif [[ ! -f "$GD_SERVER" ]] || ! grep -q "^SERVER_VERSION = \"${GD_SERVER_VERSION}\"" "$GD_SERVER"; then
-        echo -e "${DIM}Baixando o servidor MCP ${GD_SERVER_VERSION} do GitHub...${RESET}"
+        cmp -s "$src" "$destino" 2>/dev/null || cp "$src" "$destino" || return 1
+    elif [[ ! -f "$destino" ]] || ! grep -q "^SERVER_VERSION = \"${versao}\"" "$destino"; then
+        echo -e "${DIM}Baixando ${nome} ${versao} do GitHub...${RESET}"
         tmp=$(mktemp) || return 1
-        if curl -fsSL "$GD_RAW_URL" -o "$tmp" && head -1 "$tmp" | grep -q python; then
-            mv "$tmp" "$GD_SERVER" || return 1
+        if curl -fsSL "$url" -o "$tmp" && head -1 "$tmp" | grep -q python; then
+            mv "$tmp" "$destino" || return 1
         else
             rm -f "$tmp"
-            echo -e "${RED}Erro: não consegui baixar ${GD_RAW_URL}${RESET}" >&2
-            [[ -f "$GD_SERVER" ]] || return 1
+            echo -e "${RED}Erro: não consegui baixar ${url}${RESET}" >&2
+            [[ -f "$destino" ]] || return 1
             echo -e "${YELLOW}Seguindo com a cópia já instalada.${RESET}" >&2
         fi
     fi
-    chmod 644 "$GD_SERVER" 2>/dev/null || true
+    chmod 644 "$destino" 2>/dev/null || true
+}
+
+GD_SERVER_VERSION="1.4.0"
+gd_install_server() {
+    helper_install gemini-decision-server.py "$GD_SERVER_VERSION" "${AI_GD_SERVER_SRC:-}"
 }
 
 # Caminho que o processo da CLI vai executar: absoluto (a CLI sobe o MCP sem
